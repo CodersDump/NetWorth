@@ -43,7 +43,8 @@ jobs:
           aws cloudformation deploy \
             --template-file packaged-template.yaml \
             --stack-name networth-app \
-            --capabilities CAPABILITY_NAMED_IAM
+            --capabilities CAPABILITY_NAMED_IAM \
+            --parameter-overrides DeploymentTimestamp=$(date +%s)
 
       - name: Get API URL from stack outputs
         id: stack-outputs
