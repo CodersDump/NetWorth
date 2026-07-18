@@ -10,6 +10,13 @@ Parameters:
   AppName:
     Type: String
     Default: networth
+  DeploymentTimestamp:
+    Type: String
+    Default: 'initial'
+    Description: >
+      Pass a new value (e.g. a timestamp) on every deploy so the
+      ApiDeployment resource always replaces itself and captures any
+      newly added API Gateway resources/methods.
 
 Resources:
 
@@ -595,6 +602,7 @@ Resources:
       - TournamentsProxyOptionsMethod
     Properties:
       RestApiId: !Ref RestApi
+      Description: !Sub 'Deployment trigger: ${DeploymentTimestamp}'
 
   ApiStage:
     Type: AWS::ApiGateway::Stage
