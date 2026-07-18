@@ -1,12 +1,25 @@
 """
-NetWorth - matches Lambda
-
-Mirrors the inline code in infrastructure/template.yaml (MatchesFunction).
-Edit here, then paste into the template's ZipFile block before redeploying.
+NetWorth - matches Lambda (singles + doubles)
 
 Routes:
-    POST /matches                          -> record a match, updates Elo ratings
-    GET  /matches?group_id=X&player_id=Y   -> game log, optionally filtered
+    POST /matches  -> record a match, updates Elo ratings
+    GET  /matches?group_id=X&player_id=Y  -> game log, optionally filtered
+
+Body for POST /matches:
+    {
+      "match_type": "singles" | "doubles",
+      "team_a": ["player_id1"] or ["player_id1", "player_id2"],
+      "team_b": ["player_id1"] or ["player_id1", "player_id2"],
+      "score_a": 21, "score_b": 15,
+      "group_id": "optional"
+    }
+
+Elo approach for doubles: team rating = average of teammates' current
+ratings. Expected score computed from team ratings. The resulting rating
+delta is applied in full to each teammate individually (based on their own
+current rating), so two players on a winning team both move, but a much
+higher-rated player carried by a lower-rated partner still updates off
+their own baseline.
 
 Env vars:
     MATCHES_TABLE - DynamoDB table name for matches
@@ -22,7 +35,7 @@ dynamodb = boto3.resource('dynamodb')
 matches_table = dynamodb.Table(os.environ['MATCHES_TABLE'])
 players_table = dynamodb.Table(os.environ['PLAYERS_TABLE'])
 
-K_FACTOR = 32  # standard Elo sensitivity constant
+K_FACTOR = 32
 
 
 def handler(event, context):
@@ -39,71 +52,80 @@ def handler(event, context):
 
 def record_match(event):
     body = json.loads(event.get('body') or '{}')
-    player_a_id = body.get('player_a_id')
-    player_b_id = body.get('player_b_id')
+    match_type = body.get('match_type', 'singles')
+    team_a = body.get('team_a') or []
+    team_b = body.get('team_b') or []
     score_a = body.get('score_a')
     score_b = body.get('score_b')
-    group_id = body.get('group_id')  # optional
+    group_id = body.get('group_id')
 
-    if not player_a_id or not player_b_id or score_a is None or score_b is None:
-        return _response(400, {'error': 'player_a_id, player_b_id, score_a, score_b are required'})
+    if match_type not in ('singles', 'doubles'):
+        return _response(400, {'error': 'match_type must be singles or doubles'})
+    expected_size = 1 if match_type == 'singles' else 2
+    if len(team_a) != expected_size or len(team_b) != expected_size:
+        return _response(400, {'error': f'{match_type} requires {expected_size} player(s) per team'})
+    if score_a is None or score_b is None:
+        return _response(400, {'error': 'score_a and score_b are required'})
+    if set(team_a) & set(team_b):
+        return _response(400, {'error': 'a player cannot be on both teams'})
 
-    score_a = int(score_a)
-    score_b = int(score_b)
+    item = _play_and_log(match_type, team_a, team_b, int(score_a), int(score_b), group_id, None, None)
+    if item is None:
+        return _response(404, {'error': 'one or more players not found'})
+    return _response(200, item)
 
-    player_a = players_table.get_item(Key={'player_id': player_a_id}).get('Item')
-    player_b = players_table.get_item(Key={'player_id': player_b_id}).get('Item')
-    if not player_a or not player_b:
-        return _response(404, {'error': 'one or both players not found'})
 
-    rating_a = float(player_a.get('rating', 1000))
-    rating_b = float(player_b.get('rating', 1000))
+def _play_and_log(match_type, team_a_ids, team_b_ids, score_a, score_b, group_id, tournament_id, stage):
+    team_a_players = [players_table.get_item(Key={'player_id': pid}).get('Item') for pid in team_a_ids]
+    team_b_players = [players_table.get_item(Key={'player_id': pid}).get('Item') for pid in team_b_ids]
+    if any(p is None for p in team_a_players) or any(p is None for p in team_b_players):
+        return None
 
-    if score_a > score_b:
-        actual_a = 1.0
-    elif score_a < score_b:
-        actual_a = 0.0
-    else:
-        actual_a = 0.5
+    rating_a_avg = sum(float(p.get('rating', 1000)) for p in team_a_players) / len(team_a_players)
+    rating_b_avg = sum(float(p.get('rating', 1000)) for p in team_b_players) / len(team_b_players)
+
+    actual_a = 1.0 if score_a > score_b else (0.0 if score_a < score_b else 0.5)
     actual_b = 1.0 - actual_a
 
-    expected_a = 1 / (1 + 10 ** ((rating_b - rating_a) / 400))
+    expected_a = 1 / (1 + 10 ** ((rating_b_avg - rating_a_avg) / 400))
     expected_b = 1 - expected_a
 
-    new_rating_a = int(round(rating_a + K_FACTOR * (actual_a - expected_a)))
-    new_rating_b = int(round(rating_b + K_FACTOR * (actual_b - expected_b)))
+    delta_a = K_FACTOR * (actual_a - expected_a)
+    delta_b = K_FACTOR * (actual_b - expected_b)
 
-    players_table.update_item(
-        Key={'player_id': player_a_id},
-        UpdateExpression='SET rating = :r',
-        ExpressionAttributeValues={':r': new_rating_a}
-    )
-    players_table.update_item(
-        Key={'player_id': player_b_id},
-        UpdateExpression='SET rating = :r',
-        ExpressionAttributeValues={':r': new_rating_b}
-    )
+    new_ratings = {}
+    for p in team_a_players:
+        new_ratings[p['player_id']] = int(round(float(p.get('rating', 1000)) + delta_a))
+    for p in team_b_players:
+        new_ratings[p['player_id']] = int(round(float(p.get('rating', 1000)) + delta_b))
 
-    winner_id = player_a_id if score_a > score_b else (player_b_id if score_b > score_a else None)
+    for pid, new_rating in new_ratings.items():
+        players_table.update_item(Key={'player_id': pid}, UpdateExpression='SET rating = :r',
+                                   ExpressionAttributeValues={':r': new_rating})
 
-    match_id = str(uuid.uuid4())
+    winner = 'A' if score_a > score_b else ('B' if score_b > score_a else 'tie')
+
     item = {
-        'match_id': match_id,
+        'match_id': str(uuid.uuid4()),
         'date': datetime.now(timezone.utc).isoformat(),
-        'player_a_id': player_a_id,
-        'player_b_id': player_b_id,
+        'match_type': match_type,
+        'team_a': team_a_ids,
+        'team_b': team_b_ids,
+        'team_a_names': [p['name'] for p in team_a_players],
+        'team_b_names': [p['name'] for p in team_b_players],
         'score_a': score_a,
         'score_b': score_b,
-        'winner_id': winner_id or 'tie',
-        'rating_a_after': new_rating_a,
-        'rating_b_after': new_rating_b,
+        'winner': winner,
+        'ratings_after': new_ratings,
     }
     if group_id:
         item['group_id'] = group_id
+    if tournament_id:
+        item['tournament_id'] = tournament_id
+        item['stage'] = stage
 
     matches_table.put_item(Item=item)
-
-    return _response(200, item)
+    return item
 
 
 def list_matches(event):
@@ -116,21 +138,9 @@ def list_matches(event):
     if group_id:
         items = [i for i in items if i.get('group_id') == group_id]
     if player_id:
-        items = [i for i in items if i.get('player_a_id') == player_id or i.get('player_b_id') == player_id]
+        items = [i for i in items if player_id in (i.get('team_a') or []) or player_id in (i.get('team_b') or [])]
 
     items.sort(key=lambda i: i.get('date', ''), reverse=True)
-
-    player_cache = {}
-
-    def name_for(pid):
-        if pid not in player_cache:
-            p = players_table.get_item(Key={'player_id': pid}).get('Item')
-            player_cache[pid] = p.get('name') if p else pid
-        return player_cache[pid]
-
-    for i in items:
-        i['player_a_name'] = name_for(i['player_a_id'])
-        i['player_b_name'] = name_for(i['player_b_id'])
 
     return _response(200, {'matches': items})
 

@@ -18,6 +18,8 @@
   .member-row { display: flex; justify-content: space-between; align-items: center; padding: 4px 0; }
   .member-row button { margin-top: 0; padding: 4px 8px; font-size: 12px; }
   hr { margin: 32px 0; }
+  .row strong { display: block; margin-bottom: 4px; font-size: 14px; }
+  .row select { margin-top: 4px; }
 </style>
 </head>
 <body>
@@ -46,8 +48,8 @@
   <h2>Delete a player</h2>
   <p style="font-size: 13px; color: #555;">Paste the player ID shown after registration.</p>
   <form id="delete-form">
-    <label>Player ID
-      <input type="text" id="delete_player_id" required>
+    <label>Player
+      <select id="delete_player_id" required></select>
     </label>
     <button type="submit">Delete</button>
   </form>
@@ -96,19 +98,30 @@
           <select id="match_group_select"><option value="">None</option></select>
         </label>
       </div>
+      <div>
+        <label>Match type
+          <select id="match_type_select">
+            <option value="doubles">Doubles</option>
+            <option value="singles">Singles</option>
+          </select>
+        </label>
+      </div>
     </div>
+
     <div class="row">
       <div>
-        <label>Player A
-          <select id="player_a_select"></select>
-        </label>
+        <strong>Team A</strong>
+        <select id="team_a1_select"></select>
+        <select id="team_a2_select" class="doubles-only"></select>
       </div>
       <div>
-        <label>Player B
-          <select id="player_b_select"></select>
-        </label>
+        <strong>Team B</strong>
+        <select id="team_b1_select"></select>
+        <select id="team_b2_select" class="doubles-only"></select>
       </div>
     </div>
+    <button id="randomize-teams-btn" type="button">Randomize teams</button>
+
     <div class="row">
       <div>
         <label>Score A
@@ -157,6 +170,12 @@
       <select id="tournament_format">
         <option value="knockout">Random knockout bracket</option>
         <option value="groups_then_knockout">Groups, then knockout</option>
+      </select>
+    </label>
+    <label>Match type
+      <select id="tournament_match_type">
+        <option value="doubles">Doubles</option>
+        <option value="singles">Singles</option>
       </select>
     </label>
     <div id="subgroup-options" style="display:none;">
@@ -215,9 +234,9 @@
       allPlayers = data.players || [];
       const labeled = allPlayers.map(p => ({ ...p, label: `${p.name} (${p.rating})` }));
       populateSelect(document.getElementById('add_player_select'), labeled, 'player_id', 'label', null);
-      populateSelect(document.getElementById('player_a_select'), labeled, 'player_id', 'label', null);
-      populateSelect(document.getElementById('player_b_select'), labeled, 'player_id', 'label', null);
+      populateSelect(document.getElementById('delete_player_id'), labeled, 'player_id', 'label', null);
       populateSelect(document.getElementById('log_player_filter'), labeled, 'player_id', 'label', 'All players');
+      populateTeamSelects();
     }
 
     async function loadGroups() {
@@ -254,6 +273,39 @@
         loadGroups();
       }
     }
+
+    function populateTeamSelects() {
+      const labeled = allPlayers.map(p => ({ ...p, label: `${p.name} (${p.rating})` }));
+      ['team_a1_select', 'team_a2_select', 'team_b1_select', 'team_b2_select'].forEach(id => {
+        populateSelect(document.getElementById(id), labeled, 'player_id', 'label', null);
+      });
+      applyMatchTypeVisibility();
+    }
+
+    function applyMatchTypeVisibility() {
+      const isDoubles = document.getElementById('match_type_select').value === 'doubles';
+      document.querySelectorAll('.doubles-only').forEach(el => {
+        el.style.display = isDoubles ? 'inline-block' : 'none';
+      });
+    }
+
+    document.getElementById('match_type_select').addEventListener('change', applyMatchTypeVisibility);
+
+    document.getElementById('randomize-teams-btn').addEventListener('click', () => {
+      const isDoubles = document.getElementById('match_type_select').value === 'doubles';
+      const needed = isDoubles ? 4 : 2;
+      if (allPlayers.length < needed) {
+        alert(`Need at least ${needed} registered players to randomize.`);
+        return;
+      }
+      const shuffled = [...allPlayers].sort(() => Math.random() - 0.5).slice(0, needed);
+      document.getElementById('team_a1_select').value = shuffled[0].player_id;
+      document.getElementById('team_b1_select').value = shuffled[1].player_id;
+      if (isDoubles) {
+        document.getElementById('team_a2_select').value = shuffled[2].player_id;
+        document.getElementById('team_b2_select').value = shuffled[3].player_id;
+      }
+    });
 
     // ---------- registration ----------
 
@@ -364,25 +416,37 @@
     document.getElementById('match-form').addEventListener('submit', async (e) => {
       e.preventDefault();
       const group_id = document.getElementById('match_group_select').value || null;
-      const player_a_id = document.getElementById('player_a_select').value;
-      const player_b_id = document.getElementById('player_b_select').value;
+      const match_type = document.getElementById('match_type_select').value;
+      const a1 = document.getElementById('team_a1_select').value;
+      const a2 = document.getElementById('team_a2_select').value;
+      const b1 = document.getElementById('team_b1_select').value;
+      const b2 = document.getElementById('team_b2_select').value;
       const score_a = document.getElementById('score_a').value;
       const score_b = document.getElementById('score_b').value;
       const resultEl = document.getElementById('match-result');
 
-      if (!player_a_id || !player_b_id) { resultEl.textContent = 'Select both players.'; return; }
-      if (player_a_id === player_b_id) { resultEl.textContent = 'Player A and B must differ.'; return; }
+      const team_a = match_type === 'doubles' ? [a1, a2] : [a1];
+      const team_b = match_type === 'doubles' ? [b1, b2] : [b1];
+
+      if (team_a.some(id => !id) || team_b.some(id => !id)) {
+        resultEl.textContent = 'Select all required players.';
+        return;
+      }
+      if (new Set([...team_a, ...team_b]).size !== team_a.length + team_b.length) {
+        resultEl.textContent = 'A player cannot appear on both teams or twice.';
+        return;
+      }
 
       resultEl.textContent = 'Recording...';
       try {
         const res = await fetch(`${API_BASE_URL}/matches`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ group_id, player_a_id, player_b_id, score_a, score_b })
+          body: JSON.stringify({ group_id, match_type, team_a, team_b, score_a, score_b })
         });
         const data = await res.json();
         if (res.ok) {
-          resultEl.textContent = `Match recorded. New ratings: A=${data.rating_a_after}, B=${data.rating_b_after}`;
+          resultEl.textContent = `Match recorded: ${data.team_a_names.join(' & ')} vs ${data.team_b_names.join(' & ')} (${data.score_a}-${data.score_b})`;
           loadPlayers();
         } else {
           resultEl.textContent = `Error: ${data.error}`;
@@ -410,10 +474,12 @@
         if (!res.ok) { logEl.textContent = `Error: ${data.error}`; return; }
         if (!data.matches.length) { logEl.innerHTML = '<p style="font-size:13px;color:#555;">No matches yet.</p>'; return; }
 
-        let html = '<table><tr><th>Date</th><th>Player A</th><th>Player B</th><th>Score</th></tr>';
+        let html = '<table><tr><th>Date</th><th>Team A</th><th>Team B</th><th>Score</th></tr>';
         data.matches.forEach(m => {
           const date = new Date(m.date).toLocaleString();
-          html += `<tr><td>${date}</td><td>${m.player_a_name}</td><td>${m.player_b_name}</td><td>${m.score_a} - ${m.score_b}</td></tr>`;
+          const teamA = (m.team_a_names || []).join(' & ');
+          const teamB = (m.team_b_names || []).join(' & ');
+          html += `<tr><td>${date}</td><td>${teamA}</td><td>${teamB}</td><td>${m.score_a} - ${m.score_b}</td></tr>`;
         });
         html += '</table>';
         logEl.innerHTML = html;
@@ -453,6 +519,7 @@
       const group_id = document.getElementById('tournament_group_select').value;
       const name = document.getElementById('tournament_name').value;
       const format = document.getElementById('tournament_format').value;
+      const match_type = document.getElementById('tournament_match_type').value;
       const num_subgroups = document.getElementById('num_subgroups').value;
       const advance_per_group = document.getElementById('advance_per_group').value;
       const resultEl = document.getElementById('create-tournament-result');
@@ -464,7 +531,7 @@
         const res = await fetch(`${API_BASE_URL}/tournaments`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ group_id, name, format, num_subgroups, advance_per_group })
+          body: JSON.stringify({ group_id, name, format, match_type, num_subgroups, advance_per_group })
         });
         const data = await res.json();
         if (res.ok) {

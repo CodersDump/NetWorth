@@ -1,5 +1,5 @@
 """
-NetWorth - tournaments Lambda
+NetWorth - tournaments Lambda (singles or doubles)
 
 Routes (via API Gateway {proxy+} on /tournaments):
     POST /tournaments                              -> create tournament
@@ -12,6 +12,13 @@ Formats:
     "knockout"            - random single-elimination bracket
     "groups_then_knockout" - random subgroups (round robin), top N per group
                              advance to a knockout bracket
+
+Body extra for creation:
+    "match_type": "singles" | "doubles"  (default "singles")
+    For doubles, group members are randomly paired into 2-player teams
+    before bracket/group generation. Each "entity" in the bracket has a
+    synthetic id, a display name ("Alice & Bob"), and a "members" list of
+    the underlying player_id(s) used for Elo updates.
 
 Env vars:
     TOURNAMENTS_TABLE, GROUPS_TABLE, PLAYERS_TABLE, MATCHES_TABLE
@@ -66,27 +73,46 @@ def create_tournament(event):
     group_id = body.get('group_id')
     name = (body.get('name') or '').strip()
     fmt = body.get('format', 'knockout')
+    match_type = body.get('match_type', 'singles')
     num_subgroups = int(body.get('num_subgroups', 2))
     advance_per_group = int(body.get('advance_per_group', 2))
 
     if not group_id or not name:
         return _response(400, {'error': 'group_id and name are required'})
+    if match_type not in ('singles', 'doubles'):
+        return _response(400, {'error': 'match_type must be singles or doubles'})
 
     group = groups_table.get_item(Key={'group_id': group_id}).get('Item')
     if not group:
         return _response(404, {'error': 'group not found'})
 
     member_ids = group.get('member_ids', [])
-    if len(member_ids) < 2:
-        return _response(400, {'error': 'group needs at least 2 players'})
-
-    members = []
+    players = []
     for pid in member_ids:
         p = players_table.get_item(Key={'player_id': pid}).get('Item')
         if p:
-            members.append({'player_id': p['player_id'], 'name': p['name']})
+            players.append({'player_id': p['player_id'], 'name': p['name']})
 
-    random.shuffle(members)
+    excluded_player = None
+    if match_type == 'doubles':
+        if len(players) < 4:
+            return _response(400, {'error': 'doubles needs at least 4 players'})
+        random.shuffle(players)
+        if len(players) % 2 == 1:
+            excluded_player = players.pop()['name']
+        entities = []
+        for i in range(0, len(players), 2):
+            p1, p2 = players[i], players[i + 1]
+            entities.append({
+                'player_id': str(uuid.uuid4()),
+                'name': f"{p1['name']} & {p2['name']}",
+                'members': [p1['player_id'], p2['player_id']]
+            })
+    else:
+        if len(players) < 2:
+            return _response(400, {'error': 'group needs at least 2 players'})
+        random.shuffle(players)
+        entities = [{'player_id': p['player_id'], 'name': p['name'], 'members': [p['player_id']]} for p in players]
 
     tournament_id = str(uuid.uuid4())
     item = {
@@ -94,37 +120,40 @@ def create_tournament(event):
         'group_id': group_id,
         'name': name,
         'format': fmt,
+        'match_type': match_type,
         'created_at': datetime.now(timezone.utc).isoformat(),
     }
+    if excluded_player:
+        item['excluded_player'] = excluded_player
 
     if fmt == 'groups_then_knockout':
-        if num_subgroups < 2 or num_subgroups > len(members):
-            return _response(400, {'error': 'num_subgroups must be between 2 and the number of players'})
+        if num_subgroups < 2 or num_subgroups > len(entities):
+            return _response(400, {'error': 'num_subgroups must be between 2 and the number of teams/players'})
         subgroup_names = list(ascii_uppercase[:num_subgroups])
         subgroups = {n: {'members': [], 'fixtures': []} for n in subgroup_names}
-        for idx, member in enumerate(members):
-            subgroups[subgroup_names[idx % num_subgroups]]['members'].append(member)
+        for idx, entity in enumerate(entities):
+            subgroups[subgroup_names[idx % num_subgroups]]['members'].append(entity)
         for sg in subgroups.values():
             sg['fixtures'] = build_round_robin(sg['members'])
         item['subgroups'] = subgroups
         item['advance_per_group'] = advance_per_group
         item['status'] = 'group_stage'
     else:
-        item['knockout'] = {'rounds': [build_knockout_round(members)]}
+        item['knockout'] = {'rounds': [build_knockout_round(entities)]}
         item['status'] = 'knockout'
 
     tournaments_table.put_item(Item=item)
     return _response(200, item)
 
 
-def build_round_robin(members):
+def build_round_robin(entities):
     fixtures = []
-    for i in range(len(members)):
-        for j in range(i + 1, len(members)):
+    for i in range(len(entities)):
+        for j in range(i + 1, len(entities)):
             fixtures.append({
                 'fixture_id': str(uuid.uuid4()),
-                'player_a': members[i],
-                'player_b': members[j],
+                'player_a': entities[i],
+                'player_b': entities[j],
                 'played': False,
                 'score_a': None,
                 'score_b': None,
@@ -133,8 +162,8 @@ def build_round_robin(members):
     return fixtures
 
 
-def build_knockout_round(members):
-    n = len(members)
+def build_knockout_round(entities):
+    n = len(entities)
     next_pow2 = 1
     while next_pow2 < n:
         next_pow2 *= 2
@@ -143,21 +172,21 @@ def build_knockout_round(members):
     matches = []
     i = 0
     byes_given = 0
-    while i < len(members):
+    while i < len(entities):
         if byes_given < byes_needed:
-            matches.append(_bye_match(members[i]))
+            matches.append(_bye_match(entities[i]))
             byes_given += 1
             i += 1
         else:
-            player_a = members[i]
-            player_b = members[i + 1] if i + 1 < len(members) else None
-            if player_b is None:
-                matches.append(_bye_match(player_a))
+            entity_a = entities[i]
+            entity_b = entities[i + 1] if i + 1 < len(entities) else None
+            if entity_b is None:
+                matches.append(_bye_match(entity_a))
             else:
                 matches.append({
                     'match_id': str(uuid.uuid4()),
-                    'player_a': player_a,
-                    'player_b': player_b,
+                    'player_a': entity_a,
+                    'player_b': entity_b,
                     'played': False,
                     'winner_id': None,
                     'score_a': None,
@@ -167,13 +196,13 @@ def build_knockout_round(members):
     return matches
 
 
-def _bye_match(player):
+def _bye_match(entity):
     return {
         'match_id': str(uuid.uuid4()),
-        'player_a': player,
+        'player_a': entity,
         'player_b': None,
         'played': True,
-        'winner_id': player['player_id'],
+        'winner_id': entity['player_id'],
         'bye': True,
         'score_a': None,
         'score_b': None
@@ -194,6 +223,7 @@ def list_tournaments(event):
             'name': i['name'],
             'group_id': i['group_id'],
             'format': i['format'],
+            'match_type': i.get('match_type', 'singles'),
             'status': i['status'],
             'created_at': i['created_at']
         }
@@ -212,13 +242,13 @@ def get_tournament(tournament_id):
     return _response(200, item)
 
 
-def compute_standings(fixtures, members):
+def compute_standings(fixtures, entities):
     stats = {
-        m['player_id']: {
-            'player_id': m['player_id'], 'name': m['name'],
+        e['player_id']: {
+            'player_id': e['player_id'], 'name': e['name'],
             'wins': 0, 'losses': 0, 'points_won': 0, 'points_lost': 0
         }
-        for m in members
+        for e in entities
     }
     for f in fixtures:
         if not f['played']:
@@ -281,7 +311,7 @@ def record_group_score(tournament_id, event):
     fixture['played'] = True
     fixture['winner_id'] = winner_id or 'tie'
 
-    update_elo_and_log(fixture['player_a']['player_id'], fixture['player_b']['player_id'],
+    update_elo_and_log(item.get('match_type', 'singles'), fixture['player_a'], fixture['player_b'],
                         score_a, score_b, item['group_id'], tournament_id, 'group')
 
     all_played = all(f['played'] for sg2 in item['subgroups'].values() for f in sg2['fixtures'])
@@ -297,11 +327,12 @@ def advance_to_knockout(item):
     qualifiers = []
     for name, sg in item['subgroups'].items():
         standings = compute_standings(sg['fixtures'], sg['members'])
+        entity_by_id = {e['player_id']: e for e in sg['members']}
         for rank, s in enumerate(standings[:advance_per_group]):
-            qualifiers.append({'player_id': s['player_id'], 'name': s['name'], 'subgroup': name, 'rank': rank})
+            entity = entity_by_id[s['player_id']]
+            qualifiers.append({'entity': entity, 'subgroup': name})
 
     random.shuffle(qualifiers)
-    # best-effort: avoid same-subgroup rematches in round 1 where possible
     for i in range(0, len(qualifiers) - 1, 2):
         if qualifiers[i]['subgroup'] == qualifiers[i + 1]['subgroup']:
             for j in range(i + 2, len(qualifiers)):
@@ -309,8 +340,8 @@ def advance_to_knockout(item):
                     qualifiers[i + 1], qualifiers[j] = qualifiers[j], qualifiers[i + 1]
                     break
 
-    members = [{'player_id': q['player_id'], 'name': q['name']} for q in qualifiers]
-    item['knockout'] = {'rounds': [build_knockout_round(members)]}
+    entities = [q['entity'] for q in qualifiers]
+    item['knockout'] = {'rounds': [build_knockout_round(entities)]}
     item['status'] = 'knockout'
 
 
@@ -350,7 +381,7 @@ def record_knockout_score(tournament_id, event):
     match['played'] = True
     match['winner_id'] = winner_id
 
-    update_elo_and_log(match['player_a']['player_id'], match['player_b']['player_id'],
+    update_elo_and_log(item.get('match_type', 'singles'), match['player_a'], match['player_b'],
                         score_a, score_b, item['group_id'], tournament_id, 'knockout')
 
     current_round = rounds[round_index]
@@ -362,49 +393,61 @@ def record_knockout_score(tournament_id, event):
             winners = []
             for m in current_round:
                 pid = m['winner_id']
-                name = m['player_a']['name'] if m['player_a']['player_id'] == pid else m['player_b']['name']
-                winners.append({'player_id': pid, 'name': name})
+                entity = m['player_a'] if m['player_a']['player_id'] == pid else m['player_b']
+                winners.append(entity)
             rounds.append(build_knockout_round(winners))
 
     tournaments_table.put_item(Item=item)
     return _response(200, item)
 
 
-# ---------- shared Elo + game-log write ----------
+# ---------- shared Elo + game-log write (entity = single player or doubles team) ----------
 
-def update_elo_and_log(player_a_id, player_b_id, score_a, score_b, group_id, tournament_id, stage):
-    player_a = players_table.get_item(Key={'player_id': player_a_id}).get('Item')
-    player_b = players_table.get_item(Key={'player_id': player_b_id}).get('Item')
-    if not player_a or not player_b:
+def update_elo_and_log(match_type, entity_a, entity_b, score_a, score_b, group_id, tournament_id, stage):
+    team_a_ids = entity_a.get('members', [entity_a['player_id']])
+    team_b_ids = entity_b.get('members', [entity_b['player_id']])
+
+    team_a_players = [players_table.get_item(Key={'player_id': pid}).get('Item') for pid in team_a_ids]
+    team_b_players = [players_table.get_item(Key={'player_id': pid}).get('Item') for pid in team_b_ids]
+    if any(p is None for p in team_a_players) or any(p is None for p in team_b_players):
         return
 
-    rating_a = float(player_a.get('rating', 1000))
-    rating_b = float(player_b.get('rating', 1000))
+    rating_a_avg = sum(float(p.get('rating', 1000)) for p in team_a_players) / len(team_a_players)
+    rating_b_avg = sum(float(p.get('rating', 1000)) for p in team_b_players) / len(team_b_players)
 
     actual_a = 1.0 if score_a > score_b else (0.0 if score_a < score_b else 0.5)
     actual_b = 1.0 - actual_a
 
-    expected_a = 1 / (1 + 10 ** ((rating_b - rating_a) / 400))
+    expected_a = 1 / (1 + 10 ** ((rating_b_avg - rating_a_avg) / 400))
     expected_b = 1 - expected_a
 
-    new_rating_a = int(round(rating_a + K_FACTOR * (actual_a - expected_a)))
-    new_rating_b = int(round(rating_b + K_FACTOR * (actual_b - expected_b)))
+    delta_a = K_FACTOR * (actual_a - expected_a)
+    delta_b = K_FACTOR * (actual_b - expected_b)
 
-    players_table.update_item(Key={'player_id': player_a_id}, UpdateExpression='SET rating = :r',
-                               ExpressionAttributeValues={':r': new_rating_a})
-    players_table.update_item(Key={'player_id': player_b_id}, UpdateExpression='SET rating = :r',
-                               ExpressionAttributeValues={':r': new_rating_b})
+    new_ratings = {}
+    for p in team_a_players:
+        new_ratings[p['player_id']] = int(round(float(p.get('rating', 1000)) + delta_a))
+    for p in team_b_players:
+        new_ratings[p['player_id']] = int(round(float(p.get('rating', 1000)) + delta_b))
+
+    for pid, new_rating in new_ratings.items():
+        players_table.update_item(Key={'player_id': pid}, UpdateExpression='SET rating = :r',
+                                   ExpressionAttributeValues={':r': new_rating})
+
+    winner = 'A' if score_a > score_b else ('B' if score_b > score_a else 'tie')
 
     matches_table.put_item(Item={
         'match_id': str(uuid.uuid4()),
         'date': datetime.now(timezone.utc).isoformat(),
-        'player_a_id': player_a_id,
-        'player_b_id': player_b_id,
+        'match_type': match_type,
+        'team_a': team_a_ids,
+        'team_b': team_b_ids,
+        'team_a_names': [p['name'] for p in team_a_players],
+        'team_b_names': [p['name'] for p in team_b_players],
         'score_a': score_a,
         'score_b': score_b,
-        'winner_id': player_a_id if score_a > score_b else (player_b_id if score_b > score_a else 'tie'),
-        'rating_a_after': new_rating_a,
-        'rating_b_after': new_rating_b,
+        'winner': winner,
+        'ratings_after': new_ratings,
         'group_id': group_id,
         'tournament_id': tournament_id,
         'stage': stage
