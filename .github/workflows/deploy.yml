@@ -19,10 +19,29 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ secrets.AWS_REGION }}
 
+      - name: Ensure artifacts bucket exists
+        run: |
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          BUCKET="networth-artifacts-$ACCOUNT_ID"
+          echo "ARTIFACTS_BUCKET=$BUCKET" >> "$GITHUB_ENV"
+          if aws s3api head-bucket --bucket "$BUCKET" 2>/dev/null; then
+            echo "Bucket already exists"
+          else
+            aws s3api create-bucket --bucket "$BUCKET" --region "${{ secrets.AWS_REGION }}" \
+              $( [ "${{ secrets.AWS_REGION }}" != "us-east-1" ] && echo "--create-bucket-configuration LocationConstraint=${{ secrets.AWS_REGION }}" )
+          fi
+
+      - name: Package CloudFormation template (zips + uploads Lambda code)
+        run: |
+          aws cloudformation package \
+            --template-file infrastructure/template.yaml \
+            --s3-bucket "$ARTIFACTS_BUCKET" \
+            --output-template-file packaged-template.yaml
+
       - name: Deploy CloudFormation stack
         run: |
           aws cloudformation deploy \
-            --template-file infrastructure/template.yaml \
+            --template-file packaged-template.yaml \
             --stack-name networth-app \
             --capabilities CAPABILITY_NAMED_IAM
 

@@ -4,18 +4,27 @@
 <meta charset="UTF-8">
 <title>NetWorth - Badminton Rankings</title>
 <style>
-  body { font-family: sans-serif; max-width: 480px; margin: 40px auto; padding: 0 16px; }
+  body { font-family: sans-serif; max-width: 720px; margin: 40px auto; padding: 0 16px; }
   h1 { font-size: 22px; }
+  h2 { font-size: 18px; margin-top: 32px; }
   label { display: block; margin-top: 12px; font-size: 14px; }
   input, select { width: 100%; padding: 8px; margin-top: 4px; box-sizing: border-box; }
-  button { margin-top: 16px; padding: 10px 16px; cursor: pointer; }
-  #result { margin-top: 16px; font-size: 14px; }
+  button { margin-top: 12px; padding: 10px 16px; cursor: pointer; }
+  .result { margin-top: 12px; font-size: 14px; }
+  .row { display: flex; gap: 12px; }
+  .row > div { flex: 1; }
+  table { width: 100%; border-collapse: collapse; margin-top: 12px; font-size: 13px; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid #ddd; }
+  .member-row { display: flex; justify-content: space-between; align-items: center; padding: 4px 0; }
+  .member-row button { margin-top: 0; padding: 4px 8px; font-size: 12px; }
+  hr { margin: 32px 0; }
 </style>
 </head>
 <body>
   <h1>NetWorth</h1>
-  <p>Register for the badminton group.</p>
 
+  <!-- Player registration -->
+  <h2>Register a player</h2>
   <form id="register-form">
     <label>Name
       <input type="text" id="name" required>
@@ -29,12 +38,224 @@
     </label>
     <button type="submit">Register</button>
   </form>
+  <div id="result" class="result"></div>
 
-  <div id="result"></div>
+  <hr>
+
+  <!-- Delete a player -->
+  <h2>Delete a player</h2>
+  <p style="font-size: 13px; color: #555;">Paste the player ID shown after registration.</p>
+  <form id="delete-form">
+    <label>Player ID
+      <input type="text" id="delete_player_id" required>
+    </label>
+    <button type="submit">Delete</button>
+  </form>
+  <div id="delete-result" class="result"></div>
+
+  <hr>
+
+  <!-- Groups -->
+  <h2>Groups</h2>
+
+  <form id="create-group-form">
+    <label>New group name
+      <input type="text" id="group_name" required>
+    </label>
+    <button type="submit">Create group</button>
+  </form>
+  <div id="create-group-result" class="result"></div>
+
+  <label>Select a group
+    <select id="group_select"></select>
+  </label>
+  <button id="refresh-groups-btn" type="button">Refresh groups</button>
+
+  <div id="group-members" style="margin-top: 16px;"></div>
+
+  <div class="row" style="margin-top: 16px;">
+    <div>
+      <label>Add player to group
+        <select id="add_player_select"></select>
+      </label>
+    </div>
+    <div style="display: flex; align-items: flex-end;">
+      <button id="add-player-btn" type="button" style="width: 100%;">Add to group</button>
+    </div>
+  </div>
+  <div id="group-action-result" class="result"></div>
+
+  <hr>
+
+  <!-- Game log -->
+  <h2>Record a match</h2>
+  <form id="match-form">
+    <div class="row">
+      <div>
+        <label>Group (optional)
+          <select id="match_group_select"><option value="">None</option></select>
+        </label>
+      </div>
+    </div>
+    <div class="row">
+      <div>
+        <label>Player A
+          <select id="player_a_select"></select>
+        </label>
+      </div>
+      <div>
+        <label>Player B
+          <select id="player_b_select"></select>
+        </label>
+      </div>
+    </div>
+    <div class="row">
+      <div>
+        <label>Score A
+          <input type="number" id="score_a" required>
+        </label>
+      </div>
+      <div>
+        <label>Score B
+          <input type="number" id="score_b" required>
+        </label>
+      </div>
+    </div>
+    <button type="submit">Record match</button>
+  </form>
+  <div id="match-result" class="result"></div>
+
+  <h2>Game log</h2>
+  <div class="row">
+    <div>
+      <label>Filter by group
+        <select id="log_group_filter"><option value="">All groups</option></select>
+      </label>
+    </div>
+    <div>
+      <label>Filter by player
+        <select id="log_player_filter"><option value="">All players</option></select>
+      </label>
+    </div>
+  </div>
+  <button id="load-log-btn" type="button">Load game log</button>
+  <div id="game-log"></div>
+
+  <hr>
+
+  <!-- Tournaments -->
+  <h2>Tournaments</h2>
+
+  <form id="create-tournament-form">
+    <label>Group
+      <select id="tournament_group_select"></select>
+    </label>
+    <label>Tournament name
+      <input type="text" id="tournament_name" required>
+    </label>
+    <label>Format
+      <select id="tournament_format">
+        <option value="knockout">Random knockout bracket</option>
+        <option value="groups_then_knockout">Groups, then knockout</option>
+      </select>
+    </label>
+    <div id="subgroup-options" style="display:none;">
+      <div class="row">
+        <div>
+          <label>Number of groups
+            <input type="number" id="num_subgroups" value="2" min="2">
+          </label>
+        </div>
+        <div>
+          <label>Players advancing per group
+            <input type="number" id="advance_per_group" value="2" min="1">
+          </label>
+        </div>
+      </div>
+    </div>
+    <button type="submit">Create tournament</button>
+  </form>
+  <div id="create-tournament-result" class="result"></div>
+
+  <label>All tournaments
+    <select id="tournament_select"></select>
+  </label>
+  <button id="load-tournament-btn" type="button">Load tournament</button>
+
+  <div id="tournament-detail" style="margin-top: 16px;"></div>
 
   <script>
     // Replace with your deployed API Gateway URL (see CloudFormation output: ApiUrl)
     const API_BASE_URL = 'https://REPLACE_ME.execute-api.REGION.amazonaws.com/prod';
+
+    let allPlayers = [];
+    let allGroups = [];
+
+    // ---------- helpers ----------
+
+    function populateSelect(selectEl, items, valueKey, labelKey, placeholder) {
+      selectEl.innerHTML = '';
+      if (placeholder) {
+        const opt = document.createElement('option');
+        opt.value = '';
+        opt.textContent = placeholder;
+        selectEl.appendChild(opt);
+      }
+      items.forEach(item => {
+        const opt = document.createElement('option');
+        opt.value = item[valueKey];
+        opt.textContent = item[labelKey];
+        selectEl.appendChild(opt);
+      });
+    }
+
+    async function loadPlayers() {
+      const res = await fetch(`${API_BASE_URL}/players`);
+      const data = await res.json();
+      allPlayers = data.players || [];
+      const labeled = allPlayers.map(p => ({ ...p, label: `${p.name} (${p.rating})` }));
+      populateSelect(document.getElementById('add_player_select'), labeled, 'player_id', 'label', null);
+      populateSelect(document.getElementById('player_a_select'), labeled, 'player_id', 'label', null);
+      populateSelect(document.getElementById('player_b_select'), labeled, 'player_id', 'label', null);
+      populateSelect(document.getElementById('log_player_filter'), labeled, 'player_id', 'label', 'All players');
+    }
+
+    async function loadGroups() {
+      const res = await fetch(`${API_BASE_URL}/groups`);
+      const data = await res.json();
+      allGroups = data.groups || [];
+      populateSelect(document.getElementById('group_select'), allGroups, 'group_id', 'group_name', null);
+      populateSelect(document.getElementById('match_group_select'), allGroups, 'group_id', 'group_name', 'None');
+      populateSelect(document.getElementById('log_group_filter'), allGroups, 'group_id', 'group_name', 'All groups');
+      if (allGroups.length) {
+        loadGroupMembers(document.getElementById('group_select').value);
+      }
+    }
+
+    async function loadGroupMembers(groupId) {
+      const membersEl = document.getElementById('group-members');
+      if (!groupId) { membersEl.innerHTML = ''; return; }
+      const res = await fetch(`${API_BASE_URL}/groups/${groupId}`);
+      const data = await res.json();
+      if (!res.ok) { membersEl.textContent = data.error; return; }
+      if (!data.members.length) {
+        membersEl.innerHTML = '<p style="font-size:13px;color:#555;">No members yet.</p>';
+        return;
+      }
+      membersEl.innerHTML = '<strong>Members:</strong>' + data.members.map(m =>
+        `<div class="member-row"><span>${m.name} (${m.rating})</span><button onclick="removePlayerFromGroup('${groupId}','${m.player_id}')">Remove</button></div>`
+      ).join('');
+    }
+
+    async function removePlayerFromGroup(groupId, playerId) {
+      const res = await fetch(`${API_BASE_URL}/groups/${groupId}/players/${playerId}`, { method: 'DELETE' });
+      if (res.ok) {
+        loadGroupMembers(groupId);
+        loadGroups();
+      }
+    }
+
+    // ---------- registration ----------
 
     document.getElementById('register-form').addEventListener('submit', async (e) => {
       e.preventDefault();
@@ -42,7 +263,6 @@
       const skill_level = document.getElementById('skill_level').value;
       const resultEl = document.getElementById('result');
       resultEl.textContent = 'Registering...';
-
       try {
         const res = await fetch(`${API_BASE_URL}/register`, {
           method: 'POST',
@@ -52,6 +272,7 @@
         const data = await res.json();
         if (res.ok) {
           resultEl.textContent = `Registered! Player ID: ${data.player_id}`;
+          loadPlayers();
         } else {
           resultEl.textContent = `Error: ${data.error}`;
         }
@@ -59,6 +280,308 @@
         resultEl.textContent = `Request failed: ${err.message}`;
       }
     });
+
+    // ---------- delete player ----------
+
+    document.getElementById('delete-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const playerId = document.getElementById('delete_player_id').value.trim();
+      const resultEl = document.getElementById('delete-result');
+      resultEl.textContent = 'Deleting...';
+      try {
+        const res = await fetch(`${API_BASE_URL}/players/${playerId}`, { method: 'DELETE' });
+        const data = await res.json();
+        if (res.ok) {
+          resultEl.textContent = `Deleted player: ${data.deleted}`;
+          loadPlayers();
+        } else {
+          resultEl.textContent = `Error: ${data.error}`;
+        }
+      } catch (err) {
+        resultEl.textContent = `Request failed: ${err.message}`;
+      }
+    });
+
+    // ---------- groups ----------
+
+    document.getElementById('create-group-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const group_name = document.getElementById('group_name').value;
+      const resultEl = document.getElementById('create-group-result');
+      resultEl.textContent = 'Creating...';
+      try {
+        const res = await fetch(`${API_BASE_URL}/groups`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ group_name })
+        });
+        const data = await res.json();
+        if (res.ok) {
+          resultEl.textContent = `Created group: ${data.group_name}`;
+          document.getElementById('group_name').value = '';
+          loadGroups();
+        } else {
+          resultEl.textContent = `Error: ${data.error}`;
+        }
+      } catch (err) {
+        resultEl.textContent = `Request failed: ${err.message}`;
+      }
+    });
+
+    document.getElementById('group_select').addEventListener('change', (e) => {
+      loadGroupMembers(e.target.value);
+    });
+
+    document.getElementById('refresh-groups-btn').addEventListener('click', loadGroups);
+
+    document.getElementById('add-player-btn').addEventListener('click', async () => {
+      const groupId = document.getElementById('group_select').value;
+      const playerId = document.getElementById('add_player_select').value;
+      const resultEl = document.getElementById('group-action-result');
+      if (!groupId || !playerId) { resultEl.textContent = 'Select a group and a player first.'; return; }
+      resultEl.textContent = 'Adding...';
+      try {
+        const res = await fetch(`${API_BASE_URL}/groups/${groupId}/players`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ player_id: playerId })
+        });
+        const data = await res.json();
+        if (res.ok) {
+          resultEl.textContent = 'Added to group.';
+          loadGroupMembers(groupId);
+          loadGroups();
+        } else {
+          resultEl.textContent = `Error: ${data.error}`;
+        }
+      } catch (err) {
+        resultEl.textContent = `Request failed: ${err.message}`;
+      }
+    });
+
+    // ---------- matches ----------
+
+    document.getElementById('match-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const group_id = document.getElementById('match_group_select').value || null;
+      const player_a_id = document.getElementById('player_a_select').value;
+      const player_b_id = document.getElementById('player_b_select').value;
+      const score_a = document.getElementById('score_a').value;
+      const score_b = document.getElementById('score_b').value;
+      const resultEl = document.getElementById('match-result');
+
+      if (!player_a_id || !player_b_id) { resultEl.textContent = 'Select both players.'; return; }
+      if (player_a_id === player_b_id) { resultEl.textContent = 'Player A and B must differ.'; return; }
+
+      resultEl.textContent = 'Recording...';
+      try {
+        const res = await fetch(`${API_BASE_URL}/matches`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ group_id, player_a_id, player_b_id, score_a, score_b })
+        });
+        const data = await res.json();
+        if (res.ok) {
+          resultEl.textContent = `Match recorded. New ratings: A=${data.rating_a_after}, B=${data.rating_b_after}`;
+          loadPlayers();
+        } else {
+          resultEl.textContent = `Error: ${data.error}`;
+        }
+      } catch (err) {
+        resultEl.textContent = `Request failed: ${err.message}`;
+      }
+    });
+
+    // ---------- game log ----------
+
+    document.getElementById('load-log-btn').addEventListener('click', async () => {
+      const groupId = document.getElementById('log_group_filter').value;
+      const playerId = document.getElementById('log_player_filter').value;
+      const logEl = document.getElementById('game-log');
+      logEl.textContent = 'Loading...';
+
+      const params = new URLSearchParams();
+      if (groupId) params.set('group_id', groupId);
+      if (playerId) params.set('player_id', playerId);
+
+      try {
+        const res = await fetch(`${API_BASE_URL}/matches?${params.toString()}`);
+        const data = await res.json();
+        if (!res.ok) { logEl.textContent = `Error: ${data.error}`; return; }
+        if (!data.matches.length) { logEl.innerHTML = '<p style="font-size:13px;color:#555;">No matches yet.</p>'; return; }
+
+        let html = '<table><tr><th>Date</th><th>Player A</th><th>Player B</th><th>Score</th></tr>';
+        data.matches.forEach(m => {
+          const date = new Date(m.date).toLocaleString();
+          html += `<tr><td>${date}</td><td>${m.player_a_name}</td><td>${m.player_b_name}</td><td>${m.score_a} - ${m.score_b}</td></tr>`;
+        });
+        html += '</table>';
+        logEl.innerHTML = html;
+      } catch (err) {
+        logEl.textContent = `Request failed: ${err.message}`;
+      }
+    });
+
+    // ---------- init ----------
+
+    (async () => {
+      await loadPlayers();
+      await loadGroups();
+      loadTournamentGroupOptions();
+      loadTournamentsList();
+    })();
+
+    // ---------- tournaments ----------
+
+    document.getElementById('tournament_format').addEventListener('change', (e) => {
+      document.getElementById('subgroup-options').style.display = e.target.value === 'groups_then_knockout' ? 'block' : 'none';
+    });
+
+    async function loadTournamentGroupOptions() {
+      populateSelect(document.getElementById('tournament_group_select'), allGroups, 'group_id', 'group_name', null);
+    }
+
+    async function loadTournamentsList() {
+      const res = await fetch(`${API_BASE_URL}/tournaments`);
+      const data = await res.json();
+      const items = (data.tournaments || []).map(t => ({ ...t, label: `${t.name} (${t.status})` }));
+      populateSelect(document.getElementById('tournament_select'), items, 'tournament_id', 'label', null);
+    }
+
+    document.getElementById('create-tournament-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const group_id = document.getElementById('tournament_group_select').value;
+      const name = document.getElementById('tournament_name').value;
+      const format = document.getElementById('tournament_format').value;
+      const num_subgroups = document.getElementById('num_subgroups').value;
+      const advance_per_group = document.getElementById('advance_per_group').value;
+      const resultEl = document.getElementById('create-tournament-result');
+
+      if (!group_id) { resultEl.textContent = 'Select a group first.'; return; }
+
+      resultEl.textContent = 'Creating...';
+      try {
+        const res = await fetch(`${API_BASE_URL}/tournaments`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ group_id, name, format, num_subgroups, advance_per_group })
+        });
+        const data = await res.json();
+        if (res.ok) {
+          resultEl.textContent = `Created tournament: ${data.name}`;
+          document.getElementById('tournament_name').value = '';
+          await loadTournamentsList();
+          document.getElementById('tournament_select').value = data.tournament_id;
+          renderTournament(data);
+        } else {
+          resultEl.textContent = `Error: ${data.error}`;
+        }
+      } catch (err) {
+        resultEl.textContent = `Request failed: ${err.message}`;
+      }
+    });
+
+    document.getElementById('load-tournament-btn').addEventListener('click', async () => {
+      const tournamentId = document.getElementById('tournament_select').value;
+      if (!tournamentId) return;
+      const res = await fetch(`${API_BASE_URL}/tournaments/${tournamentId}`);
+      const data = await res.json();
+      renderTournament(data);
+    });
+
+    function renderTournament(t) {
+      const el = document.getElementById('tournament-detail');
+      let html = `<h3 style="font-size:16px;">${t.name} - ${t.status}</h3>`;
+
+      if (t.status === 'group_stage') {
+        for (const [sgName, sg] of Object.entries(t.subgroups)) {
+          html += `<h4 style="font-size:14px;">Group ${sgName}</h4>`;
+          const standings = (t.standings || {})[sgName] || [];
+          if (standings.length) {
+            html += '<table><tr><th>Player</th><th>W</th><th>L</th><th>Diff</th></tr>';
+            standings.forEach(s => {
+              html += `<tr><td>${s.name}</td><td>${s.wins}</td><td>${s.losses}</td><td>${s.point_diff}</td></tr>`;
+            });
+            html += '</table>';
+          }
+          html += '<table><tr><th>Match</th><th>Score</th><th>Action</th></tr>';
+          sg.fixtures.forEach(f => {
+            const label = `${f.player_a.name} vs ${f.player_b.name}`;
+            if (f.played) {
+              html += `<tr><td>${label}</td><td>${f.score_a} - ${f.score_b}</td><td>Done</td></tr>`;
+            } else {
+              html += `<tr><td>${label}</td><td colspan="2">
+                <input type="number" id="ga_${f.fixture_id}" style="width:50px;display:inline-block;">
+                -
+                <input type="number" id="gb_${f.fixture_id}" style="width:50px;display:inline-block;">
+                <button onclick="submitGroupScore('${t.tournament_id}','${sgName}','${f.fixture_id}')">Submit</button>
+              </td></tr>`;
+            }
+          });
+          html += '</table>';
+        }
+      } else if (t.status === 'knockout' || t.status === 'completed') {
+        t.knockout.rounds.forEach((round, rIdx) => {
+          html += `<h4 style="font-size:14px;">Round ${rIdx + 1}</h4><table><tr><th>Match</th><th>Score</th><th>Action</th></tr>`;
+          round.forEach((m, mIdx) => {
+            const bName = m.player_b ? m.player_b.name : '(bye)';
+            const label = `${m.player_a.name} vs ${bName}`;
+            if (m.played) {
+              const scoreText = m.bye ? 'bye' : `${m.score_a} - ${m.score_b}`;
+              html += `<tr><td>${label}</td><td>${scoreText}</td><td>Done</td></tr>`;
+            } else {
+              html += `<tr><td>${label}</td><td colspan="2">
+                <input type="number" id="ka_${t.tournament_id}_${rIdx}_${mIdx}" style="width:50px;display:inline-block;">
+                -
+                <input type="number" id="kb_${t.tournament_id}_${rIdx}_${mIdx}" style="width:50px;display:inline-block;">
+                <button onclick="submitKnockoutScore('${t.tournament_id}',${rIdx},${mIdx})">Submit</button>
+              </td></tr>`;
+            }
+          });
+          html += '</table>';
+        });
+        if (t.status === 'completed') {
+          const championName = t.knockout.rounds[t.knockout.rounds.length - 1][0].player_a.name;
+          html += `<p><strong>Champion: ${championName}</strong></p>`;
+        }
+      }
+
+      el.innerHTML = html;
+    }
+
+    async function submitGroupScore(tournamentId, subgroup, fixtureId) {
+      const score_a = document.getElementById(`ga_${fixtureId}`).value;
+      const score_b = document.getElementById(`gb_${fixtureId}`).value;
+      const res = await fetch(`${API_BASE_URL}/tournaments/${tournamentId}/group-score`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ subgroup, fixture_id: fixtureId, score_a, score_b })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        renderTournament(data);
+        loadPlayers();
+      } else {
+        alert(data.error);
+      }
+    }
+
+    async function submitKnockoutScore(tournamentId, roundIndex, matchIndex) {
+      const score_a = document.getElementById(`ka_${tournamentId}_${roundIndex}_${matchIndex}`).value;
+      const score_b = document.getElementById(`kb_${tournamentId}_${roundIndex}_${matchIndex}`).value;
+      const res = await fetch(`${API_BASE_URL}/tournaments/${tournamentId}/knockout-score`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ round_index: roundIndex, match_index: matchIndex, score_a, score_b })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        renderTournament(data);
+        loadPlayers();
+      } else {
+        alert(data.error);
+      }
+    }
   </script>
 </body>
 </html>
