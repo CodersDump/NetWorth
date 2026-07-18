@@ -636,10 +636,44 @@ Resources:
             Action: s3:GetObject
             Resource: !Sub '${WebsiteBucket.Arn}/*'
 
+  # ---------- CloudFront (HTTPS in front of the S3 website) ----------
+
+  CloudFrontDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        DefaultRootObject: index.html
+        PriceClass: PriceClass_100
+        Origins:
+          - Id: S3WebsiteOrigin
+            DomainName: !Select [2, !Split ['/', !GetAtt WebsiteBucket.WebsiteURL]]
+            CustomOriginConfig:
+              OriginProtocolPolicy: http-only
+              HTTPPort: 80
+              HTTPSPort: 443
+              OriginSSLProtocols: [TLSv1.2]
+        DefaultCacheBehavior:
+          TargetOriginId: S3WebsiteOrigin
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods: [GET, HEAD]
+          CachedMethods: [GET, HEAD]
+          ForwardedValues:
+            QueryString: false
+            Cookies:
+              Forward: none
+          MinTTL: 0
+          DefaultTTL: 60
+          MaxTTL: 300
+
 Outputs:
   WebsiteUrl:
     Description: Shareable link for your teammates
     Value: !GetAtt WebsiteBucket.WebsiteURL
+
+  CloudFrontUrl:
+    Description: HTTPS shareable link (use this one - works on mobile)
+    Value: !Sub 'https://${CloudFrontDistribution.DomainName}'
 
   ApiUrl:
     Description: Base API URL (used by frontend JS)

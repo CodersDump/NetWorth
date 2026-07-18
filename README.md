@@ -88,8 +88,8 @@ aws cloudformation deploy `
 ### Deploy user IAM policy
 
 The IAM user used by GitHub Actions needs S3 permissions for the artifacts
-bucket in addition to the CloudFormation/DynamoDB/Lambda/API
-Gateway/IAM permissions from before:
+bucket, plus CloudFront permissions (for the HTTPS distribution), in addition
+to the CloudFormation/DynamoDB/Lambda/API Gateway/IAM permissions from before:
 
 ```json
 {
@@ -106,8 +106,28 @@ Gateway/IAM permissions from before:
     "arn:aws:s3:::networth-artifacts-*",
     "arn:aws:s3:::networth-artifacts-*/*"
   ]
+},
+{
+  "Sid": "CloudFrontAccess",
+  "Effect": "Allow",
+  "Action": [
+    "cloudfront:CreateDistribution",
+    "cloudfront:GetDistribution",
+    "cloudfront:GetDistributionConfig",
+    "cloudfront:UpdateDistribution",
+    "cloudfront:DeleteDistribution",
+    "cloudfront:TagResource",
+    "cloudfront:ListTagsForResource",
+    "cloudfront:CreateInvalidation",
+    "cloudfront:ListDistributions"
+  ],
+  "Resource": "*"
 }
 ```
+
+> CloudFront resources are global (not tied to a region) and don't support
+> name-prefix scoping like the other services here, so this uses `"*"` for
+> the Resource - acceptable since it's your own personal account.
 
 ## Repo secrets required
 

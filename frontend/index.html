@@ -274,12 +274,35 @@
       }
     }
 
+    const TEAM_SELECT_IDS = ['team_a1_select', 'team_a2_select', 'team_b1_select', 'team_b2_select'];
+
     function populateTeamSelects() {
-      const labeled = allPlayers.map(p => ({ ...p, label: `${p.name} (${p.rating})` }));
-      ['team_a1_select', 'team_a2_select', 'team_b1_select', 'team_b2_select'].forEach(id => {
-        populateSelect(document.getElementById(id), labeled, 'player_id', 'label', null);
+      refreshTeamSelectOptions();
+      TEAM_SELECT_IDS.forEach(id => {
+        document.getElementById(id).addEventListener('change', () => refreshTeamSelectOptions());
       });
       applyMatchTypeVisibility();
+    }
+
+    function refreshTeamSelectOptions() {
+      const currentValues = {};
+      TEAM_SELECT_IDS.forEach(id => { currentValues[id] = document.getElementById(id).value; });
+
+      TEAM_SELECT_IDS.forEach(id => {
+        const selectEl = document.getElementById(id);
+        const excludedElsewhere = TEAM_SELECT_IDS
+          .filter(otherId => otherId !== id)
+          .map(otherId => currentValues[otherId])
+          .filter(Boolean);
+
+        const available = allPlayers.filter(p => !excludedElsewhere.includes(p.player_id));
+        const labeled = available.map(p => ({ ...p, label: `${p.name} (${p.rating})` }));
+        populateSelect(selectEl, labeled, 'player_id', 'label', null);
+
+        if (currentValues[id] && available.some(p => p.player_id === currentValues[id])) {
+          selectEl.value = currentValues[id];
+        }
+      });
     }
 
     function applyMatchTypeVisibility() {
@@ -289,7 +312,10 @@
       });
     }
 
-    document.getElementById('match_type_select').addEventListener('change', applyMatchTypeVisibility);
+    document.getElementById('match_type_select').addEventListener('change', () => {
+      applyMatchTypeVisibility();
+      refreshTeamSelectOptions();
+    });
 
     document.getElementById('randomize-teams-btn').addEventListener('click', () => {
       const isDoubles = document.getElementById('match_type_select').value === 'doubles';
@@ -305,6 +331,7 @@
         document.getElementById('team_a2_select').value = shuffled[2].player_id;
         document.getElementById('team_b2_select').value = shuffled[3].player_id;
       }
+      refreshTeamSelectOptions();
     });
 
     // ---------- registration ----------

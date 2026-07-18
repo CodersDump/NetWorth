@@ -66,3 +66,14 @@ jobs:
             --query "Stacks[0].Outputs[?OutputKey=='WebsiteUrl'].OutputValue" \
             --output text | sed -E 's#http://([^.]+)\..*#\1#')
           aws s3 cp frontend/index.html s3://$BUCKET_NAME/index.html
+
+      - name: Invalidate CloudFront cache
+        run: |
+          DIST_DOMAIN=$(aws cloudformation describe-stacks \
+            --stack-name networth-app \
+            --query "Stacks[0].Outputs[?OutputKey=='CloudFrontUrl'].OutputValue" \
+            --output text | sed -E 's#https://##')
+          DIST_ID=$(aws cloudfront list-distributions \
+            --query "DistributionList.Items[?DomainName=='$DIST_DOMAIN'].Id" \
+            --output text)
+          aws cloudfront create-invalidation --distribution-id $DIST_ID --paths "/*"

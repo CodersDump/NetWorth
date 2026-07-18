@@ -107,6 +107,22 @@
         "iam:TagRole"
       ],
       "Resource": "arn:aws:iam::*:role/networth-*"
-    }
+    },
+      {
+    "Sid": "CloudFrontAccess",
+    "Effect": "Allow",
+    "Action": [
+      "cloudfront:CreateDistribution",
+      "cloudfront:GetDistribution",
+      "cloudfront:GetDistributionConfig",
+      "cloudfront:UpdateDistribution",
+      "cloudfront:DeleteDistribution",
+      "cloudfront:TagResource",
+      "cloudfront:ListTagsForResource",
+      "cloudfront:CreateInvalidation",
+      "cloudfront:ListDistributions"
+    ],
+    "Resource": "*"
+  }
   ]
 }
