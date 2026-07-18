@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+.env
+.aws-sam/
+.vscode/
+.DS_Store
+NetWorth/

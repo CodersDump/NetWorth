@@ -1,0 +1,48 @@
+name: Deploy NetWorth
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Deploy CloudFormation stack
+        run: |
+          aws cloudformation deploy \
+            --template-file infrastructure/template.yaml \
+            --stack-name networth-app \
+            --capabilities CAPABILITY_NAMED_IAM
+
+      - name: Get API URL from stack outputs
+        id: stack-outputs
+        run: |
+          API_URL=$(aws cloudformation describe-stacks \
+            --stack-name networth-app \
+            --query "Stacks[0].Outputs[?OutputKey=='ApiUrl'].OutputValue" \
+            --output text)
+          echo "api_url=$API_URL" >> "$GITHUB_OUTPUT"
+
+      - name: Inject API URL into frontend
+        run: |
+          sed -i "s#https://REPLACE_ME.execute-api.REGION.amazonaws.com/prod#${{ steps.stack-outputs.outputs.api_url }}#g" frontend/index.html
+
+      - name: Sync frontend to S3
+        run: |
+          BUCKET_NAME=$(aws cloudformation describe-stacks \
+            --stack-name networth-app \
+            --query "Stacks[0].Outputs[?OutputKey=='WebsiteUrl'].OutputValue" \
+            --output text | sed -E 's#http://([^.]+)\..*#\1#')
+          aws s3 cp frontend/index.html s3://$BUCKET_NAME/index.html

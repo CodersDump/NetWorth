@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>NetWorth - Badminton Rankings</title>
+<style>
+  body { font-family: sans-serif; max-width: 480px; margin: 40px auto; padding: 0 16px; }
+  h1 { font-size: 22px; }
+  label { display: block; margin-top: 12px; font-size: 14px; }
+  input, select { width: 100%; padding: 8px; margin-top: 4px; box-sizing: border-box; }
+  button { margin-top: 16px; padding: 10px 16px; cursor: pointer; }
+  #result { margin-top: 16px; font-size: 14px; }
+</style>
+</head>
+<body>
+  <h1>NetWorth</h1>
+  <p>Register for the badminton group.</p>
+
+  <form id="register-form">
+    <label>Name
+      <input type="text" id="name" required>
+    </label>
+    <label>Skill level
+      <select id="skill_level">
+        <option value="beginner">Beginner</option>
+        <option value="intermediate">Intermediate</option>
+        <option value="advanced">Advanced</option>
+      </select>
+    </label>
+    <button type="submit">Register</button>
+  </form>
+
+  <div id="result"></div>
+
+  <script>
+    // Replace with your deployed API Gateway URL (see CloudFormation output: ApiUrl)
+    const API_BASE_URL = 'https://REPLACE_ME.execute-api.REGION.amazonaws.com/prod';
+
+    document.getElementById('register-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const name = document.getElementById('name').value;
+      const skill_level = document.getElementById('skill_level').value;
+      const resultEl = document.getElementById('result');
+      resultEl.textContent = 'Registering...';
+
+      try {
+        const res = await fetch(`${API_BASE_URL}/register`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name, skill_level })
+        });
+        const data = await res.json();
+        if (res.ok) {
+          resultEl.textContent = `Registered! Player ID: ${data.player_id}`;
+        } else {
+          resultEl.textContent = `Error: ${data.error}`;
+        }
+      } catch (err) {
+        resultEl.textContent = `Request failed: ${err.message}`;
+      }
+    });
+  </script>
+</body>
+</html>
