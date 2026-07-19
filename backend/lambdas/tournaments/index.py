@@ -180,6 +180,15 @@ def create_tournament(event):
             if p:
                 players.append({'player_id': p['player_id'], 'name': p['name'], 'rating': p.get('rating', 1000)})
 
+        filler_player_id = body.get('filler_player_id')
+        if filler_player_id:
+            if any(p['player_id'] == filler_player_id for p in players):
+                return _response(400, {'error': 'filler_player_id is already in the participant list'})
+            filler = players_table.get_item(Key={'player_id': filler_player_id}).get('Item')
+            if not filler:
+                return _response(404, {'error': 'filler_player_id not found'})
+            players.append({'player_id': filler['player_id'], 'name': filler['name'], 'rating': filler.get('rating', 1000)})
+
         if pairing_mode == 'seeded':
             ordered = seeded_order(players)
         else:

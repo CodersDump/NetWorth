@@ -225,6 +225,26 @@
       <strong style="font-size:13px;">Who's playing today?</strong>
       <div id="tournament-participants-checklist" style="max-height:180px; overflow-y:auto; border:1px solid #ccc; padding:8px; margin-top:4px;"></div>
     </div>
+
+    <div id="filler-section" style="display:none; margin-top:12px; border:1px solid #d99; padding:8px;">
+      <p style="font-size:13px; margin:0 0 6px 0;">Odd number of players for doubles - pick someone to fill the last slot:</p>
+      <select id="filler_existing_select"></select>
+      <label><input type="checkbox" id="filler_new_toggle" style="width:auto;display:inline-block;"> This person isn't registered yet - add them just for this event</label>
+      <div id="filler-new-fields" style="display:none;">
+        <label>New player's name
+          <input type="text" id="filler_new_name">
+        </label>
+        <label>Skill level
+          <select id="filler_new_skill">
+            <option value="beginner">Beginner</option>
+            <option value="intermediate" selected>Intermediate</option>
+            <option value="advanced">Advanced</option>
+          </select>
+        </label>
+      </div>
+      <button type="button" id="confirm-filler-btn">Confirm and create tournament</button>
+      <div id="filler-result" class="result"></div>
+    </div>
     <label>Tournament name
       <input type="text" id="tournament_name" required>
     </label>
@@ -1026,6 +1046,75 @@
       populateSelect(document.getElementById('tournament_select'), items, 'tournament_id', 'label', null);
     }
 
+    async function submitTournamentCreation(payload) {
+      const resultEl = document.getElementById('create-tournament-result');
+      resultEl.textContent = 'Creating...';
+      try {
+        const res = await fetch(`${API_BASE_URL}/tournaments`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+        if (res.ok) {
+          resultEl.textContent = `Created tournament: ${data.name}`;
+          document.getElementById('tournament_name').value = '';
+          document.getElementById('filler-section').style.display = 'none';
+          await loadTournamentsList();
+          document.getElementById('tournament_select').value = data.tournament_id;
+          renderTeamCompositionBars(data, 'team-composition-preview');
+          renderTournament(data);
+        } else {
+          resultEl.textContent = `Error: ${data.error}`;
+        }
+      } catch (err) {
+        resultEl.textContent = `Request failed: ${err.message}`;
+      }
+    }
+
+    let pendingTournamentPayload = null;
+
+    document.getElementById('filler_new_toggle').addEventListener('change', (e) => {
+      const useNew = e.target.checked;
+      document.getElementById('filler-new-fields').style.display = useNew ? 'block' : 'none';
+      document.getElementById('filler_existing_select').disabled = useNew;
+    });
+
+    document.getElementById('confirm-filler-btn').addEventListener('click', async () => {
+      const fillerResultEl = document.getElementById('filler-result');
+      const useNew = document.getElementById('filler_new_toggle').checked;
+      let filler_player_id;
+
+      if (useNew) {
+        const newName = document.getElementById('filler_new_name').value.trim();
+        const skill_level = document.getElementById('filler_new_skill').value;
+        if (!newName) { fillerResultEl.textContent = 'Enter a name for the new player.'; return; }
+
+        fillerResultEl.textContent = 'Registering...';
+        try {
+          const regRes = await fetch(`${API_BASE_URL}/register`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name: newName, skill_level })
+          });
+          const regData = await regRes.json();
+          if (!regRes.ok) { fillerResultEl.textContent = `Error registering: ${regData.error}`; return; }
+          filler_player_id = regData.player_id;
+          loadPlayers();
+        } catch (err) {
+          fillerResultEl.textContent = `Request failed: ${err.message}`;
+          return;
+        }
+      } else {
+        filler_player_id = document.getElementById('filler_existing_select').value;
+        if (!filler_player_id) { fillerResultEl.textContent = 'Select an existing player, or register a new one.'; return; }
+      }
+
+      pendingTournamentPayload.filler_player_id = filler_player_id;
+      await submitTournamentCreation(pendingTournamentPayload);
+      pendingTournamentPayload = null;
+    });
+
     document.getElementById('create-tournament-form').addEventListener('submit', async (e) => {
       e.preventDefault();
       const group_id = document.getElementById('tournament_group_select').value;
@@ -1042,6 +1131,7 @@
       if (!group_id) { resultEl.textContent = 'Select a group first.'; return; }
 
       const payload = { group_id, name, format, match_type, pairing_mode, points_to_win, best_of, num_subgroups, advance_per_group };
+      let participantCount = 0;
       if (pairing_mode === 'manual') {
         const manual_teams = collectManualTeams();
         if (manual_teams.length < 2) { resultEl.textContent = 'Add at least 2 complete teams.'; return; }
@@ -1051,29 +1141,28 @@
         if (participant_ids.length) {
           payload.participant_ids = participant_ids;
         }
+        participantCount = participant_ids.length;
       }
 
-      resultEl.textContent = 'Creating...';
-      try {
-        const res = await fetch(`${API_BASE_URL}/tournaments`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload)
-        });
-        const data = await res.json();
-        if (res.ok) {
-          resultEl.textContent = `Created tournament: ${data.name}`;
-          document.getElementById('tournament_name').value = '';
-          await loadTournamentsList();
-          document.getElementById('tournament_select').value = data.tournament_id;
-          renderTeamCompositionBars(data, 'team-composition-preview');
-          renderTournament(data);
-        } else {
-          resultEl.textContent = `Error: ${data.error}`;
-        }
-      } catch (err) {
-        resultEl.textContent = `Request failed: ${err.message}`;
+      // Doubles needs an even headcount - if odd, pause and ask for a filler player
+      if (pairing_mode !== 'manual' && match_type === 'doubles' && participantCount % 2 === 1) {
+        const participant_ids = collectTournamentParticipants();
+        const filterOut = new Set(participant_ids);
+        const candidates = allPlayers.filter(p => !filterOut.has(p.player_id));
+        const labeled = candidates.map(p => ({ ...p, label: `${p.name} (${p.rating})` }));
+        populateSelect(document.getElementById('filler_existing_select'), labeled, 'player_id', 'label', null);
+        document.getElementById('filler-result').textContent = '';
+        document.getElementById('filler_new_toggle').checked = false;
+        document.getElementById('filler-new-fields').style.display = 'none';
+        document.getElementById('filler_existing_select').disabled = false;
+        document.getElementById('filler-section').style.display = 'block';
+        resultEl.textContent = `You have ${participantCount} players selected - doubles needs an even number.`;
+        pendingTournamentPayload = payload;
+        return;
       }
+
+      document.getElementById('filler-section').style.display = 'none';
+      await submitTournamentCreation(payload);
     });
 
     document.getElementById('load-tournament-btn').addEventListener('click', async () => {
