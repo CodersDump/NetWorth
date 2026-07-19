@@ -218,6 +218,18 @@
         <option value="singles">Singles</option>
       </select>
     </label>
+    <label>Pairing
+      <select id="tournament_pairing_mode">
+        <option value="random">Random</option>
+        <option value="seeded">Rating/experience-aware random</option>
+        <option value="manual">Manual (I'll pick the teams)</option>
+      </select>
+    </label>
+    <div id="manual-teams-section" style="display:none; margin-top:12px;">
+      <p style="font-size:13px; color:#555;">Build each team below, then create the tournament.</p>
+      <div id="manual-teams-container"></div>
+      <button type="button" id="add-manual-team-btn">Add team</button>
+    </div>
     <label>Points to win (applies to all matches in this tournament)
       <select id="tournament_points_to_win">
         <option value="21" selected>21</option>
@@ -259,6 +271,22 @@
   <label><input type="checkbox" id="tournament_live_toggle" style="width:auto;display:inline-block;"> Use live point-by-point scoring for tournament matches</label>
 
   <div id="tournament-detail" style="margin-top: 16px;"></div>
+
+  <div id="substitution-section" style="display:none; margin-top:16px;">
+    <h4 style="font-size:14px;">Substitute a player</h4>
+    <p style="font-size:13px; color:#555;">Only affects this team's future (not-yet-played) matches in this tournament.</p>
+    <label>Team
+      <select id="sub_team_select"></select>
+    </label>
+    <label>Player being replaced
+      <select id="sub_old_player_select"></select>
+    </label>
+    <label>Replacement player
+      <select id="sub_new_player_select"></select>
+    </label>
+    <button type="button" id="submit-substitution-btn">Substitute</button>
+    <div id="substitution-result" class="result"></div>
+  </div>
 
   <script>
     // Replace with your deployed API Gateway URL (see CloudFormation output: ApiUrl)
@@ -733,6 +761,74 @@
       document.getElementById('subgroup-options').style.display = e.target.value === 'groups_then_knockout' ? 'block' : 'none';
     });
 
+    document.getElementById('tournament_pairing_mode').addEventListener('change', (e) => {
+      const isManual = e.target.value === 'manual';
+      document.getElementById('manual-teams-section').style.display = isManual ? 'block' : 'none';
+      if (isManual && document.getElementById('manual-teams-container').children.length === 0) {
+        addManualTeamRow();
+        addManualTeamRow();
+      }
+    });
+
+    document.getElementById('tournament_match_type').addEventListener('change', () => {
+      // rebuild existing manual team rows if match type (singles/doubles) changes
+      const container = document.getElementById('manual-teams-container');
+      const count = container.children.length;
+      container.innerHTML = '';
+      for (let i = 0; i < count; i++) addManualTeamRow();
+    });
+
+    document.getElementById('add-manual-team-btn').addEventListener('click', () => addManualTeamRow());
+
+    function addManualTeamRow() {
+      const container = document.getElementById('manual-teams-container');
+      const isDoubles = document.getElementById('tournament_match_type').value === 'doubles';
+      const rowIndex = container.children.length;
+      const labeled = allPlayers.map(p => ({ ...p, label: `${p.name} (${p.rating})` }));
+
+      const row = document.createElement('div');
+      row.className = 'row';
+      row.style.marginTop = '6px';
+
+      const sel1 = document.createElement('select');
+      sel1.id = `manual_team_${rowIndex}_p1`;
+      const div1 = document.createElement('div');
+      div1.innerHTML = `<strong>Team ${rowIndex + 1}</strong>`;
+      div1.appendChild(sel1);
+      row.appendChild(div1);
+
+      if (isDoubles) {
+        const sel2 = document.createElement('select');
+        sel2.id = `manual_team_${rowIndex}_p2`;
+        const div2 = document.createElement('div');
+        div2.appendChild(sel2);
+        row.appendChild(div2);
+        populateSelect(sel2, labeled, 'player_id', 'label', null);
+      }
+
+      const removeBtn = document.createElement('button');
+      removeBtn.type = 'button';
+      removeBtn.textContent = 'Remove';
+      removeBtn.onclick = () => row.remove();
+      row.appendChild(removeBtn);
+
+      populateSelect(sel1, labeled, 'player_id', 'label', null);
+      container.appendChild(row);
+    }
+
+    function collectManualTeams() {
+      const container = document.getElementById('manual-teams-container');
+      const isDoubles = document.getElementById('tournament_match_type').value === 'doubles';
+      const teams = [];
+      for (const row of container.children) {
+        const selects = row.querySelectorAll('select');
+        const ids = Array.from(selects).map(s => s.value).filter(Boolean);
+        if (isDoubles && ids.length === 2) teams.push(ids);
+        else if (!isDoubles && ids.length === 1) teams.push(ids);
+      }
+      return teams;
+    }
+
     async function loadTournamentGroupOptions() {
       populateSelect(document.getElementById('tournament_group_select'), allGroups, 'group_id', 'group_name', null);
     }
@@ -750,6 +846,7 @@
       const name = document.getElementById('tournament_name').value;
       const format = document.getElementById('tournament_format').value;
       const match_type = document.getElementById('tournament_match_type').value;
+      const pairing_mode = document.getElementById('tournament_pairing_mode').value;
       const points_to_win = document.getElementById('tournament_points_to_win').value;
       const best_of = document.getElementById('tournament_best_of').value;
       const num_subgroups = document.getElementById('num_subgroups').value;
@@ -758,12 +855,19 @@
 
       if (!group_id) { resultEl.textContent = 'Select a group first.'; return; }
 
+      const payload = { group_id, name, format, match_type, pairing_mode, points_to_win, best_of, num_subgroups, advance_per_group };
+      if (pairing_mode === 'manual') {
+        const manual_teams = collectManualTeams();
+        if (manual_teams.length < 2) { resultEl.textContent = 'Add at least 2 complete teams.'; return; }
+        payload.manual_teams = manual_teams;
+      }
+
       resultEl.textContent = 'Creating...';
       try {
         const res = await fetch(`${API_BASE_URL}/tournaments`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ group_id, name, format, match_type, points_to_win, best_of, num_subgroups, advance_per_group })
+          body: JSON.stringify(payload)
         });
         const data = await res.json();
         if (res.ok) {
@@ -815,6 +919,85 @@
       }
     });
 
+    function collectAllEntities(t) {
+      const entities = {};
+      if (t.subgroups) {
+        for (const sg of Object.values(t.subgroups)) {
+          for (const e of sg.members) entities[e.player_id] = e;
+        }
+      }
+      if (t.knockout && t.knockout.rounds && t.knockout.rounds[0]) {
+        for (const m of t.knockout.rounds[0]) {
+          if (m.player_a) entities[m.player_a.player_id] = m.player_a;
+          if (m.player_b) entities[m.player_b.player_id] = m.player_b;
+        }
+      }
+      return Object.values(entities).filter(e => e.members && e.members.length === 2);
+    }
+
+    function populateSubstitutionSection(t) {
+      const section = document.getElementById('substitution-section');
+      const entities = collectAllEntities(t);
+      if (!entities.length) { section.style.display = 'none'; return; }
+      section.style.display = 'block';
+
+      const teamOptions = entities.map(e => ({ player_id: e.player_id, label: e.name }));
+      populateSelect(document.getElementById('sub_team_select'), teamOptions, 'player_id', 'label', null);
+      updateSubOldPlayerOptions();
+    }
+
+    function updateSubOldPlayerOptions() {
+      const teamId = document.getElementById('sub_team_select').value;
+      const entities = collectAllEntities(currentTournamentData);
+      const team = entities.find(e => e.player_id === teamId);
+      if (!team) return;
+
+      const memberOptions = team.members.map(pid => {
+        const p = allPlayers.find(pl => pl.player_id === pid);
+        return { player_id: pid, label: p ? p.name : pid };
+      });
+      populateSelect(document.getElementById('sub_old_player_select'), memberOptions, 'player_id', 'label', null);
+
+      const labeled = allPlayers.map(p => ({ ...p, label: `${p.name} (${p.rating})` }));
+      populateSelect(document.getElementById('sub_new_player_select'), labeled, 'player_id', 'label', null);
+    }
+
+    document.getElementById('sub_team_select').addEventListener('change', updateSubOldPlayerOptions);
+
+    document.getElementById('submit-substitution-btn').addEventListener('click', async () => {
+      const team_entity_id = document.getElementById('sub_team_select').value;
+      const old_player_id = document.getElementById('sub_old_player_select').value;
+      const new_player_id = document.getElementById('sub_new_player_select').value;
+      const resultEl = document.getElementById('substitution-result');
+
+      if (!team_entity_id || !old_player_id || !new_player_id) {
+        resultEl.textContent = 'Select a team, the player being replaced, and the replacement.';
+        return;
+      }
+      if (old_player_id === new_player_id) {
+        resultEl.textContent = 'Replacement must be a different player.';
+        return;
+      }
+
+      resultEl.textContent = 'Substituting...';
+      try {
+        const res = await fetch(`${API_BASE_URL}/tournaments/${currentTournamentData.tournament_id}/substitute`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ team_entity_id, old_player_id, new_player_id })
+        });
+        const data = await res.json();
+        if (res.ok) {
+          resultEl.textContent = 'Substitution applied to future matches.';
+          renderTournament(data);
+        } else {
+          resultEl.textContent = `Error: ${data.error}`;
+        }
+      } catch (err) {
+        resultEl.textContent = `Request failed: ${err.message}`;
+      }
+    });
+
     function formatGames(games) {
       if (!games || !games.length) return '';
       return games.map(g => `${g.score_a}-${g.score_b}`).join(', ');
@@ -822,6 +1005,7 @@
 
     function renderTournament(t) {
       currentTournamentData = t;
+      populateSubstitutionSection(t);
       const el = document.getElementById('tournament-detail');
       const bestOf = t.best_of || 1;
       const liveMode = document.getElementById('tournament_live_toggle').checked;
@@ -841,7 +1025,8 @@
           }
           html += '<table><tr><th>Match</th><th>Games</th><th>Action</th></tr>';
           sg.fixtures.forEach(f => {
-            const label = `${f.player_a.name} vs ${f.player_b.name}`;
+            const tbPrefix = f.tiebreaker ? '<strong>[TIEBREAKER]</strong> ' : '';
+            const label = `${tbPrefix}${f.player_a.name} vs ${f.player_b.name}`;
             const gamesText = formatGames(f.games);
             if (f.played) {
               html += `<tr><td>${label}</td><td>${gamesText} (${f.games_won_a}-${f.games_won_b})</td><td>Done</td></tr>`;

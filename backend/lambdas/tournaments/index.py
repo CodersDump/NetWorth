@@ -76,6 +76,9 @@ def handler(event, context):
         elif len(parts) == 2 and parts[1] == 'knockout-score':
             if method == 'POST':
                 return record_knockout_score(parts[0], event)
+        elif len(parts) == 2 and parts[1] == 'substitute':
+            if method == 'POST':
+                return substitute_player(parts[0], event)
 
         return _response(404, {'error': 'not found'})
     except Exception as e:
@@ -83,6 +86,66 @@ def handler(event, context):
 
 
 # ---------- creation ----------
+
+def get_matches_played_counts():
+    """Scan the Matches table once and count appearances per player_id,
+    across both standalone and tournament matches."""
+    items = matches_table.scan().get('Items', [])
+    counts = {}
+    for m in items:
+        for pid in (m.get('team_a') or []) + (m.get('team_b') or []):
+            counts[pid] = counts.get(pid, 0) + 1
+    return counts
+
+
+EXPERIENCED_THRESHOLD = 5  # matches played to be treated as "experienced" for seeding
+
+
+def seeded_order(players, matches_played):
+    """Sort experienced players by rating (desc); interleave newer players
+    evenly through that order rather than leaving them clustered together,
+    since a new player's default 1000 rating isn't a reliable skill signal
+    yet."""
+    experienced = [p for p in players if matches_played.get(p['player_id'], 0) >= EXPERIENCED_THRESHOLD]
+    newer = [p for p in players if matches_played.get(p['player_id'], 0) < EXPERIENCED_THRESHOLD]
+    experienced.sort(key=lambda p: -float(p.get('rating', 1000)))
+    random.shuffle(newer)
+
+    if not newer:
+        return experienced
+    if not experienced:
+        return newer
+
+    result = []
+    step = len(experienced) / (len(newer) + 1)
+    next_insert_at = step
+    newer_idx = 0
+    for i, p in enumerate(experienced):
+        result.append(p)
+        if newer_idx < len(newer) and (i + 1) >= next_insert_at:
+            result.append(newer[newer_idx])
+            newer_idx += 1
+            next_insert_at += step
+    while newer_idx < len(newer):
+        result.append(newer[newer_idx])
+        newer_idx += 1
+    return result
+
+
+def pair_for_balance(ordered_players):
+    """Given a skill-ordered list, pair strongest with weakest (snake
+    pairing) so doubles teams end up roughly balanced against each other,
+    rather than stacking all the strong players together."""
+    n = len(ordered_players)
+    pairs = []
+    i, j = 0, n - 1
+    while i < j:
+        pairs.append((ordered_players[i], ordered_players[j]))
+        i += 1
+        j -= 1
+    leftover = ordered_players[i] if i == j else None
+    return pairs, leftover
+
 
 def create_tournament(event):
     body = json.loads(event.get('body') or '{}')
@@ -94,6 +157,8 @@ def create_tournament(event):
     best_of = int(body.get('best_of', 1))
     num_subgroups = int(body.get('num_subgroups', 2))
     advance_per_group = int(body.get('advance_per_group', 2))
+    pairing_mode = body.get('pairing_mode', 'random')  # 'random' | 'seeded' | 'manual'
+    manual_teams = body.get('manual_teams')  # optional: [["pid1","pid2"], ["pid3","pid4"], ...]
 
     if not group_id or not name:
         return _response(400, {'error': 'group_id and name are required'})
@@ -101,38 +166,75 @@ def create_tournament(event):
         return _response(400, {'error': 'match_type must be singles or doubles'})
     if best_of not in (1, 3):
         return _response(400, {'error': 'best_of must be 1 or 3'})
+    if pairing_mode not in ('random', 'seeded', 'manual'):
+        return _response(400, {'error': 'pairing_mode must be random, seeded, or manual'})
 
     group = groups_table.get_item(Key={'group_id': group_id}).get('Item')
     if not group:
         return _response(404, {'error': 'group not found'})
 
-    member_ids = group.get('member_ids', [])
-    players = []
-    for pid in member_ids:
-        p = players_table.get_item(Key={'player_id': pid}).get('Item')
-        if p:
-            players.append({'player_id': p['player_id'], 'name': p['name']})
-
     excluded_player = None
-    if match_type == 'doubles':
-        if len(players) < 4:
-            return _response(400, {'error': 'doubles needs at least 4 players'})
-        random.shuffle(players)
-        if len(players) % 2 == 1:
-            excluded_player = players.pop()['name']
+
+    if manual_teams:
+        expected_size = 1 if match_type == 'singles' else 2
         entities = []
-        for i in range(0, len(players), 2):
-            p1, p2 = players[i], players[i + 1]
+        seen_ids = set()
+        for team_ids in manual_teams:
+            if len(team_ids) != expected_size:
+                return _response(400, {'error': f'each manual team needs exactly {expected_size} player(s) for {match_type}'})
+            team_players = []
+            for pid in team_ids:
+                if pid in seen_ids:
+                    return _response(400, {'error': 'a player appears in more than one manual team'})
+                seen_ids.add(pid)
+                p = players_table.get_item(Key={'player_id': pid}).get('Item')
+                if not p:
+                    return _response(404, {'error': f'player not found: {pid}'})
+                team_players.append(p)
+            name_str = ' & '.join(p['name'] for p in team_players)
             entities.append({
                 'player_id': str(uuid.uuid4()),
-                'name': f"{p1['name']} & {p2['name']}",
-                'members': [p1['player_id'], p2['player_id']]
+                'name': name_str,
+                'members': [p['player_id'] for p in team_players]
             })
+        pairing_mode = 'manual'
     else:
-        if len(players) < 2:
-            return _response(400, {'error': 'group needs at least 2 players'})
-        random.shuffle(players)
-        entities = [{'player_id': p['player_id'], 'name': p['name'], 'members': [p['player_id']]} for p in players]
+        member_ids = group.get('member_ids', [])
+        players = []
+        for pid in member_ids:
+            p = players_table.get_item(Key={'player_id': pid}).get('Item')
+            if p:
+                players.append({'player_id': p['player_id'], 'name': p['name'], 'rating': p.get('rating', 1000)})
+
+        if pairing_mode == 'seeded':
+            matches_played = get_matches_played_counts()
+            ordered = seeded_order(players, matches_played)
+        else:
+            ordered = players[:]
+            random.shuffle(ordered)
+
+        if match_type == 'doubles':
+            if len(ordered) < 4:
+                return _response(400, {'error': 'doubles needs at least 4 players'})
+            if pairing_mode == 'seeded':
+                pairs, leftover = pair_for_balance(ordered)
+                if leftover:
+                    excluded_player = leftover['name']
+            else:
+                if len(ordered) % 2 == 1:
+                    excluded_player = ordered.pop()['name']
+                pairs = [(ordered[i], ordered[i + 1]) for i in range(0, len(ordered), 2)]
+            entities = []
+            for p1, p2 in pairs:
+                entities.append({
+                    'player_id': str(uuid.uuid4()),
+                    'name': f"{p1['name']} & {p2['name']}",
+                    'members': [p1['player_id'], p2['player_id']]
+                })
+        else:
+            if len(ordered) < 2:
+                return _response(400, {'error': 'group needs at least 2 players'})
+            entities = [{'player_id': p['player_id'], 'name': p['name'], 'members': [p['player_id']]} for p in ordered]
 
     tournament_id = str(uuid.uuid4())
     item = {
@@ -143,6 +245,7 @@ def create_tournament(event):
         'match_type': match_type,
         'points_to_win': points_to_win,
         'best_of': best_of,
+        'pairing_mode': pairing_mode,
         'created_at': datetime.now(timezone.utc).isoformat(),
     }
     if excluded_player:
@@ -385,10 +488,62 @@ def record_group_score(tournament_id, event):
 
         all_played = all(f['played'] for sg2 in item['subgroups'].values() for f in sg2['fixtures'])
         if all_played:
-            advance_to_knockout(item)
+            if not inject_tiebreakers_if_needed(item):
+                advance_to_knockout(item)
 
     tournaments_table.put_item(Item=item)
     return _response(200, item)
+
+
+def inject_tiebreakers_if_needed(item):
+    """Checks each subgroup for a genuine tie (same wins AND point_diff) at
+    the qualifying boundary. If found, appends an unplayed tiebreaker
+    fixture between exactly those two teams instead of advancing to
+    knockout. Returns True if any subgroup still needs a tiebreaker played
+    (meaning advancement should wait)."""
+    advance_n = item.get('advance_per_group', 2)
+    needs_tiebreaker = False
+
+    for sg in item['subgroups'].values():
+        # already has one pending (unplayed) - waiting on it, don't add another
+        if any(f.get('tiebreaker') and not f['played'] for f in sg['fixtures']):
+            needs_tiebreaker = True
+            continue
+
+        standings = compute_standings(sg['fixtures'], sg['members'])
+        if len(standings) <= advance_n:
+            continue
+
+        boundary_a = standings[advance_n - 1]
+        boundary_b = standings[advance_n]
+        tied = (boundary_a['wins'] == boundary_b['wins'] and boundary_a['point_diff'] == boundary_b['point_diff'])
+        if not tied:
+            continue
+
+        pair_key = {boundary_a['player_id'], boundary_b['player_id']}
+        already_resolved = any(
+            f.get('tiebreaker') and f['played'] and
+            {f['player_a']['player_id'], f['player_b']['player_id']} == pair_key
+            for f in sg['fixtures']
+        )
+        if already_resolved:
+            continue
+
+        entity_by_id = {e['player_id']: e for e in sg['members']}
+        sg['fixtures'].append({
+            'fixture_id': str(uuid.uuid4()),
+            'player_a': entity_by_id[boundary_a['player_id']],
+            'player_b': entity_by_id[boundary_b['player_id']],
+            'games': [],
+            'games_won_a': 0,
+            'games_won_b': 0,
+            'played': False,
+            'winner_id': None,
+            'tiebreaker': True
+        })
+        needs_tiebreaker = True
+
+    return needs_tiebreaker
 
 
 def advance_to_knockout(item):
@@ -583,6 +738,85 @@ def update_elo_and_log(match_type, entity_a, entity_b, score_a, score_b, group_i
     if games:
         log_item['games'] = games
     matches_table.put_item(Item=log_item)
+
+
+def substitute_player(tournament_id, event):
+    """Swap a player out of a team for all of that team's FUTURE (unplayed)
+    matches in this tournament. Already-played fixtures/matches keep their
+    original recorded entity untouched, so past results and Elo stay
+    attributed to whoever actually played them."""
+    body = json.loads(event.get('body') or '{}')
+    team_entity_id = body.get('team_entity_id')
+    old_player_id = body.get('old_player_id')
+    new_player_id = body.get('new_player_id')
+
+    if not team_entity_id or not old_player_id or not new_player_id:
+        return _response(400, {'error': 'team_entity_id, old_player_id, new_player_id are required'})
+
+    item = tournaments_table.get_item(Key={'tournament_id': tournament_id}).get('Item')
+    if not item:
+        return _response(404, {'error': 'tournament not found'})
+
+    new_player = players_table.get_item(Key={'player_id': new_player_id}).get('Item')
+    if not new_player:
+        return _response(404, {'error': 'new player not found'})
+
+    def apply_substitution(entity):
+        if not entity or entity.get('player_id') != team_entity_id:
+            return False
+        members = entity.get('members', [])
+        if old_player_id not in members:
+            return False
+        idx = members.index(old_player_id)
+        members[idx] = new_player_id
+        if len(members) == 2:
+            names = []
+            for pid in members:
+                if pid == new_player_id:
+                    names.append(new_player['name'])
+                else:
+                    p = players_table.get_item(Key={'player_id': pid}).get('Item')
+                    names.append(p['name'] if p else pid)
+            entity['name'] = ' & '.join(names)
+        else:
+            entity['name'] = new_player['name']
+        return True
+
+    updated_any = False
+
+    for sg in item.get('subgroups', {}).values():
+        for f in sg['fixtures']:
+            if not f['played']:
+                updated_any |= apply_substitution(f['player_a'])
+                updated_any |= apply_substitution(f['player_b'])
+        for e in sg['members']:
+            updated_any |= apply_substitution(e)
+
+    if 'knockout' in item:
+        for round_ in item['knockout'].get('rounds', []):
+            for m in round_:
+                if not m['played']:
+                    updated_any |= apply_substitution(m['player_a'])
+                    updated_any |= apply_substitution(m['player_b'])
+        tp = item['knockout'].get('third_place_match')
+        if tp and not tp['played']:
+            updated_any |= apply_substitution(tp['player_a'])
+            updated_any |= apply_substitution(tp['player_b'])
+
+    if not updated_any:
+        return _response(404, {'error': 'no unplayed matches found for that team/player combination'})
+
+    substitutions = item.setdefault('substitutions', [])
+    substitutions.append({
+        'team_entity_id': team_entity_id,
+        'old_player_id': old_player_id,
+        'new_player_id': new_player_id,
+        'new_player_name': new_player['name'],
+        'timestamp': datetime.now(timezone.utc).isoformat()
+    })
+
+    tournaments_table.put_item(Item=item)
+    return _response(200, item)
 
 
 def _response(status_code, body_dict):
