@@ -1104,18 +1104,20 @@
       if (!entities.length) { container.innerHTML = ''; return; }
 
       const withRatings = entities.map(e => {
-        const memberRatings = e.members.map(pid => {
+        const memberRatings = e.members.map((pid, idx) => {
           const p = allPlayers.find(pl => pl.player_id === pid);
-          return { player_id: pid, name: p ? p.name : pid, rating: p ? p.rating : 1000 };
+          const hasSnapshot = e.member_ratings && e.member_ratings[idx] !== undefined;
+          const rating = hasSnapshot ? Number(e.member_ratings[idx]) : (p ? Number(p.rating) : 1000);
+          return { player_id: pid, name: p ? p.name : pid, rating };
         });
-        const avg = memberRatings.reduce((sum, m) => sum + Number(m.rating), 0) / memberRatings.length;
+        const avg = memberRatings.reduce((sum, m) => sum + m.rating, 0) / memberRatings.length;
         return { name: e.name, members: memberRatings, avgRating: avg };
       });
 
       const maxAvg = Math.max(...withRatings.map(x => x.avgRating));
       withRatings.sort((a, b) => b.avgRating - a.avgRating);
 
-      let html = '<h4 style="font-size:14px;">Team balance</h4>';
+      let html = '<h4 style="font-size:14px;">Team balance</h4><p style="font-size:12px;color:#555;">Ratings shown are as of when this tournament was created, not live.</p>';
       withRatings.forEach(team => {
         const widthPct = Math.max(15, (team.avgRating / maxAvg) * 100);
         html += `<div style="margin-bottom:10px;">

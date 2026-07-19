@@ -196,7 +196,8 @@ def create_tournament(event):
             entities.append({
                 'player_id': str(uuid.uuid4()),
                 'name': name_str,
-                'members': [p['player_id'] for p in team_players]
+                'members': [p['player_id'] for p in team_players],
+                'member_ratings': [p.get('rating', 1000) for p in team_players]
             })
         pairing_mode = 'manual'
     else:
@@ -230,12 +231,14 @@ def create_tournament(event):
                 entities.append({
                     'player_id': str(uuid.uuid4()),
                     'name': f"{p1['name']} & {p2['name']}",
-                    'members': [p1['player_id'], p2['player_id']]
+                    'members': [p1['player_id'], p2['player_id']],
+                    'member_ratings': [p1['rating'], p2['rating']]
                 })
         else:
             if len(ordered) < 2:
                 return _response(400, {'error': 'group needs at least 2 players'})
-            entities = [{'player_id': p['player_id'], 'name': p['name'], 'members': [p['player_id']]} for p in ordered]
+            entities = [{'player_id': p['player_id'], 'name': p['name'], 'members': [p['player_id']],
+                         'member_ratings': [p['rating']]} for p in ordered]
 
     tournament_id = str(uuid.uuid4())
     item = {
