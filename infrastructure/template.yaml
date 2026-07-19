@@ -304,6 +304,18 @@ Resources:
         IntegrationHttpMethod: POST
         Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${PlayersFunction.Arn}/invocations'
 
+  UpdatePlayerMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RestApi
+      ResourceId: !Ref PlayerIdResource
+      HttpMethod: PUT
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${PlayersFunction.Arn}/invocations'
+
   PlayerIdOptionsMethod:
     Type: AWS::ApiGateway::Method
     Properties:
@@ -317,7 +329,7 @@ Resources:
           - StatusCode: 200
             ResponseParameters:
               method.response.header.Access-Control-Allow-Headers: "'Content-Type'"
-              method.response.header.Access-Control-Allow-Methods: "'OPTIONS,DELETE'"
+              method.response.header.Access-Control-Allow-Methods: "'OPTIONS,PUT,DELETE'"
               method.response.header.Access-Control-Allow-Origin: "'*'"
         RequestTemplates:
           application/json: '{"statusCode": 200}'
@@ -589,6 +601,7 @@ Resources:
       - ListPlayersMethod
       - PlayersOptionsMethod
       - DeletePlayerMethod
+      - UpdatePlayerMethod
       - PlayerIdOptionsMethod
       - GroupsAnyMethod
       - GroupsOptionsMethod

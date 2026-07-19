@@ -34,7 +34,7 @@
     <label>Skill level
       <select id="skill_level">
         <option value="beginner">Beginner</option>
-        <option value="intermediate">Intermediate</option>
+        <option value="intermediate" selected>Intermediate</option>
         <option value="advanced">Advanced</option>
       </select>
     </label>
@@ -46,7 +46,6 @@
 
   <!-- Delete a player -->
   <h2>Delete a player</h2>
-  <p style="font-size: 13px; color: #555;">Paste the player ID shown after registration.</p>
   <form id="delete-form">
     <label>Player
       <select id="delete_player_id" required></select>
@@ -54,6 +53,21 @@
     <button type="submit">Delete</button>
   </form>
   <div id="delete-result" class="result"></div>
+
+  <hr>
+
+  <!-- Edit a player -->
+  <h2>Edit a player's name</h2>
+  <form id="edit-player-form">
+    <label>Player
+      <select id="edit_player_select" required></select>
+    </label>
+    <label>New name
+      <input type="text" id="edit_player_name" required>
+    </label>
+    <button type="submit">Save name</button>
+  </form>
+  <div id="edit-player-result" class="result"></div>
 
   <hr>
 
@@ -122,7 +136,11 @@
     </div>
     <button id="randomize-teams-btn" type="button">Randomize teams</button>
 
-    <div class="row">
+    <div style="margin-top:16px;">
+      <label><input type="checkbox" id="live_scoring_toggle" style="width:auto;display:inline-block;"> Use live point-by-point scoring</label>
+    </div>
+
+    <div id="manual-score-section" class="row">
       <div>
         <label>Score A
           <input type="number" id="score_a" required>
@@ -134,7 +152,20 @@
         </label>
       </div>
     </div>
-    <button type="submit">Record match</button>
+
+    <div id="live-score-section" style="display:none; margin-top:12px;">
+      <div style="display:flex; gap:16px; align-items:center;">
+        <button type="button" id="live-point-a-btn" style="flex:1; padding:24px; font-size:18px;">+1 Team A</button>
+        <div style="font-size:22px; font-weight:bold; min-width:80px; text-align:center;" id="live-score-display">0 - 0</div>
+        <button type="button" id="live-point-b-btn" style="flex:1; padding:24px; font-size:18px;">+1 Team B</button>
+      </div>
+      <div style="margin-top:8px;">
+        <button type="button" id="live-undo-btn">Undo last point</button>
+        <button type="button" id="live-reset-btn">Reset</button>
+      </div>
+    </div>
+
+    <button type="submit" id="match-submit-btn">Record match</button>
   </form>
   <div id="match-result" class="result"></div>
 
@@ -235,6 +266,7 @@
       const labeled = allPlayers.map(p => ({ ...p, label: `${p.name} (${p.rating})` }));
       populateSelect(document.getElementById('add_player_select'), labeled, 'player_id', 'label', null);
       populateSelect(document.getElementById('delete_player_id'), labeled, 'player_id', 'label', null);
+      populateSelect(document.getElementById('edit_player_select'), labeled, 'player_id', 'label', null);
       populateSelect(document.getElementById('log_player_filter'), labeled, 'player_id', 'label', 'All players');
       populateTeamSelects();
     }
@@ -334,6 +366,50 @@
       refreshTeamSelectOptions();
     });
 
+    // ---------- live point-by-point scoring ----------
+
+    let livePointLog = [];
+
+    function updateLiveScoreDisplay() {
+      const a = livePointLog.filter(p => p === 'A').length;
+      const b = livePointLog.filter(p => p === 'B').length;
+      document.getElementById('live-score-display').textContent = `${a} - ${b}`;
+      document.getElementById('score_a').value = a;
+      document.getElementById('score_b').value = b;
+    }
+
+    document.getElementById('live_scoring_toggle').addEventListener('change', (e) => {
+      const useLive = e.target.checked;
+      document.getElementById('live-score-section').style.display = useLive ? 'block' : 'none';
+      document.getElementById('manual-score-section').style.display = useLive ? 'none' : 'flex';
+      document.getElementById('score_a').readOnly = useLive;
+      document.getElementById('score_b').readOnly = useLive;
+      if (useLive) {
+        livePointLog = [];
+        updateLiveScoreDisplay();
+      }
+    });
+
+    document.getElementById('live-point-a-btn').addEventListener('click', () => {
+      livePointLog.push('A');
+      updateLiveScoreDisplay();
+    });
+
+    document.getElementById('live-point-b-btn').addEventListener('click', () => {
+      livePointLog.push('B');
+      updateLiveScoreDisplay();
+    });
+
+    document.getElementById('live-undo-btn').addEventListener('click', () => {
+      livePointLog.pop();
+      updateLiveScoreDisplay();
+    });
+
+    document.getElementById('live-reset-btn').addEventListener('click', () => {
+      livePointLog = [];
+      updateLiveScoreDisplay();
+    });
+
     // ---------- registration ----------
 
     document.getElementById('register-form').addEventListener('submit', async (e) => {
@@ -372,6 +448,32 @@
         const data = await res.json();
         if (res.ok) {
           resultEl.textContent = `Deleted player: ${data.deleted}`;
+          loadPlayers();
+        } else {
+          resultEl.textContent = `Error: ${data.error}`;
+        }
+      } catch (err) {
+        resultEl.textContent = `Request failed: ${err.message}`;
+      }
+    });
+
+    document.getElementById('edit-player-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const playerId = document.getElementById('edit_player_select').value;
+      const newName = document.getElementById('edit_player_name').value.trim();
+      const resultEl = document.getElementById('edit-player-result');
+      if (!playerId || !newName) { resultEl.textContent = 'Select a player and enter a new name.'; return; }
+      resultEl.textContent = 'Saving...';
+      try {
+        const res = await fetch(`${API_BASE_URL}/players/${playerId}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: newName })
+        });
+        const data = await res.json();
+        if (res.ok) {
+          resultEl.textContent = 'Name updated.';
+          document.getElementById('edit_player_name').value = '';
           loadPlayers();
         } else {
           resultEl.textContent = `Error: ${data.error}`;
@@ -466,14 +568,30 @@
 
       resultEl.textContent = 'Recording...';
       try {
+        const useLive = document.getElementById('live_scoring_toggle').checked;
+        const payload = { group_id, match_type, team_a, team_b, score_a, score_b };
+        if (useLive) {
+          if (livePointLog.length === 0) {
+            resultEl.textContent = 'Record at least one point before finishing.';
+            return;
+          }
+          payload.point_log = livePointLog;
+        }
+
         const res = await fetch(`${API_BASE_URL}/matches`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ group_id, match_type, team_a, team_b, score_a, score_b })
+          body: JSON.stringify(payload)
         });
         const data = await res.json();
         if (res.ok) {
-          resultEl.textContent = `Match recorded: ${data.team_a_names.join(' & ')} vs ${data.team_b_names.join(' & ')} (${data.score_a}-${data.score_b})`;
+          let msg = `Match recorded: ${data.team_a_names.join(' & ')} vs ${data.team_b_names.join(' & ')} (${data.score_a}-${data.score_b})`;
+          if (data.momentum && data.momentum.winner_overcame_deficit > 0) {
+            msg += ` - came back from a ${data.momentum.winner_overcame_deficit}-point deficit!`;
+          }
+          resultEl.textContent = msg;
+          livePointLog = [];
+          if (useLive) updateLiveScoreDisplay();
           loadPlayers();
         } else {
           resultEl.textContent = `Error: ${data.error}`;
@@ -501,12 +619,16 @@
         if (!res.ok) { logEl.textContent = `Error: ${data.error}`; return; }
         if (!data.matches.length) { logEl.innerHTML = '<p style="font-size:13px;color:#555;">No matches yet.</p>'; return; }
 
-        let html = '<table><tr><th>Date</th><th>Team A</th><th>Team B</th><th>Score</th></tr>';
+        let html = '<table><tr><th>Date</th><th>Team A</th><th>Team B</th><th>Score</th><th>Notes</th></tr>';
         data.matches.forEach(m => {
           const date = new Date(m.date).toLocaleString();
           const teamA = (m.team_a_names || []).join(' & ');
           const teamB = (m.team_b_names || []).join(' & ');
-          html += `<tr><td>${date}</td><td>${teamA}</td><td>${teamB}</td><td>${m.score_a} - ${m.score_b}</td></tr>`;
+          let notes = '';
+          if (m.momentum && m.momentum.winner_overcame_deficit > 0) {
+            notes = `Comeback: overcame a ${m.momentum.winner_overcame_deficit}-point deficit`;
+          }
+          html += `<tr><td>${date}</td><td>${teamA}</td><td>${teamB}</td><td>${m.score_a} - ${m.score_b}</td><td>${notes}</td></tr>`;
         });
         html += '</table>';
         logEl.innerHTML = html;

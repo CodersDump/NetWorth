@@ -1,11 +1,12 @@
 """
-NetWorth - players Lambda (list all, delete one)
+NetWorth - players Lambda (list all, update one, delete one)
 
 Mirrors the inline code in infrastructure/template.yaml (PlayersFunction).
 Edit here, then paste into the template's ZipFile block before redeploying.
 
 Routes:
     GET    /players              -> list all players
+    PUT    /players/{player_id}  -> update a player's name and/or skill_level
     DELETE /players/{player_id}  -> delete one player
 
 Env vars:
@@ -26,6 +27,8 @@ def handler(event, context):
 
         if method == 'GET' and not player_id:
             return list_players()
+        elif method == 'PUT' and player_id:
+            return update_player(player_id, event)
         elif method == 'DELETE' and player_id:
             return delete_player(player_id)
         return _response(400, {'error': 'unsupported operation'})
@@ -45,6 +48,41 @@ def list_players():
         for i in items
     ]
     return _response(200, {'players': players})
+
+
+def update_player(player_id, event):
+    existing = table.get_item(Key={'player_id': player_id}).get('Item')
+    if not existing:
+        return _response(404, {'error': 'player not found'})
+
+    body = json.loads(event.get('body') or '{}')
+    name = (body.get('name') or '').strip()
+    skill_level = body.get('skill_level')
+
+    if not name and not skill_level:
+        return _response(400, {'error': 'provide name and/or skill_level to update'})
+
+    update_parts = []
+    names = {}
+    values = {}
+    if name:
+        update_parts.append('#n = :n')
+        names['#n'] = 'name'
+        values[':n'] = name
+    if skill_level:
+        update_parts.append('skill_level = :s')
+        values[':s'] = skill_level
+
+    kwargs = {
+        'Key': {'player_id': player_id},
+        'UpdateExpression': 'SET ' + ', '.join(update_parts),
+        'ExpressionAttributeValues': values
+    }
+    if names:
+        kwargs['ExpressionAttributeNames'] = names
+
+    table.update_item(**kwargs)
+    return _response(200, {'player_id': player_id, 'updated': True})
 
 
 def delete_player(player_id):

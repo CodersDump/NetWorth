@@ -11,8 +11,14 @@ Body for POST /matches:
       "team_a": ["player_id1"] or ["player_id1", "player_id2"],
       "team_b": ["player_id1"] or ["player_id1", "player_id2"],
       "score_a": 21, "score_b": 15,
-      "group_id": "optional"
+      "group_id": "optional",
+      "point_log": ["A", "A", "B", "A", ...]   (optional, from live scoring)
     }
+
+point_log is an ordered list of which team won each point, if the match was
+recorded live via the point-by-point counter. When present, it's validated
+against the final score and used to compute simple momentum stats (longest
+scoring streak per team, biggest deficit the eventual winner overcame).
 
 Elo approach for doubles: team rating = average of teammates' current
 ratings. Expected score computed from team ratings. The resulting rating
@@ -58,6 +64,7 @@ def record_match(event):
     score_a = body.get('score_a')
     score_b = body.get('score_b')
     group_id = body.get('group_id')
+    point_log = body.get('point_log')
 
     if match_type not in ('singles', 'doubles'):
         return _response(400, {'error': 'match_type must be singles or doubles'})
@@ -69,13 +76,50 @@ def record_match(event):
     if set(team_a) & set(team_b):
         return _response(400, {'error': 'a player cannot be on both teams'})
 
-    item = _play_and_log(match_type, team_a, team_b, int(score_a), int(score_b), group_id, None, None)
+    if point_log is not None:
+        if not isinstance(point_log, list) or any(p not in ('A', 'B') for p in point_log):
+            return _response(400, {'error': 'point_log must be a list of "A"/"B" entries'})
+        log_a = sum(1 for p in point_log if p == 'A')
+        log_b = sum(1 for p in point_log if p == 'B')
+        if log_a != int(score_a) or log_b != int(score_b):
+            return _response(400, {'error': 'point_log does not match score_a/score_b totals'})
+
+    item = _play_and_log(match_type, team_a, team_b, int(score_a), int(score_b), group_id, None, None, point_log)
     if item is None:
         return _response(404, {'error': 'one or more players not found'})
     return _response(200, item)
 
 
-def _play_and_log(match_type, team_a_ids, team_b_ids, score_a, score_b, group_id, tournament_id, stage):
+def compute_momentum_stats(point_log, winner):
+    """Longest scoring streak per team, and how big a deficit the winner overcame."""
+    if not point_log:
+        return {}
+
+    longest_streak = {'A': 0, 'B': 0}
+    current_streak = {'A': 0, 'B': 0}
+    running = {'A': 0, 'B': 0}
+    worst_deficit_for_winner = 0
+
+    for point in point_log:
+        other = 'B' if point == 'A' else 'A'
+        current_streak[point] += 1
+        current_streak[other] = 0
+        longest_streak[point] = max(longest_streak[point], current_streak[point])
+        running[point] += 1
+
+        if winner in ('A', 'B'):
+            deficit = running[other] - running[winner]
+            if deficit > worst_deficit_for_winner:
+                worst_deficit_for_winner = deficit
+
+    return {
+        'longest_streak_a': longest_streak['A'],
+        'longest_streak_b': longest_streak['B'],
+        'winner_overcame_deficit': worst_deficit_for_winner if winner in ('A', 'B') else 0
+    }
+
+
+def _play_and_log(match_type, team_a_ids, team_b_ids, score_a, score_b, group_id, tournament_id, stage, point_log=None):
     team_a_players = [players_table.get_item(Key={'player_id': pid}).get('Item') for pid in team_a_ids]
     team_b_players = [players_table.get_item(Key={'player_id': pid}).get('Item') for pid in team_b_ids]
     if any(p is None for p in team_a_players) or any(p is None for p in team_b_players):
@@ -123,9 +167,40 @@ def _play_and_log(match_type, team_a_ids, team_b_ids, score_a, score_b, group_id
     if tournament_id:
         item['tournament_id'] = tournament_id
         item['stage'] = stage
+    if point_log:
+        item['point_log'] = point_log
+        item['momentum'] = compute_momentum_stats(point_log, winner)
 
     matches_table.put_item(Item=item)
     return item
+
+
+def list_matches(event):
+    params = event.get('queryStringParameters') or {}
+    group_id = params.get('group_id')
+    player_id = params.get('player_id')
+
+    items = matches_table.scan().get('Items', [])
+
+    if group_id:
+        items = [i for i in items if i.get('group_id') == group_id]
+    if player_id:
+        items = [i for i in items if player_id in (i.get('team_a') or []) or player_id in (i.get('team_b') or [])]
+
+    items.sort(key=lambda i: i.get('date', ''), reverse=True)
+
+    return _response(200, {'matches': items})
+
+
+def _response(status_code, body_dict):
+    return {
+        'statusCode': status_code,
+        'headers': {
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': '*'
+        },
+        'body': json.dumps(body_dict, default=str)
+    }
 
 
 def list_matches(event):
