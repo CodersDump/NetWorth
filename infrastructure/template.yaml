@@ -692,6 +692,10 @@ Outputs:
     Description: Base API URL (used by frontend JS)
     Value: !Sub 'https://${RestApi}.execute-api.${AWS::Region}.amazonaws.com/prod'
 
+  RestApiId:
+    Description: Used by the workflow to force a fresh API Gateway deployment
+    Value: !Ref RestApi
+
   PlayersTableName:
     Value: !Ref PlayersTable
 
