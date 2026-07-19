@@ -86,6 +86,8 @@
     <select id="group_select"></select>
   </label>
   <button id="refresh-groups-btn" type="button">Refresh groups</button>
+  <button id="delete-group-btn" type="button">Delete this group</button>
+  <div id="delete-group-result" class="result"></div>
 
   <div id="group-members" style="margin-top: 16px;"></div>
 
@@ -304,6 +306,19 @@
     <label>Replacement player
       <select id="sub_new_player_select"></select>
     </label>
+    <label><input type="checkbox" id="sub_new_player_toggle" style="width:auto;display:inline-block;"> This person isn't registered yet - add them now</label>
+    <div id="sub_new_player_register_fields" style="display:none;">
+      <label>New player's name
+        <input type="text" id="sub_new_player_name">
+      </label>
+      <label>Skill level
+        <select id="sub_new_player_skill">
+          <option value="beginner">Beginner</option>
+          <option value="intermediate" selected>Intermediate</option>
+          <option value="advanced">Advanced</option>
+        </select>
+      </label>
+    </div>
     <button type="button" id="submit-substitution-btn">Substitute</button>
     <div id="substitution-result" class="result"></div>
   </div>
@@ -375,8 +390,8 @@
     }
 
     async function removePlayerFromGroup(groupId, playerId) {
-      const confirmText = prompt('Type DELETE (all caps) to confirm removing this player from the group:');
-      if (confirmText !== 'DELETE') return;
+      const confirmText = prompt('Enter the confirmation code to remove this player from the group:');
+      if (!confirmText) return;
 
       const res = await fetch(`${API_BASE_URL}/groups/${groupId}/players/${playerId}`, {
         method: 'DELETE',
@@ -583,9 +598,9 @@
       const playerId = document.getElementById('delete_player_id').value.trim();
       const resultEl = document.getElementById('delete-result');
 
-      const confirmText = prompt('Type DELETE (all caps) to confirm removing this player:');
-      if (confirmText !== 'DELETE') {
-        resultEl.textContent = 'Cancelled - confirmation text did not match.';
+      const confirmText = prompt('Enter the confirmation code to delete this player:');
+      if (!confirmText) {
+        resultEl.textContent = 'Cancelled.';
         return;
       }
 
@@ -665,6 +680,36 @@
     });
 
     document.getElementById('refresh-groups-btn').addEventListener('click', loadGroups);
+
+    document.getElementById('delete-group-btn').addEventListener('click', async () => {
+      const groupId = document.getElementById('group_select').value;
+      const selectedOption = document.getElementById('group_select').selectedOptions[0];
+      const resultEl = document.getElementById('delete-group-result');
+      if (!groupId) { resultEl.textContent = 'Select a group first.'; return; }
+
+      const label = selectedOption ? selectedOption.textContent : groupId;
+      const confirmText = prompt(`Enter the confirmation code to delete the group "${label}". Players in this group are NOT deleted - only the group itself.`);
+      if (!confirmText) { resultEl.textContent = 'Cancelled.'; return; }
+
+      resultEl.textContent = 'Deleting...';
+      try {
+        const res = await fetch(`${API_BASE_URL}/groups/${groupId}`, {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ confirm: confirmText })
+        });
+        const data = await res.json();
+        if (res.ok) {
+          resultEl.textContent = `Deleted group: ${data.name}`;
+          document.getElementById('group-members').innerHTML = '';
+          loadGroups();
+        } else {
+          resultEl.textContent = `Error: ${data.error}`;
+        }
+      } catch (err) {
+        resultEl.textContent = `Request failed: ${err.message}`;
+      }
+    });
 
     document.getElementById('add-player-btn').addEventListener('click', async () => {
       const groupId = document.getElementById('group_select').value;
@@ -990,9 +1035,9 @@
       if (!tournamentId) { resultEl.textContent = 'Select a tournament first.'; return; }
 
       const label = selectedOption ? selectedOption.textContent : tournamentId;
-      const confirmText = prompt(`Type DELETE (all caps) to confirm removing "${label}". This only removes this exact tournament entry - player ratings and match history are untouched.`);
-      if (confirmText !== 'DELETE') {
-        resultEl.textContent = 'Cancelled - confirmation text did not match.';
+      const confirmText = prompt(`Enter the confirmation code to delete "${label}". This only removes this exact tournament entry - player ratings and match history are untouched.`);
+      if (!confirmText) {
+        resultEl.textContent = 'Cancelled.';
         return;
       }
 
@@ -1005,7 +1050,7 @@
         });
         const data = await res.json();
         if (res.ok) {
-          resultEl.textContent = `Deleted: ${data.name}`;
+          resultEl.textContent = `Deleted: ${data.name} (also removed ${data.matches_deleted} related match record(s); ratings from those matches were not reverted)`;
           document.getElementById('tournament-detail').innerHTML = '';
           loadTournamentsList();
         } else {
@@ -1061,16 +1106,50 @@
 
     document.getElementById('sub_team_select').addEventListener('change', updateSubOldPlayerOptions);
 
+    document.getElementById('sub_new_player_toggle').addEventListener('change', (e) => {
+      const useNew = e.target.checked;
+      document.getElementById('sub_new_player_register_fields').style.display = useNew ? 'block' : 'none';
+      document.getElementById('sub_new_player_select').disabled = useNew;
+    });
+
     document.getElementById('submit-substitution-btn').addEventListener('click', async () => {
       const team_entity_id = document.getElementById('sub_team_select').value;
       const old_player_id = document.getElementById('sub_old_player_select').value;
-      const new_player_id = document.getElementById('sub_new_player_select').value;
       const resultEl = document.getElementById('substitution-result');
+      const isNewPlayer = document.getElementById('sub_new_player_toggle').checked;
 
-      if (!team_entity_id || !old_player_id || !new_player_id) {
-        resultEl.textContent = 'Select a team, the player being replaced, and the replacement.';
+      if (!team_entity_id || !old_player_id) {
+        resultEl.textContent = 'Select a team and the player being replaced.';
         return;
       }
+
+      let new_player_id;
+
+      if (isNewPlayer) {
+        const newName = document.getElementById('sub_new_player_name').value.trim();
+        const skill_level = document.getElementById('sub_new_player_skill').value;
+        if (!newName) { resultEl.textContent = 'Enter a name for the new player.'; return; }
+
+        resultEl.textContent = 'Registering new player...';
+        try {
+          const regRes = await fetch(`${API_BASE_URL}/register`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name: newName, skill_level })
+          });
+          const regData = await regRes.json();
+          if (!regRes.ok) { resultEl.textContent = `Error registering: ${regData.error}`; return; }
+          new_player_id = regData.player_id;
+          loadPlayers();
+        } catch (err) {
+          resultEl.textContent = `Request failed while registering: ${err.message}`;
+          return;
+        }
+      } else {
+        new_player_id = document.getElementById('sub_new_player_select').value;
+        if (!new_player_id) { resultEl.textContent = 'Select a replacement player.'; return; }
+      }
+
       if (old_player_id === new_player_id) {
         resultEl.textContent = 'Replacement must be a different player.';
         return;
@@ -1086,6 +1165,10 @@
         const data = await res.json();
         if (res.ok) {
           resultEl.textContent = 'Substitution applied to future matches.';
+          document.getElementById('sub_new_player_toggle').checked = false;
+          document.getElementById('sub_new_player_register_fields').style.display = 'none';
+          document.getElementById('sub_new_player_select').disabled = false;
+          document.getElementById('sub_new_player_name').value = '';
           renderTournament(data);
         } else {
           resultEl.textContent = `Error: ${data.error}`;

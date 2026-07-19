@@ -19,7 +19,7 @@ import boto3
 dynamodb = boto3.resource('dynamodb')
 table = dynamodb.Table(os.environ['PLAYERS_TABLE'])
 
-DELETE_KEYWORD = 'DELETE'  # must be typed exactly to confirm a delete
+CONFIRMATION_CODE = 'Matchpoint-Falcon-77'  # private - never shown in the UI; change this if it's ever exposed
 
 
 def handler(event, context):
@@ -89,8 +89,8 @@ def update_player(player_id, event):
 
 def delete_player(player_id, event):
     body = json.loads(event.get('body') or '{}')
-    if body.get('confirm') != DELETE_KEYWORD:
-        return _response(400, {'error': f'confirmation required: send confirm: "{DELETE_KEYWORD}" in the request body'})
+    if body.get('confirm') != CONFIRMATION_CODE:
+        return _response(400, {'error': "confirmation code is missing or incorrect"})
 
     existing = table.get_item(Key={'player_id': player_id}).get('Item')
     if not existing:

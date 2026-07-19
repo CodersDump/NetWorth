@@ -24,7 +24,7 @@ dynamodb = boto3.resource('dynamodb')
 groups_table = dynamodb.Table(os.environ['GROUPS_TABLE'])
 players_table = dynamodb.Table(os.environ['PLAYERS_TABLE'])
 
-DELETE_KEYWORD = 'DELETE'  # must be typed exactly to confirm removing a player from a group
+CONFIRMATION_CODE = 'Matchpoint-Falcon-77'  # private - never shown in the UI; change this if it's ever exposed
 
 
 def handler(event, context):
@@ -41,6 +41,8 @@ def handler(event, context):
         elif len(parts) == 1:
             if method == 'GET':
                 return get_group(parts[0])
+            elif method == 'DELETE':
+                return delete_group(parts[0], event)
         elif len(parts) == 2 and parts[1] == 'players':
             if method == 'POST':
                 return add_player(parts[0], event)
@@ -85,6 +87,20 @@ def get_group(group_id):
     return _response(200, {'group_id': item['group_id'], 'group_name': item['group_name'], 'members': members})
 
 
+def delete_group(group_id, event):
+    """Deletes only the group record itself. Player records are never
+    touched here, since the same player can belong to multiple groups."""
+    body = json.loads(event.get('body') or '{}')
+    if body.get('confirm') != CONFIRMATION_CODE:
+        return _response(400, {'error': "confirmation code is missing or incorrect"})
+
+    existing = groups_table.get_item(Key={'group_id': group_id}).get('Item')
+    if not existing:
+        return _response(404, {'error': 'group not found'})
+    groups_table.delete_item(Key={'group_id': group_id})
+    return _response(200, {'deleted': group_id, 'name': existing.get('group_name')})
+
+
 def add_player(group_id, event):
     body = json.loads(event.get('body') or '{}')
     player_id = body.get('player_id')
@@ -108,8 +124,8 @@ def add_player(group_id, event):
 
 def remove_player(group_id, player_id, event):
     body = json.loads(event.get('body') or '{}')
-    if body.get('confirm') != DELETE_KEYWORD:
-        return _response(400, {'error': f'confirmation required: send confirm: "{DELETE_KEYWORD}" in the request body'})
+    if body.get('confirm') != CONFIRMATION_CODE:
+        return _response(400, {'error': "confirmation code is missing or incorrect"})
 
     group = groups_table.get_item(Key={'group_id': group_id}).get('Item')
     if not group:

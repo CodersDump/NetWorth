@@ -38,7 +38,7 @@ players_table = dynamodb.Table(os.environ['PLAYERS_TABLE'])
 matches_table = dynamodb.Table(os.environ['MATCHES_TABLE'])
 
 K_FACTOR = 32
-DELETE_KEYWORD = 'DELETE'  # must be typed exactly to confirm deleting a tournament
+CONFIRMATION_CODE = 'Matchpoint-Falcon-77'  # private - never shown in the UI; change this if it's ever exposed
 
 
 def _is_valid_completed_game(score_a, score_b, target):
@@ -374,18 +374,33 @@ def get_tournament(tournament_id):
 
 
 def delete_tournament(tournament_id, event):
-    """Deletes only this exact tournament_id. Does not touch the Matches or
-    Players tables - safe to use on duplicate/accidental tournament entries,
-    since ratings and match history live independently in the Matches table."""
+    """Deletes this tournament AND every match record tagged with its
+    tournament_id (e.g. from a test tournament you're cleaning up).
+    Does NOT reverse the Elo rating changes those matches already caused -
+    ratings stay as they are. If you need ratings reset too, that would
+    require recomputing from full match history, which isn't built yet."""
     body = json.loads(event.get('body') or '{}')
-    if body.get('confirm') != DELETE_KEYWORD:
-        return _response(400, {'error': f'confirmation required: send confirm: "{DELETE_KEYWORD}" in the request body'})
+    if body.get('confirm') != CONFIRMATION_CODE:
+        return _response(400, {'error': "confirmation code is missing or incorrect"})
 
     existing = tournaments_table.get_item(Key={'tournament_id': tournament_id}).get('Item')
     if not existing:
         return _response(404, {'error': 'tournament not found'})
+
+    related_matches = matches_table.scan().get('Items', [])
+    deleted_match_count = 0
+    for m in related_matches:
+        if m.get('tournament_id') == tournament_id:
+            matches_table.delete_item(Key={'match_id': m['match_id']})
+            deleted_match_count += 1
+
     tournaments_table.delete_item(Key={'tournament_id': tournament_id})
-    return _response(200, {'deleted': tournament_id, 'name': existing.get('name')})
+    return _response(200, {
+        'deleted': tournament_id,
+        'name': existing.get('name'),
+        'matches_deleted': deleted_match_count,
+        'note': 'Player ratings were NOT reverted for the deleted matches.'
+    })
 
 
 def compute_standings(fixtures, entities):
