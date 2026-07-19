@@ -68,6 +68,8 @@ def handler(event, context):
         elif len(parts) == 1:
             if method == 'GET':
                 return get_tournament(parts[0])
+            elif method == 'DELETE':
+                return delete_tournament(parts[0])
         elif len(parts) == 2 and parts[1] == 'group-score':
             if method == 'POST':
                 return record_group_score(parts[0], event)
@@ -265,6 +267,17 @@ def get_tournament(tournament_id):
     if 'subgroups' in item:
         item['standings'] = compute_all_standings(item)
     return _response(200, item)
+
+
+def delete_tournament(tournament_id):
+    """Deletes only this exact tournament_id. Does not touch the Matches or
+    Players tables - safe to use on duplicate/accidental tournament entries,
+    since ratings and match history live independently in the Matches table."""
+    existing = tournaments_table.get_item(Key={'tournament_id': tournament_id}).get('Item')
+    if not existing:
+        return _response(404, {'error': 'tournament not found'})
+    tournaments_table.delete_item(Key={'tournament_id': tournament_id})
+    return _response(200, {'deleted': tournament_id, 'name': existing.get('name')})
 
 
 def compute_standings(fixtures, entities):

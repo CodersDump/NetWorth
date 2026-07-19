@@ -253,6 +253,8 @@
     <select id="tournament_select"></select>
   </label>
   <button id="load-tournament-btn" type="button">Load tournament</button>
+  <button id="delete-tournament-btn" type="button">Delete this tournament</button>
+  <div id="delete-tournament-result" class="result"></div>
 
   <div id="tournament-detail" style="margin-top: 16px;"></div>
 
@@ -781,6 +783,33 @@
       const res = await fetch(`${API_BASE_URL}/tournaments/${tournamentId}`);
       const data = await res.json();
       renderTournament(data);
+    });
+
+    document.getElementById('delete-tournament-btn').addEventListener('click', async () => {
+      const tournamentId = document.getElementById('tournament_select').value;
+      const selectedOption = document.getElementById('tournament_select').selectedOptions[0];
+      const resultEl = document.getElementById('delete-tournament-result');
+      if (!tournamentId) { resultEl.textContent = 'Select a tournament first.'; return; }
+
+      const label = selectedOption ? selectedOption.textContent : tournamentId;
+      if (!confirm(`Delete "${label}"? This only removes this exact tournament entry - player ratings and match history are untouched.`)) {
+        return;
+      }
+
+      resultEl.textContent = 'Deleting...';
+      try {
+        const res = await fetch(`${API_BASE_URL}/tournaments/${tournamentId}`, { method: 'DELETE' });
+        const data = await res.json();
+        if (res.ok) {
+          resultEl.textContent = `Deleted: ${data.name}`;
+          document.getElementById('tournament-detail').innerHTML = '';
+          loadTournamentsList();
+        } else {
+          resultEl.textContent = `Error: ${data.error}`;
+        }
+      } catch (err) {
+        resultEl.textContent = `Request failed: ${err.message}`;
+      }
     });
 
     function formatGames(games) {
