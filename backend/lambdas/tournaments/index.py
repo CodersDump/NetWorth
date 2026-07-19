@@ -125,6 +125,7 @@ def create_tournament(event):
     advance_per_group = int(body.get('advance_per_group', 2))
     pairing_mode = body.get('pairing_mode', 'random')  # 'random' | 'seeded' | 'manual'
     manual_teams = body.get('manual_teams')  # optional: [["pid1","pid2"], ["pid3","pid4"], ...]
+    participant_ids = body.get('participant_ids')  # optional: subset of group members playing today
 
     if not group_id or not name:
         return _response(400, {'error': 'group_id and name are required'})
@@ -167,6 +168,12 @@ def create_tournament(event):
         pairing_mode = 'manual'
     else:
         member_ids = group.get('member_ids', [])
+        if participant_ids:
+            invalid = [pid for pid in participant_ids if pid not in member_ids]
+            if invalid:
+                return _response(400, {'error': f'these player_ids are not members of this group: {invalid}'})
+            member_ids = participant_ids
+
         players = []
         for pid in member_ids:
             p = players_table.get_item(Key={'player_id': pid}).get('Item')

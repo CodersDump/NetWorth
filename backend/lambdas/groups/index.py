@@ -103,23 +103,40 @@ def delete_group(group_id, event):
 
 def add_player(group_id, event):
     body = json.loads(event.get('body') or '{}')
-    player_id = body.get('player_id')
-    if not player_id:
-        return _response(400, {'error': 'player_id is required'})
-    player = players_table.get_item(Key={'player_id': player_id}).get('Item')
-    if not player:
-        return _response(404, {'error': 'player not found'})
+    single_id = body.get('player_id')
+    bulk_ids = body.get('player_ids')
+
+    if bulk_ids:
+        requested_ids = bulk_ids
+    elif single_id:
+        requested_ids = [single_id]
+    else:
+        return _response(400, {'error': 'player_id or player_ids is required'})
+
     group = groups_table.get_item(Key={'group_id': group_id}).get('Item')
     if not group:
         return _response(404, {'error': 'group not found'})
+
     member_ids = set(group.get('member_ids', []))
-    member_ids.add(player_id)
+    added = []
+    not_found = []
+    for pid in requested_ids:
+        player = players_table.get_item(Key={'player_id': pid}).get('Item')
+        if not player:
+            not_found.append(pid)
+            continue
+        member_ids.add(pid)
+        added.append(pid)
+
     groups_table.update_item(
         Key={'group_id': group_id},
         UpdateExpression='SET member_ids = :m',
         ExpressionAttributeValues={':m': list(member_ids)}
     )
-    return _response(200, {'group_id': group_id, 'added': player_id})
+    result = {'group_id': group_id, 'added': added}
+    if not_found:
+        result['not_found'] = not_found
+    return _response(200, result)
 
 
 def remove_player(group_id, player_id, event):

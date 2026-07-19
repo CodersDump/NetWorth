@@ -91,15 +91,10 @@
 
   <div id="group-members" style="margin-top: 16px;"></div>
 
-  <div class="row" style="margin-top: 16px;">
-    <div>
-      <label>Add player to group
-        <select id="add_player_select"></select>
-      </label>
-    </div>
-    <div style="display: flex; align-items: flex-end;">
-      <button id="add-player-btn" type="button" style="width: 100%;">Add to group</button>
-    </div>
+  <div style="margin-top: 16px;">
+    <strong>Add players to group</strong>
+    <div id="add-players-checklist" style="max-height:200px; overflow-y:auto; border:1px solid #ccc; padding:8px; margin-top:6px;"></div>
+    <button id="add-selected-players-btn" type="button" style="margin-top:8px;">Add selected to group</button>
   </div>
   <div id="group-action-result" class="result"></div>
 
@@ -225,6 +220,10 @@
     <label>Group
       <select id="tournament_group_select"></select>
     </label>
+    <div id="tournament-participants-section" style="margin-top:8px;">
+      <strong style="font-size:13px;">Who's playing today?</strong>
+      <div id="tournament-participants-checklist" style="max-height:180px; overflow-y:auto; border:1px solid #ccc; padding:8px; margin-top:4px;"></div>
+    </div>
     <label>Tournament name
       <input type="text" id="tournament_name" required>
     </label>
@@ -355,7 +354,7 @@
       const data = await res.json();
       allPlayers = data.players || [];
       const labeled = allPlayers.map(p => ({ ...p, label: `${p.name} (${p.rating})` }));
-      populateSelect(document.getElementById('add_player_select'), labeled, 'player_id', 'label', null);
+      renderAddPlayersChecklist();
       populateSelect(document.getElementById('delete_player_id'), labeled, 'player_id', 'label', null);
       populateSelect(document.getElementById('edit_player_select'), labeled, 'player_id', 'label', null);
       populateSelect(document.getElementById('log_player_filter'), labeled, 'player_id', 'label', 'All players');
@@ -376,18 +375,36 @@
       }
     }
 
+    let currentGroupMemberIds = new Set();
+
     async function loadGroupMembers(groupId) {
       const membersEl = document.getElementById('group-members');
-      if (!groupId) { membersEl.innerHTML = ''; return; }
+      if (!groupId) { membersEl.innerHTML = ''; currentGroupMemberIds = new Set(); renderAddPlayersChecklist(); return; }
       const res = await fetch(`${API_BASE_URL}/groups/${groupId}`);
       const data = await res.json();
       if (!res.ok) { membersEl.textContent = data.error; return; }
+
+      currentGroupMemberIds = new Set((data.members || []).map(m => m.player_id));
+      renderAddPlayersChecklist();
+
       if (!data.members.length) {
         membersEl.innerHTML = '<p style="font-size:13px;color:#555;">No members yet.</p>';
         return;
       }
       membersEl.innerHTML = '<strong>Members:</strong>' + data.members.map(m =>
         `<div class="member-row"><span>${m.name} (${m.rating})</span><button onclick="removePlayerFromGroup('${groupId}','${m.player_id}')">Remove</button></div>`
+      ).join('');
+    }
+
+    function renderAddPlayersChecklist() {
+      const container = document.getElementById('add-players-checklist');
+      const available = allPlayers.filter(p => !currentGroupMemberIds.has(p.player_id));
+      if (!available.length) {
+        container.innerHTML = '<p style="font-size:13px;color:#555;margin:0;">Everyone registered is already in this group.</p>';
+        return;
+      }
+      container.innerHTML = available.map(p =>
+        `<label style="display:block; padding:2px 0;"><input type="checkbox" class="add-player-checkbox" value="${p.player_id}"> ${p.name} (${p.rating})</label>`
       ).join('');
     }
 
@@ -713,21 +730,24 @@
       }
     });
 
-    document.getElementById('add-player-btn').addEventListener('click', async () => {
+    document.getElementById('add-selected-players-btn').addEventListener('click', async () => {
       const groupId = document.getElementById('group_select').value;
-      const playerId = document.getElementById('add_player_select').value;
       const resultEl = document.getElementById('group-action-result');
-      if (!groupId || !playerId) { resultEl.textContent = 'Select a group and a player first.'; return; }
+      if (!groupId) { resultEl.textContent = 'Select a group first.'; return; }
+
+      const checked = Array.from(document.querySelectorAll('.add-player-checkbox:checked')).map(cb => cb.value);
+      if (!checked.length) { resultEl.textContent = 'Check at least one player to add.'; return; }
+
       resultEl.textContent = 'Adding...';
       try {
         const res = await fetch(`${API_BASE_URL}/groups/${groupId}/players`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ player_id: playerId })
+          body: JSON.stringify({ player_ids: checked })
         });
         const data = await res.json();
         if (res.ok) {
-          resultEl.textContent = 'Added to group.';
+          resultEl.textContent = `Added ${data.added.length} player(s) to group.`;
           loadGroupMembers(groupId);
           loadGroups();
         } else {
@@ -902,6 +922,7 @@
     document.getElementById('tournament_pairing_mode').addEventListener('change', (e) => {
       const isManual = e.target.value === 'manual';
       document.getElementById('manual-teams-section').style.display = isManual ? 'block' : 'none';
+      document.getElementById('tournament-participants-section').style.display = isManual ? 'none' : 'block';
       if (isManual && document.getElementById('manual-teams-container').children.length === 0) {
         addManualTeamRow();
         addManualTeamRow();
@@ -971,6 +992,29 @@
       populateSelect(document.getElementById('tournament_group_select'), allGroups, 'group_id', 'group_name', null);
     }
 
+    document.getElementById('tournament_group_select').addEventListener('change', loadTournamentParticipantsChecklist);
+
+    async function loadTournamentParticipantsChecklist() {
+      const groupId = document.getElementById('tournament_group_select').value;
+      const container = document.getElementById('tournament-participants-checklist');
+      if (!groupId) { container.innerHTML = ''; return; }
+
+      container.innerHTML = 'Loading...';
+      const res = await fetch(`${API_BASE_URL}/groups/${groupId}`);
+      const data = await res.json();
+      if (!res.ok || !data.members || !data.members.length) {
+        container.innerHTML = '<p style="font-size:13px;color:#555;margin:0;">No members in this group yet.</p>';
+        return;
+      }
+      container.innerHTML = data.members.map(m =>
+        `<label style="display:block; padding:2px 0;"><input type="checkbox" class="tournament-participant-checkbox" value="${m.player_id}" checked> ${m.name} (${m.rating})</label>`
+      ).join('');
+    }
+
+    function collectTournamentParticipants() {
+      return Array.from(document.querySelectorAll('.tournament-participant-checkbox:checked')).map(cb => cb.value);
+    }
+
     async function loadTournamentsList() {
       const res = await fetch(`${API_BASE_URL}/tournaments`);
       const data = await res.json();
@@ -998,6 +1042,11 @@
         const manual_teams = collectManualTeams();
         if (manual_teams.length < 2) { resultEl.textContent = 'Add at least 2 complete teams.'; return; }
         payload.manual_teams = manual_teams;
+      } else {
+        const participant_ids = collectTournamentParticipants();
+        if (participant_ids.length) {
+          payload.participant_ids = participant_ids;
+        }
       }
 
       resultEl.textContent = 'Creating...';
