@@ -256,6 +256,8 @@
   <button id="delete-tournament-btn" type="button">Delete this tournament</button>
   <div id="delete-tournament-result" class="result"></div>
 
+  <label><input type="checkbox" id="tournament_live_toggle" style="width:auto;display:inline-block;"> Use live point-by-point scoring for tournament matches</label>
+
   <div id="tournament-detail" style="margin-top: 16px;"></div>
 
   <script>
@@ -411,6 +413,7 @@
     // ---------- live point-by-point scoring ----------
 
     let livePointLog = [];
+    let currentTournamentData = null;
 
     function isGameOver(a, b, target) {
       const cap = target + 9;
@@ -818,8 +821,11 @@
     }
 
     function renderTournament(t) {
+      currentTournamentData = t;
       const el = document.getElementById('tournament-detail');
       const bestOf = t.best_of || 1;
+      const liveMode = document.getElementById('tournament_live_toggle').checked;
+      const target = parseInt(t.points_to_win, 10) || 21;
       let html = `<h3 style="font-size:16px;">${t.name} - ${t.status} (games to ${t.points_to_win || 21}, best of ${bestOf})</h3>`;
 
       if (t.subgroups) {
@@ -842,13 +848,21 @@
             } else {
               const nextGameNum = (f.games ? f.games.length : 0) + 1;
               const progress = gamesText ? `Games so far: ${gamesText} (${f.games_won_a}-${f.games_won_b}) | ` : '';
-              html += `<tr><td>${label}</td><td colspan="2">
-                ${progress}Game ${nextGameNum}:
-                <input type="number" id="ga_${f.fixture_id}" style="width:50px;display:inline-block;">
-                -
-                <input type="number" id="gb_${f.fixture_id}" style="width:50px;display:inline-block;">
-                <button onclick="submitGroupScore('${t.tournament_id}','${sgName}','${f.fixture_id}')">Submit game ${nextGameNum}</button>
-              </td></tr>`;
+              const matchKey = `group_${f.fixture_id}`;
+              if (liveMode) {
+                html += `<tr><td>${label}</td><td colspan="2">
+                  ${progress}Game ${nextGameNum}:
+                  ${renderLiveScoreControls(matchKey, target, `finishGroupLiveGame('${matchKey}','${t.tournament_id}','${sgName}','${f.fixture_id}')`)}
+                </td></tr>`;
+              } else {
+                html += `<tr><td>${label}</td><td colspan="2">
+                  ${progress}Game ${nextGameNum}:
+                  <input type="number" id="ga_${f.fixture_id}" style="width:50px;display:inline-block;">
+                  -
+                  <input type="number" id="gb_${f.fixture_id}" style="width:50px;display:inline-block;">
+                  <button onclick="submitGroupScore('${t.tournament_id}','${sgName}','${f.fixture_id}')">Submit game ${nextGameNum}</button>
+                </td></tr>`;
+              }
             }
           });
           html += '</table>';
@@ -868,13 +882,21 @@
             } else {
               const nextGameNum = (m.games ? m.games.length : 0) + 1;
               const progress = gamesText ? `Games so far: ${gamesText} (${m.games_won_a}-${m.games_won_b}) | ` : '';
-              html += `<tr><td>${label}</td><td colspan="2">
-                ${progress}Game ${nextGameNum}:
-                <input type="number" id="ka_${t.tournament_id}_${rIdx}_${mIdx}" style="width:50px;display:inline-block;">
-                -
-                <input type="number" id="kb_${t.tournament_id}_${rIdx}_${mIdx}" style="width:50px;display:inline-block;">
-                <button onclick="submitKnockoutScore('${t.tournament_id}',${rIdx},${mIdx})">Submit game ${nextGameNum}</button>
-              </td></tr>`;
+              const matchKey = `knockout_${t.tournament_id}_${rIdx}_${mIdx}`;
+              if (liveMode) {
+                html += `<tr><td>${label}</td><td colspan="2">
+                  ${progress}Game ${nextGameNum}:
+                  ${renderLiveScoreControls(matchKey, target, `finishKnockoutLiveGame('${matchKey}','${t.tournament_id}',${rIdx},${mIdx})`)}
+                </td></tr>`;
+              } else {
+                html += `<tr><td>${label}</td><td colspan="2">
+                  ${progress}Game ${nextGameNum}:
+                  <input type="number" id="ka_${t.tournament_id}_${rIdx}_${mIdx}" style="width:50px;display:inline-block;">
+                  -
+                  <input type="number" id="kb_${t.tournament_id}_${rIdx}_${mIdx}" style="width:50px;display:inline-block;">
+                  <button onclick="submitKnockoutScore('${t.tournament_id}',${rIdx},${mIdx})">Submit game ${nextGameNum}</button>
+                </td></tr>`;
+              }
             }
           });
           html += '</table>';
@@ -890,13 +912,21 @@
           } else {
             const nextGameNum = (tp.games ? tp.games.length : 0) + 1;
             const progress = gamesText ? `Games so far: ${gamesText} (${tp.games_won_a}-${tp.games_won_b}) | ` : '';
-            html += `<tr><td>${label}</td><td colspan="2">
-              ${progress}Game ${nextGameNum}:
-              <input type="number" id="tpa_${t.tournament_id}" style="width:50px;display:inline-block;">
-              -
-              <input type="number" id="tpb_${t.tournament_id}" style="width:50px;display:inline-block;">
-              <button onclick="submitThirdPlaceScore('${t.tournament_id}')">Submit game ${nextGameNum}</button>
-            </td></tr>`;
+            const matchKey = `thirdplace_${t.tournament_id}`;
+            if (liveMode) {
+              html += `<tr><td>${label}</td><td colspan="2">
+                ${progress}Game ${nextGameNum}:
+                ${renderLiveScoreControls(matchKey, target, `finishThirdPlaceLiveGame('${matchKey}','${t.tournament_id}')`)}
+              </td></tr>`;
+            } else {
+              html += `<tr><td>${label}</td><td colspan="2">
+                ${progress}Game ${nextGameNum}:
+                <input type="number" id="tpa_${t.tournament_id}" style="width:50px;display:inline-block;">
+                -
+                <input type="number" id="tpb_${t.tournament_id}" style="width:50px;display:inline-block;">
+                <button onclick="submitThirdPlaceScore('${t.tournament_id}')">Submit game ${nextGameNum}</button>
+              </td></tr>`;
+            }
           }
           html += '</table>';
         }
@@ -918,6 +948,10 @@
     async function submitGroupScore(tournamentId, subgroup, fixtureId) {
       const score_a = document.getElementById(`ga_${fixtureId}`).value;
       const score_b = document.getElementById(`gb_${fixtureId}`).value;
+      await submitGroupScoreDirect(tournamentId, subgroup, fixtureId, score_a, score_b);
+    }
+
+    async function submitGroupScoreDirect(tournamentId, subgroup, fixtureId, score_a, score_b) {
       const res = await fetch(`${API_BASE_URL}/tournaments/${tournamentId}/group-score`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -935,6 +969,10 @@
     async function submitKnockoutScore(tournamentId, roundIndex, matchIndex) {
       const score_a = document.getElementById(`ka_${tournamentId}_${roundIndex}_${matchIndex}`).value;
       const score_b = document.getElementById(`kb_${tournamentId}_${roundIndex}_${matchIndex}`).value;
+      await submitKnockoutScoreDirect(tournamentId, roundIndex, matchIndex, score_a, score_b);
+    }
+
+    async function submitKnockoutScoreDirect(tournamentId, roundIndex, matchIndex, score_a, score_b) {
       const res = await fetch(`${API_BASE_URL}/tournaments/${tournamentId}/knockout-score`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -952,6 +990,10 @@
     async function submitThirdPlaceScore(tournamentId) {
       const score_a = document.getElementById(`tpa_${tournamentId}`).value;
       const score_b = document.getElementById(`tpb_${tournamentId}`).value;
+      await submitThirdPlaceScoreDirect(tournamentId, score_a, score_b);
+    }
+
+    async function submitThirdPlaceScoreDirect(tournamentId, score_a, score_b) {
       const res = await fetch(`${API_BASE_URL}/tournaments/${tournamentId}/knockout-score`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -965,6 +1007,89 @@
         alert(data.error);
       }
     }
+
+    // ---------- live scoring inside tournament matches ----------
+
+    const tournamentLiveLogs = {};
+
+    function getTournamentLiveLog(matchKey) {
+      if (!tournamentLiveLogs[matchKey]) tournamentLiveLogs[matchKey] = [];
+      return tournamentLiveLogs[matchKey];
+    }
+
+    function tournamentLivePoint(matchKey, side, target) {
+      const log = getTournamentLiveLog(matchKey);
+      const a = log.filter(p => p === 'A').length;
+      const b = log.filter(p => p === 'B').length;
+      if (isGameOver(a, b, target)) return;
+      log.push(side);
+      updateTournamentLiveDisplay(matchKey, target);
+    }
+
+    function tournamentUndoPoint(matchKey, target) {
+      const log = getTournamentLiveLog(matchKey);
+      log.pop();
+      updateTournamentLiveDisplay(matchKey, target);
+    }
+
+    function updateTournamentLiveDisplay(matchKey, target) {
+      const log = getTournamentLiveLog(matchKey);
+      const a = log.filter(p => p === 'A').length;
+      const b = log.filter(p => p === 'B').length;
+      const over = isGameOver(a, b, target);
+      const displayEl = document.getElementById(`tlive_display_${matchKey}`);
+      if (displayEl) {
+        let text = `${a} - ${b}`;
+        if (over) text += a > b ? ' - A wins this game' : ' - B wins this game';
+        displayEl.textContent = text;
+      }
+      const btnA = document.getElementById(`tlive_btn_a_${matchKey}`);
+      const btnB = document.getElementById(`tlive_btn_b_${matchKey}`);
+      if (btnA) btnA.disabled = over;
+      if (btnB) btnB.disabled = over;
+    }
+
+    async function finishGroupLiveGame(matchKey, tournamentId, subgroup, fixtureId) {
+      const log = getTournamentLiveLog(matchKey);
+      const a = log.filter(p => p === 'A').length;
+      const b = log.filter(p => p === 'B').length;
+      if (a === b) { alert('Record at least one decisive point before submitting.'); return; }
+      delete tournamentLiveLogs[matchKey];
+      await submitGroupScoreDirect(tournamentId, subgroup, fixtureId, a, b);
+    }
+
+    async function finishKnockoutLiveGame(matchKey, tournamentId, roundIndex, matchIndex) {
+      const log = getTournamentLiveLog(matchKey);
+      const a = log.filter(p => p === 'A').length;
+      const b = log.filter(p => p === 'B').length;
+      if (a === b) { alert('Record at least one decisive point before submitting.'); return; }
+      delete tournamentLiveLogs[matchKey];
+      await submitKnockoutScoreDirect(tournamentId, roundIndex, matchIndex, a, b);
+    }
+
+    async function finishThirdPlaceLiveGame(matchKey, tournamentId) {
+      const log = getTournamentLiveLog(matchKey);
+      const a = log.filter(p => p === 'A').length;
+      const b = log.filter(p => p === 'B').length;
+      if (a === b) { alert('Record at least one decisive point before submitting.'); return; }
+      delete tournamentLiveLogs[matchKey];
+      await submitThirdPlaceScoreDirect(tournamentId, a, b);
+    }
+
+    function renderLiveScoreControls(matchKey, target, finishCallExpr) {
+      return `
+        <div>
+          <button id="tlive_btn_a_${matchKey}" type="button" onclick="tournamentLivePoint('${matchKey}','A',${target})">+1 A</button>
+          <span id="tlive_display_${matchKey}" style="margin: 0 10px; font-weight:bold;">0 - 0</span>
+          <button id="tlive_btn_b_${matchKey}" type="button" onclick="tournamentLivePoint('${matchKey}','B',${target})">+1 B</button>
+          <button type="button" onclick="tournamentUndoPoint('${matchKey}',${target})">Undo</button>
+          <button type="button" onclick="${finishCallExpr}">Submit game</button>
+        </div>`;
+    }
+
+    document.getElementById('tournament_live_toggle').addEventListener('change', () => {
+      if (currentTournamentData) renderTournament(currentTournamentData);
+    });
   </script>
 </body>
 </html>
