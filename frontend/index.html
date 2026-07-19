@@ -330,11 +330,29 @@
 
     const TEAM_SELECT_IDS = ['team_a1_select', 'team_a2_select', 'team_b1_select', 'team_b2_select'];
 
+    let teamSelectListenersAttached = false;
+
     function populateTeamSelects() {
+      const isFirstPopulation = TEAM_SELECT_IDS.every(id => !document.getElementById(id).value);
+
       refreshTeamSelectOptions();
-      TEAM_SELECT_IDS.forEach(id => {
-        document.getElementById(id).addEventListener('change', () => refreshTeamSelectOptions());
-      });
+
+      if (isFirstPopulation && allPlayers.length >= 2) {
+        const distinct = allPlayers.slice(0, 4);
+        if (distinct[0]) document.getElementById('team_a1_select').value = distinct[0].player_id;
+        if (distinct[1]) document.getElementById('team_b1_select').value = distinct[1].player_id;
+        if (distinct[2]) document.getElementById('team_a2_select').value = distinct[2].player_id;
+        if (distinct[3]) document.getElementById('team_b2_select').value = distinct[3].player_id;
+        refreshTeamSelectOptions();
+      }
+
+      if (!teamSelectListenersAttached) {
+        TEAM_SELECT_IDS.forEach(id => {
+          document.getElementById(id).addEventListener('change', () => refreshTeamSelectOptions());
+        });
+        teamSelectListenersAttached = true;
+      }
+
       applyMatchTypeVisibility();
     }
 
@@ -392,17 +410,40 @@
 
     let livePointLog = [];
 
+    function isGameOver(a, b, target) {
+      const cap = target + 9;
+      const hi = Math.max(a, b), lo = Math.min(a, b);
+      if (hi >= cap) return true;
+      if (hi >= target && (hi - lo) >= 2) return true;
+      return false;
+    }
+
     function updateLiveScoreDisplay() {
       const a = livePointLog.filter(p => p === 'A').length;
       const b = livePointLog.filter(p => p === 'B').length;
       const target = parseInt(document.getElementById('points_to_win_select').value, 10);
+      const over = isGameOver(a, b, target);
+
       let display = `${a} - ${b}`;
-      if (a >= target - 1 && a > b) display += ' (match point A)';
-      if (b >= target - 1 && b > a) display += ' (match point B)';
+      if (over) {
+        display += a > b ? ' - Team A wins the game' : ' - Team B wins the game';
+      } else {
+        if (a >= target - 1 && a > b) display += ' (match point A)';
+        if (b >= target - 1 && b > a) display += ' (match point B)';
+      }
       document.getElementById('live-score-display').textContent = display;
       document.getElementById('score_a').value = a;
       document.getElementById('score_b').value = b;
+
+      document.getElementById('live-point-a-btn').disabled = over;
+      document.getElementById('live-point-b-btn').disabled = over;
     }
+
+    document.getElementById('points_to_win_select').addEventListener('change', () => {
+      if (document.getElementById('live_scoring_toggle').checked) {
+        updateLiveScoreDisplay();
+      }
+    });
 
     document.getElementById('live_scoring_toggle').addEventListener('change', (e) => {
       const useLive = e.target.checked;
@@ -417,11 +458,19 @@
     });
 
     document.getElementById('live-point-a-btn').addEventListener('click', () => {
+      const target = parseInt(document.getElementById('points_to_win_select').value, 10);
+      const a = livePointLog.filter(p => p === 'A').length;
+      const b = livePointLog.filter(p => p === 'B').length;
+      if (isGameOver(a, b, target)) return;
       livePointLog.push('A');
       updateLiveScoreDisplay();
     });
 
     document.getElementById('live-point-b-btn').addEventListener('click', () => {
+      const target = parseInt(document.getElementById('points_to_win_select').value, 10);
+      const a = livePointLog.filter(p => p === 'A').length;
+      const b = livePointLog.filter(p => p === 'B').length;
+      if (isGameOver(a, b, target)) return;
       livePointLog.push('B');
       updateLiveScoreDisplay();
     });
@@ -744,7 +793,7 @@
       const bestOf = t.best_of || 1;
       let html = `<h3 style="font-size:16px;">${t.name} - ${t.status} (games to ${t.points_to_win || 21}, best of ${bestOf})</h3>`;
 
-      if (t.status === 'group_stage') {
+      if (t.subgroups) {
         for (const [sgName, sg] of Object.entries(t.subgroups)) {
           html += `<h4 style="font-size:14px;">Group ${sgName}</h4>`;
           const standings = (t.standings || {})[sgName] || [];
@@ -775,7 +824,7 @@
           });
           html += '</table>';
         }
-      } else if (t.status === 'knockout' || t.status === 'completed') {
+      if (t.status === 'knockout' || t.status === 'completed') {
         t.knockout.rounds.forEach((round, rIdx) => {
           html += `<h4 style="font-size:14px;">Round ${rIdx + 1}</h4><table><tr><th>Match</th><th>Games</th><th>Action</th></tr>`;
           round.forEach((m, mIdx) => {

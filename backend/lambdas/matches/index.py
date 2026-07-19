@@ -44,6 +44,23 @@ players_table = dynamodb.Table(os.environ['PLAYERS_TABLE'])
 K_FACTOR = 32
 
 
+def _is_valid_completed_game(score_a, score_b, target):
+    """
+    BWF-style badminton scoring: first to `target` points wins, but must lead
+    by 2 (deuce continues past target); hard cap at target+9 (e.g. 21 -> 30),
+    where reaching the cap wins outright regardless of margin.
+    """
+    cap = target + 9
+    hi, lo = max(score_a, score_b), min(score_a, score_b)
+    if hi > cap or lo > cap:
+        return False
+    if hi == cap:
+        return True
+    if hi >= target and (hi - lo) >= 2:
+        return True
+    return False
+
+
 def handler(event, context):
     try:
         method = event.get('httpMethod')
@@ -76,6 +93,11 @@ def record_match(event):
         return _response(400, {'error': 'score_a and score_b are required'})
     if set(team_a) & set(team_b):
         return _response(400, {'error': 'a player cannot be on both teams'})
+    if not _is_valid_completed_game(int(score_a), int(score_b), int(points_to_win)):
+        cap = int(points_to_win) + 9
+        return _response(400, {
+            'error': f'invalid final score: game must be won by 2 at {points_to_win}+ points, or reach the hard cap of {cap}'
+        })
 
     if point_log is not None:
         if not isinstance(point_log, list) or any(p not in ('A', 'B') for p in point_log):

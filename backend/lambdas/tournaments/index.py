@@ -40,6 +40,20 @@ matches_table = dynamodb.Table(os.environ['MATCHES_TABLE'])
 K_FACTOR = 32
 
 
+def _is_valid_completed_game(score_a, score_b, target):
+    """Same BWF-style rule as the standalone matches Lambda: win by 2 at
+    target+ points, hard cap at target+9 where reaching it wins outright."""
+    cap = target + 9
+    hi, lo = max(score_a, score_b), min(score_a, score_b)
+    if hi > cap or lo > cap:
+        return False
+    if hi == cap:
+        return True
+    if hi >= target and (hi - lo) >= 2:
+        return True
+    return False
+
+
 def handler(event, context):
     try:
         method = event.get('httpMethod')
@@ -248,7 +262,7 @@ def get_tournament(tournament_id):
     item = tournaments_table.get_item(Key={'tournament_id': tournament_id}).get('Item')
     if not item:
         return _response(404, {'error': 'tournament not found'})
-    if item.get('status') == 'group_stage':
+    if 'subgroups' in item:
         item['standings'] = compute_all_standings(item)
     return _response(200, item)
 
@@ -291,10 +305,11 @@ def compute_all_standings(item):
 
 # ---------- group stage scoring ----------
 
-def _submit_game(fixture, score_a, score_b, best_of):
+def _submit_game(fixture, score_a, score_b, best_of, target=21):
     """Append one game's score to a fixture/match. Returns True if the match is now decided."""
-    if score_a == score_b:
-        raise ValueError('a single game cannot end in a tie')
+    if not _is_valid_completed_game(score_a, score_b, target):
+        cap = target + 9
+        raise ValueError(f'invalid game score: must be won by 2 at {target}+ points, or reach the hard cap of {cap}')
 
     fixture['games'].append({'score_a': score_a, 'score_b': score_b})
     if score_a > score_b:
@@ -341,8 +356,9 @@ def record_group_score(tournament_id, event):
         return _response(400, {'error': 'this fixture is already decided'})
 
     best_of = item.get('best_of', 1)
+    target = item.get('points_to_win', 21)
     try:
-        decided = _submit_game(fixture, score_a, score_b, best_of)
+        decided = _submit_game(fixture, score_a, score_b, best_of, target)
     except ValueError as e:
         return _response(400, {'error': str(e)})
 
@@ -416,8 +432,9 @@ def record_knockout_score(tournament_id, event):
         return _response(400, {'error': 'this match is already decided'})
 
     best_of = item.get('best_of', 1)
+    target = item.get('points_to_win', 21)
     try:
-        decided = _submit_game(match, score_a, score_b, best_of)
+        decided = _submit_game(match, score_a, score_b, best_of, target)
     except ValueError as e:
         return _response(400, {'error': str(e)})
 
