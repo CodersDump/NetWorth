@@ -88,49 +88,14 @@ def handler(event, context):
 
 # ---------- creation ----------
 
-def get_matches_played_counts():
-    """Scan the Matches table once and count appearances per player_id,
-    across both standalone and tournament matches."""
-    items = matches_table.scan().get('Items', [])
-    counts = {}
-    for m in items:
-        for pid in (m.get('team_a') or []) + (m.get('team_b') or []):
-            counts[pid] = counts.get(pid, 0) + 1
-    return counts
-
-
-EXPERIENCED_THRESHOLD = 5  # matches played to be treated as "experienced" for seeding
-
-
-def seeded_order(players, matches_played):
-    """Sort experienced players by rating (desc); interleave newer players
-    evenly through that order rather than leaving them clustered together,
-    since a new player's default 1000 rating isn't a reliable skill signal
-    yet."""
-    experienced = [p for p in players if matches_played.get(p['player_id'], 0) >= EXPERIENCED_THRESHOLD]
-    newer = [p for p in players if matches_played.get(p['player_id'], 0) < EXPERIENCED_THRESHOLD]
-    experienced.sort(key=lambda p: -float(p.get('rating', 1000)))
-    random.shuffle(newer)
-
-    if not newer:
-        return experienced
-    if not experienced:
-        return newer
-
-    result = []
-    step = len(experienced) / (len(newer) + 1)
-    next_insert_at = step
-    newer_idx = 0
-    for i, p in enumerate(experienced):
-        result.append(p)
-        if newer_idx < len(newer) and (i + 1) >= next_insert_at:
-            result.append(newer[newer_idx])
-            newer_idx += 1
-            next_insert_at += step
-    while newer_idx < len(newer):
-        result.append(newer[newer_idx])
-        newer_idx += 1
-    return result
+def seeded_order(players):
+    """Sort by current rating, descending. New players just use their
+    default 1000 rating - a provisional rating still helps balance far
+    more than pure random, and snake pairing (strongest with weakest)
+    naturally spreads new players across different teams rather than
+    clustering them, so no separate 'experienced vs new' handling is
+    needed."""
+    return sorted(players, key=lambda p: -float(p.get('rating', 1000)))
 
 
 def pair_for_balance(ordered_players):
@@ -209,8 +174,7 @@ def create_tournament(event):
                 players.append({'player_id': p['player_id'], 'name': p['name'], 'rating': p.get('rating', 1000)})
 
         if pairing_mode == 'seeded':
-            matches_played = get_matches_played_counts()
-            ordered = seeded_order(players, matches_played)
+            ordered = seeded_order(players)
         else:
             ordered = players[:]
             random.shuffle(ordered)
