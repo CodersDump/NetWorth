@@ -38,6 +38,7 @@ players_table = dynamodb.Table(os.environ['PLAYERS_TABLE'])
 matches_table = dynamodb.Table(os.environ['MATCHES_TABLE'])
 
 K_FACTOR = 32
+DELETE_KEYWORD = 'DELETE'  # must be typed exactly to confirm deleting a tournament
 
 
 def _is_valid_completed_game(score_a, score_b, target):
@@ -69,7 +70,7 @@ def handler(event, context):
             if method == 'GET':
                 return get_tournament(parts[0])
             elif method == 'DELETE':
-                return delete_tournament(parts[0])
+                return delete_tournament(parts[0], event)
         elif len(parts) == 2 and parts[1] == 'group-score':
             if method == 'POST':
                 return record_group_score(parts[0], event)
@@ -372,10 +373,14 @@ def get_tournament(tournament_id):
     return _response(200, item)
 
 
-def delete_tournament(tournament_id):
+def delete_tournament(tournament_id, event):
     """Deletes only this exact tournament_id. Does not touch the Matches or
     Players tables - safe to use on duplicate/accidental tournament entries,
     since ratings and match history live independently in the Matches table."""
+    body = json.loads(event.get('body') or '{}')
+    if body.get('confirm') != DELETE_KEYWORD:
+        return _response(400, {'error': f'confirmation required: send confirm: "{DELETE_KEYWORD}" in the request body'})
+
     existing = tournaments_table.get_item(Key={'tournament_id': tournament_id}).get('Item')
     if not existing:
         return _response(404, {'error': 'tournament not found'})

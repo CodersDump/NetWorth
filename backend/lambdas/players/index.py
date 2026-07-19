@@ -19,6 +19,8 @@ import boto3
 dynamodb = boto3.resource('dynamodb')
 table = dynamodb.Table(os.environ['PLAYERS_TABLE'])
 
+DELETE_KEYWORD = 'DELETE'  # must be typed exactly to confirm a delete
+
 
 def handler(event, context):
     try:
@@ -30,7 +32,7 @@ def handler(event, context):
         elif method == 'PUT' and player_id:
             return update_player(player_id, event)
         elif method == 'DELETE' and player_id:
-            return delete_player(player_id)
+            return delete_player(player_id, event)
         return _response(400, {'error': 'unsupported operation'})
     except Exception as e:
         return _response(500, {'error': str(e)})
@@ -85,7 +87,11 @@ def update_player(player_id, event):
     return _response(200, {'player_id': player_id, 'updated': True})
 
 
-def delete_player(player_id):
+def delete_player(player_id, event):
+    body = json.loads(event.get('body') or '{}')
+    if body.get('confirm') != DELETE_KEYWORD:
+        return _response(400, {'error': f'confirmation required: send confirm: "{DELETE_KEYWORD}" in the request body'})
+
     existing = table.get_item(Key={'player_id': player_id}).get('Item')
     if not existing:
         return _response(404, {'error': 'player not found'})

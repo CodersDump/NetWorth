@@ -24,6 +24,8 @@ dynamodb = boto3.resource('dynamodb')
 groups_table = dynamodb.Table(os.environ['GROUPS_TABLE'])
 players_table = dynamodb.Table(os.environ['PLAYERS_TABLE'])
 
+DELETE_KEYWORD = 'DELETE'  # must be typed exactly to confirm removing a player from a group
+
 
 def handler(event, context):
     try:
@@ -44,7 +46,7 @@ def handler(event, context):
                 return add_player(parts[0], event)
         elif len(parts) == 3 and parts[1] == 'players':
             if method == 'DELETE':
-                return remove_player(parts[0], parts[2])
+                return remove_player(parts[0], parts[2], event)
 
         return _response(404, {'error': 'not found'})
     except Exception as e:
@@ -104,7 +106,11 @@ def add_player(group_id, event):
     return _response(200, {'group_id': group_id, 'added': player_id})
 
 
-def remove_player(group_id, player_id):
+def remove_player(group_id, player_id, event):
+    body = json.loads(event.get('body') or '{}')
+    if body.get('confirm') != DELETE_KEYWORD:
+        return _response(400, {'error': f'confirmation required: send confirm: "{DELETE_KEYWORD}" in the request body'})
+
     group = groups_table.get_item(Key={'group_id': group_id}).get('Item')
     if not group:
         return _response(404, {'error': 'group not found'})

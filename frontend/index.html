@@ -375,10 +375,20 @@
     }
 
     async function removePlayerFromGroup(groupId, playerId) {
-      const res = await fetch(`${API_BASE_URL}/groups/${groupId}/players/${playerId}`, { method: 'DELETE' });
+      const confirmText = prompt('Type DELETE (all caps) to confirm removing this player from the group:');
+      if (confirmText !== 'DELETE') return;
+
+      const res = await fetch(`${API_BASE_URL}/groups/${groupId}/players/${playerId}`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ confirm: confirmText })
+      });
       if (res.ok) {
         loadGroupMembers(groupId);
         loadGroups();
+      } else {
+        const data = await res.json();
+        alert(data.error);
       }
     }
 
@@ -572,9 +582,20 @@
       e.preventDefault();
       const playerId = document.getElementById('delete_player_id').value.trim();
       const resultEl = document.getElementById('delete-result');
+
+      const confirmText = prompt('Type DELETE (all caps) to confirm removing this player:');
+      if (confirmText !== 'DELETE') {
+        resultEl.textContent = 'Cancelled - confirmation text did not match.';
+        return;
+      }
+
       resultEl.textContent = 'Deleting...';
       try {
-        const res = await fetch(`${API_BASE_URL}/players/${playerId}`, { method: 'DELETE' });
+        const res = await fetch(`${API_BASE_URL}/players/${playerId}`, {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ confirm: confirmText })
+        });
         const data = await res.json();
         if (res.ok) {
           resultEl.textContent = `Deleted player: ${data.deleted}`;
@@ -969,13 +990,19 @@
       if (!tournamentId) { resultEl.textContent = 'Select a tournament first.'; return; }
 
       const label = selectedOption ? selectedOption.textContent : tournamentId;
-      if (!confirm(`Delete "${label}"? This only removes this exact tournament entry - player ratings and match history are untouched.`)) {
+      const confirmText = prompt(`Type DELETE (all caps) to confirm removing "${label}". This only removes this exact tournament entry - player ratings and match history are untouched.`);
+      if (confirmText !== 'DELETE') {
+        resultEl.textContent = 'Cancelled - confirmation text did not match.';
         return;
       }
 
       resultEl.textContent = 'Deleting...';
       try {
-        const res = await fetch(`${API_BASE_URL}/tournaments/${tournamentId}`, { method: 'DELETE' });
+        const res = await fetch(`${API_BASE_URL}/tournaments/${tournamentId}`, {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ confirm: confirmText })
+        });
         const data = await res.json();
         if (res.ok) {
           resultEl.textContent = `Deleted: ${data.name}`;
