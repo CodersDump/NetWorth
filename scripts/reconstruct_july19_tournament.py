@@ -44,15 +44,15 @@ GROUP_B_TEAMS = [
     ("Sohan", "Aditya"),
     ("Pradeep", "Ram C"),
     ("Abhishek K", "Gangaram Ghadi"),
-    ("Sambhit", "Sandeep"),
+    ("Sambvit", "Sandeep"),
 ]
 GROUP_B_FIXTURES = [
     (("Sohan", "Aditya"), ("Pradeep", "Ram C"), 17, 21),
     (("Pradeep", "Ram C"), ("Abhishek K", "Gangaram Ghadi"), 21, 15),
     (("Sohan", "Aditya"), ("Abhishek K", "Gangaram Ghadi"), 12, 21),
-    (("Sambhit", "Sandeep"), ("Pradeep", "Ram C"), 11, 21),
-    (("Sambhit", "Sandeep"), ("Sohan", "Aditya"), 21, 7),
-    (("Abhishek K", "Gangaram Ghadi"), ("Sambhit", "Sandeep"), 21, 17),
+    (("Sambvit", "Sandeep"), ("Pradeep", "Ram C"), 11, 21),
+    (("Sambvit", "Sandeep"), ("Sohan", "Aditya"), 21, 7),
+    (("Abhishek K", "Gangaram Ghadi"), ("Sambvit", "Sandeep"), 21, 17),
 ]
 
 # Semifinals (knockout round 1) - already played
