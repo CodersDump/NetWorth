@@ -420,21 +420,50 @@ def record_knockout_score(tournament_id, event):
     body = json.loads(event.get('body') or '{}')
     round_index = body.get('round_index')
     match_index = body.get('match_index')
+    third_place = bool(body.get('third_place'))
     score_a = body.get('score_a')
     score_b = body.get('score_b')
 
-    if round_index is None or match_index is None or score_a is None or score_b is None:
-        return _response(400, {'error': 'round_index, match_index, score_a, score_b are required'})
+    if score_a is None or score_b is None:
+        return _response(400, {'error': 'score_a and score_b are required'})
+    if not third_place and (round_index is None or match_index is None):
+        return _response(400, {'error': 'round_index and match_index are required (or set third_place: true)'})
 
-    round_index, match_index = int(round_index), int(match_index)
     score_a, score_b = int(score_a), int(score_b)
 
     item = tournaments_table.get_item(Key={'tournament_id': tournament_id}).get('Item')
     if not item:
         return _response(404, {'error': 'tournament not found'})
-    if item.get('status') != 'knockout':
+    if item.get('status') not in ('knockout', 'completed'):
         return _response(400, {'error': 'tournament is not in knockout stage'})
 
+    best_of = item.get('best_of', 1)
+    target = item.get('points_to_win', 21)
+
+    if third_place:
+        match = item['knockout'].get('third_place_match')
+        if not match:
+            return _response(404, {'error': 'no third place match exists yet for this tournament'})
+        if match['played']:
+            return _response(400, {'error': 'this match is already decided'})
+
+        try:
+            decided = _submit_game(match, score_a, score_b, best_of, target)
+        except ValueError as e:
+            return _response(400, {'error': str(e)})
+
+        if decided:
+            total_a = sum(g['score_a'] for g in match['games'])
+            total_b = sum(g['score_b'] for g in match['games'])
+            winner = 'A' if match['games_won_a'] > match['games_won_b'] else 'B'
+            update_elo_and_log(item.get('match_type', 'singles'), match['player_a'], match['player_b'],
+                                total_a, total_b, item['group_id'], tournament_id, 'third_place',
+                                winner_override=winner, games=match['games'])
+
+        tournaments_table.put_item(Item=item)
+        return _response(200, item)
+
+    round_index, match_index = int(round_index), int(match_index)
     rounds = item['knockout']['rounds']
     if round_index >= len(rounds):
         return _response(400, {'error': 'invalid round_index'})
@@ -444,8 +473,6 @@ def record_knockout_score(tournament_id, event):
     if match['played']:
         return _response(400, {'error': 'this match is already decided'})
 
-    best_of = item.get('best_of', 1)
-    target = item.get('points_to_win', 21)
     try:
         decided = _submit_game(match, score_a, score_b, best_of, target)
     except ValueError as e:
@@ -471,6 +498,26 @@ def record_knockout_score(tournament_id, event):
                     entity = m['player_a'] if m['player_a']['player_id'] == pid else m['player_b']
                     winners.append(entity)
                 rounds.append(build_knockout_round(winners))
+
+                # If this round had exactly 2 matches, it was the semifinal
+                # stage feeding a single-match final - set up a 3rd place
+                # match between the two losers.
+                if len(current_round) == 2 and 'third_place_match' not in item['knockout']:
+                    losers = []
+                    for m in current_round:
+                        pid = m['winner_id']
+                        loser_entity = m['player_b'] if m['player_a']['player_id'] == pid else m['player_a']
+                        losers.append(loser_entity)
+                    item['knockout']['third_place_match'] = {
+                        'match_id': str(uuid.uuid4()),
+                        'player_a': losers[0],
+                        'player_b': losers[1],
+                        'games': [],
+                        'games_won_a': 0,
+                        'games_won_b': 0,
+                        'played': False,
+                        'winner_id': None
+                    }
 
     tournaments_table.put_item(Item=item)
     return _response(200, item)
