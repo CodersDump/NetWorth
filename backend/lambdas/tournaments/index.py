@@ -75,6 +75,7 @@ def create_tournament(event):
     fmt = body.get('format', 'knockout')
     match_type = body.get('match_type', 'singles')
     points_to_win = int(body.get('points_to_win', 21))
+    best_of = int(body.get('best_of', 1))
     num_subgroups = int(body.get('num_subgroups', 2))
     advance_per_group = int(body.get('advance_per_group', 2))
 
@@ -82,6 +83,8 @@ def create_tournament(event):
         return _response(400, {'error': 'group_id and name are required'})
     if match_type not in ('singles', 'doubles'):
         return _response(400, {'error': 'match_type must be singles or doubles'})
+    if best_of not in (1, 3):
+        return _response(400, {'error': 'best_of must be 1 or 3'})
 
     group = groups_table.get_item(Key={'group_id': group_id}).get('Item')
     if not group:
@@ -123,6 +126,7 @@ def create_tournament(event):
         'format': fmt,
         'match_type': match_type,
         'points_to_win': points_to_win,
+        'best_of': best_of,
         'created_at': datetime.now(timezone.utc).isoformat(),
     }
     if excluded_player:
@@ -156,9 +160,10 @@ def build_round_robin(entities):
                 'fixture_id': str(uuid.uuid4()),
                 'player_a': entities[i],
                 'player_b': entities[j],
+                'games': [],
+                'games_won_a': 0,
+                'games_won_b': 0,
                 'played': False,
-                'score_a': None,
-                'score_b': None,
                 'winner_id': None
             })
     return fixtures
@@ -189,10 +194,11 @@ def build_knockout_round(entities):
                     'match_id': str(uuid.uuid4()),
                     'player_a': entity_a,
                     'player_b': entity_b,
+                    'games': [],
+                    'games_won_a': 0,
+                    'games_won_b': 0,
                     'played': False,
-                    'winner_id': None,
-                    'score_a': None,
-                    'score_b': None
+                    'winner_id': None
                 })
             i += 2
     return matches
@@ -203,11 +209,12 @@ def _bye_match(entity):
         'match_id': str(uuid.uuid4()),
         'player_a': entity,
         'player_b': None,
+        'games': [],
+        'games_won_a': 0,
+        'games_won_b': 0,
         'played': True,
         'winner_id': entity['player_id'],
-        'bye': True,
-        'score_a': None,
-        'score_b': None
+        'bye': True
     }
 
 
@@ -227,6 +234,7 @@ def list_tournaments(event):
             'format': i['format'],
             'match_type': i.get('match_type', 'singles'),
             'points_to_win': i.get('points_to_win', 21),
+            'best_of': i.get('best_of', 1),
             'status': i['status'],
             'created_at': i['created_at']
         }
@@ -254,14 +262,16 @@ def compute_standings(fixtures, entities):
         for e in entities
     }
     for f in fixtures:
-        if not f['played']:
+        if not f['played'] or f.get('bye'):
             continue
         a_id = f['player_a']['player_id']
         b_id = f['player_b']['player_id']
-        stats[a_id]['points_won'] += f['score_a']
-        stats[a_id]['points_lost'] += f['score_b']
-        stats[b_id]['points_won'] += f['score_b']
-        stats[b_id]['points_lost'] += f['score_a']
+        total_a = sum(g['score_a'] for g in f.get('games', []))
+        total_b = sum(g['score_b'] for g in f.get('games', []))
+        stats[a_id]['points_won'] += total_a
+        stats[a_id]['points_lost'] += total_b
+        stats[b_id]['points_won'] += total_b
+        stats[b_id]['points_lost'] += total_a
         if f['winner_id'] == a_id:
             stats[a_id]['wins'] += 1
             stats[b_id]['losses'] += 1
@@ -280,6 +290,27 @@ def compute_all_standings(item):
 
 
 # ---------- group stage scoring ----------
+
+def _submit_game(fixture, score_a, score_b, best_of):
+    """Append one game's score to a fixture/match. Returns True if the match is now decided."""
+    if score_a == score_b:
+        raise ValueError('a single game cannot end in a tie')
+
+    fixture['games'].append({'score_a': score_a, 'score_b': score_b})
+    if score_a > score_b:
+        fixture['games_won_a'] += 1
+    else:
+        fixture['games_won_b'] += 1
+
+    needed_wins = (best_of // 2) + 1
+    if fixture['games_won_a'] >= needed_wins or fixture['games_won_b'] >= needed_wins:
+        a_id = fixture['player_a']['player_id']
+        b_id = fixture['player_b']['player_id']
+        fixture['winner_id'] = a_id if fixture['games_won_a'] > fixture['games_won_b'] else b_id
+        fixture['played'] = True
+        return True
+    return False
+
 
 def record_group_score(tournament_id, event):
     body = json.loads(event.get('body') or '{}')
@@ -306,20 +337,26 @@ def record_group_score(tournament_id, event):
     fixture = next((f for f in sg['fixtures'] if f['fixture_id'] == fixture_id), None)
     if not fixture:
         return _response(404, {'error': 'fixture not found'})
+    if fixture['played']:
+        return _response(400, {'error': 'this fixture is already decided'})
 
-    winner_id = fixture['player_a']['player_id'] if score_a > score_b else (
-        fixture['player_b']['player_id'] if score_b > score_a else None)
-    fixture['score_a'] = score_a
-    fixture['score_b'] = score_b
-    fixture['played'] = True
-    fixture['winner_id'] = winner_id or 'tie'
+    best_of = item.get('best_of', 1)
+    try:
+        decided = _submit_game(fixture, score_a, score_b, best_of)
+    except ValueError as e:
+        return _response(400, {'error': str(e)})
 
-    update_elo_and_log(item.get('match_type', 'singles'), fixture['player_a'], fixture['player_b'],
-                        score_a, score_b, item['group_id'], tournament_id, 'group')
+    if decided:
+        total_a = sum(g['score_a'] for g in fixture['games'])
+        total_b = sum(g['score_b'] for g in fixture['games'])
+        winner = 'A' if fixture['games_won_a'] > fixture['games_won_b'] else 'B'
+        update_elo_and_log(item.get('match_type', 'singles'), fixture['player_a'], fixture['player_b'],
+                            total_a, total_b, item['group_id'], tournament_id, 'group',
+                            winner_override=winner, games=fixture['games'])
 
-    all_played = all(f['played'] for sg2 in item['subgroups'].values() for f in sg2['fixtures'])
-    if all_played:
-        advance_to_knockout(item)
+        all_played = all(f['played'] for sg2 in item['subgroups'].values() for f in sg2['fixtures'])
+        if all_played:
+            advance_to_knockout(item)
 
     tournaments_table.put_item(Item=item)
     return _response(200, item)
@@ -375,30 +412,35 @@ def record_knockout_score(tournament_id, event):
     match = rounds[round_index][match_index]
     if match.get('bye'):
         return _response(400, {'error': 'this match is a bye, no score needed'})
-    if score_a == score_b:
-        return _response(400, {'error': 'score cannot be a tie in knockout stage'})
+    if match['played']:
+        return _response(400, {'error': 'this match is already decided'})
 
-    winner_id = match['player_a']['player_id'] if score_a > score_b else match['player_b']['player_id']
-    match['score_a'] = score_a
-    match['score_b'] = score_b
-    match['played'] = True
-    match['winner_id'] = winner_id
+    best_of = item.get('best_of', 1)
+    try:
+        decided = _submit_game(match, score_a, score_b, best_of)
+    except ValueError as e:
+        return _response(400, {'error': str(e)})
 
-    update_elo_and_log(item.get('match_type', 'singles'), match['player_a'], match['player_b'],
-                        score_a, score_b, item['group_id'], tournament_id, 'knockout')
+    if decided:
+        total_a = sum(g['score_a'] for g in match['games'])
+        total_b = sum(g['score_b'] for g in match['games'])
+        winner = 'A' if match['games_won_a'] > match['games_won_b'] else 'B'
+        update_elo_and_log(item.get('match_type', 'singles'), match['player_a'], match['player_b'],
+                            total_a, total_b, item['group_id'], tournament_id, 'knockout',
+                            winner_override=winner, games=match['games'])
 
-    current_round = rounds[round_index]
-    if all(m['played'] for m in current_round):
-        if len(current_round) == 1:
-            item['status'] = 'completed'
-            item['champion_id'] = current_round[0]['winner_id']
-        else:
-            winners = []
-            for m in current_round:
-                pid = m['winner_id']
-                entity = m['player_a'] if m['player_a']['player_id'] == pid else m['player_b']
-                winners.append(entity)
-            rounds.append(build_knockout_round(winners))
+        current_round = rounds[round_index]
+        if all(m['played'] for m in current_round):
+            if len(current_round) == 1:
+                item['status'] = 'completed'
+                item['champion_id'] = current_round[0]['winner_id']
+            else:
+                winners = []
+                for m in current_round:
+                    pid = m['winner_id']
+                    entity = m['player_a'] if m['player_a']['player_id'] == pid else m['player_b']
+                    winners.append(entity)
+                rounds.append(build_knockout_round(winners))
 
     tournaments_table.put_item(Item=item)
     return _response(200, item)
@@ -406,7 +448,8 @@ def record_knockout_score(tournament_id, event):
 
 # ---------- shared Elo + game-log write (entity = single player or doubles team) ----------
 
-def update_elo_and_log(match_type, entity_a, entity_b, score_a, score_b, group_id, tournament_id, stage):
+def update_elo_and_log(match_type, entity_a, entity_b, score_a, score_b, group_id, tournament_id, stage,
+                        winner_override=None, games=None):
     team_a_ids = entity_a.get('members', [entity_a['player_id']])
     team_b_ids = entity_b.get('members', [entity_b['player_id']])
 
@@ -418,7 +461,12 @@ def update_elo_and_log(match_type, entity_a, entity_b, score_a, score_b, group_i
     rating_a_avg = sum(float(p.get('rating', 1000)) for p in team_a_players) / len(team_a_players)
     rating_b_avg = sum(float(p.get('rating', 1000)) for p in team_b_players) / len(team_b_players)
 
-    actual_a = 1.0 if score_a > score_b else (0.0 if score_a < score_b else 0.5)
+    if winner_override == 'A':
+        actual_a = 1.0
+    elif winner_override == 'B':
+        actual_a = 0.0
+    else:
+        actual_a = 1.0 if score_a > score_b else (0.0 if score_a < score_b else 0.5)
     actual_b = 1.0 - actual_a
 
     expected_a = 1 / (1 + 10 ** ((rating_b_avg - rating_a_avg) / 400))
@@ -437,9 +485,9 @@ def update_elo_and_log(match_type, entity_a, entity_b, score_a, score_b, group_i
         players_table.update_item(Key={'player_id': pid}, UpdateExpression='SET rating = :r',
                                    ExpressionAttributeValues={':r': new_rating})
 
-    winner = 'A' if score_a > score_b else ('B' if score_b > score_a else 'tie')
+    winner = winner_override if winner_override else ('A' if score_a > score_b else ('B' if score_b > score_a else 'tie'))
 
-    matches_table.put_item(Item={
+    log_item = {
         'match_id': str(uuid.uuid4()),
         'date': datetime.now(timezone.utc).isoformat(),
         'match_type': match_type,
@@ -454,7 +502,10 @@ def update_elo_and_log(match_type, entity_a, entity_b, score_a, score_b, group_i
         'group_id': group_id,
         'tournament_id': tournament_id,
         'stage': stage
-    })
+    }
+    if games:
+        log_item['games'] = games
+    matches_table.put_item(Item=log_item)
 
 
 def _response(status_code, body_dict):

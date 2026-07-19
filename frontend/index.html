@@ -225,6 +225,12 @@
         <option value="11">11</option>
       </select>
     </label>
+    <label>Best of
+      <select id="tournament_best_of">
+        <option value="1" selected>Single game</option>
+        <option value="3">Best of 3</option>
+      </select>
+    </label>
     <div id="subgroup-options" style="display:none;">
       <div class="row">
         <div>
@@ -680,7 +686,7 @@
     async function loadTournamentsList() {
       const res = await fetch(`${API_BASE_URL}/tournaments`);
       const data = await res.json();
-      const items = (data.tournaments || []).map(t => ({ ...t, label: `${t.name} (${t.status}, to ${t.points_to_win || 21})` }));
+      const items = (data.tournaments || []).map(t => ({ ...t, label: `${t.name} (${t.status}, to ${t.points_to_win || 21}, bo${t.best_of || 1})` }));
       populateSelect(document.getElementById('tournament_select'), items, 'tournament_id', 'label', null);
     }
 
@@ -691,6 +697,7 @@
       const format = document.getElementById('tournament_format').value;
       const match_type = document.getElementById('tournament_match_type').value;
       const points_to_win = document.getElementById('tournament_points_to_win').value;
+      const best_of = document.getElementById('tournament_best_of').value;
       const num_subgroups = document.getElementById('num_subgroups').value;
       const advance_per_group = document.getElementById('advance_per_group').value;
       const resultEl = document.getElementById('create-tournament-result');
@@ -702,7 +709,7 @@
         const res = await fetch(`${API_BASE_URL}/tournaments`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ group_id, name, format, match_type, points_to_win, num_subgroups, advance_per_group })
+          body: JSON.stringify({ group_id, name, format, match_type, points_to_win, best_of, num_subgroups, advance_per_group })
         });
         const data = await res.json();
         if (res.ok) {
@@ -727,9 +734,15 @@
       renderTournament(data);
     });
 
+    function formatGames(games) {
+      if (!games || !games.length) return '';
+      return games.map(g => `${g.score_a}-${g.score_b}`).join(', ');
+    }
+
     function renderTournament(t) {
       const el = document.getElementById('tournament-detail');
-      let html = `<h3 style="font-size:16px;">${t.name} - ${t.status} (games to ${t.points_to_win || 21})</h3>`;
+      const bestOf = t.best_of || 1;
+      let html = `<h3 style="font-size:16px;">${t.name} - ${t.status} (games to ${t.points_to_win || 21}, best of ${bestOf})</h3>`;
 
       if (t.status === 'group_stage') {
         for (const [sgName, sg] of Object.entries(t.subgroups)) {
@@ -742,17 +755,21 @@
             });
             html += '</table>';
           }
-          html += '<table><tr><th>Match</th><th>Score</th><th>Action</th></tr>';
+          html += '<table><tr><th>Match</th><th>Games</th><th>Action</th></tr>';
           sg.fixtures.forEach(f => {
             const label = `${f.player_a.name} vs ${f.player_b.name}`;
+            const gamesText = formatGames(f.games);
             if (f.played) {
-              html += `<tr><td>${label}</td><td>${f.score_a} - ${f.score_b}</td><td>Done</td></tr>`;
+              html += `<tr><td>${label}</td><td>${gamesText} (${f.games_won_a}-${f.games_won_b})</td><td>Done</td></tr>`;
             } else {
+              const nextGameNum = (f.games ? f.games.length : 0) + 1;
+              const progress = gamesText ? `Games so far: ${gamesText} (${f.games_won_a}-${f.games_won_b}) | ` : '';
               html += `<tr><td>${label}</td><td colspan="2">
+                ${progress}Game ${nextGameNum}:
                 <input type="number" id="ga_${f.fixture_id}" style="width:50px;display:inline-block;">
                 -
                 <input type="number" id="gb_${f.fixture_id}" style="width:50px;display:inline-block;">
-                <button onclick="submitGroupScore('${t.tournament_id}','${sgName}','${f.fixture_id}')">Submit</button>
+                <button onclick="submitGroupScore('${t.tournament_id}','${sgName}','${f.fixture_id}')">Submit game ${nextGameNum}</button>
               </td></tr>`;
             }
           });
@@ -760,19 +777,23 @@
         }
       } else if (t.status === 'knockout' || t.status === 'completed') {
         t.knockout.rounds.forEach((round, rIdx) => {
-          html += `<h4 style="font-size:14px;">Round ${rIdx + 1}</h4><table><tr><th>Match</th><th>Score</th><th>Action</th></tr>`;
+          html += `<h4 style="font-size:14px;">Round ${rIdx + 1}</h4><table><tr><th>Match</th><th>Games</th><th>Action</th></tr>`;
           round.forEach((m, mIdx) => {
             const bName = m.player_b ? m.player_b.name : '(bye)';
             const label = `${m.player_a.name} vs ${bName}`;
+            const gamesText = formatGames(m.games);
             if (m.played) {
-              const scoreText = m.bye ? 'bye' : `${m.score_a} - ${m.score_b}`;
+              const scoreText = m.bye ? 'bye' : `${gamesText} (${m.games_won_a}-${m.games_won_b})`;
               html += `<tr><td>${label}</td><td>${scoreText}</td><td>Done</td></tr>`;
             } else {
+              const nextGameNum = (m.games ? m.games.length : 0) + 1;
+              const progress = gamesText ? `Games so far: ${gamesText} (${m.games_won_a}-${m.games_won_b}) | ` : '';
               html += `<tr><td>${label}</td><td colspan="2">
+                ${progress}Game ${nextGameNum}:
                 <input type="number" id="ka_${t.tournament_id}_${rIdx}_${mIdx}" style="width:50px;display:inline-block;">
                 -
                 <input type="number" id="kb_${t.tournament_id}_${rIdx}_${mIdx}" style="width:50px;display:inline-block;">
-                <button onclick="submitKnockoutScore('${t.tournament_id}',${rIdx},${mIdx})">Submit</button>
+                <button onclick="submitKnockoutScore('${t.tournament_id}',${rIdx},${mIdx})">Submit game ${nextGameNum}</button>
               </td></tr>`;
             }
           });
