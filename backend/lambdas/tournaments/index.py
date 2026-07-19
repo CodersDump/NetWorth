@@ -74,6 +74,7 @@ def create_tournament(event):
     name = (body.get('name') or '').strip()
     fmt = body.get('format', 'knockout')
     match_type = body.get('match_type', 'singles')
+    points_to_win = int(body.get('points_to_win', 21))
     num_subgroups = int(body.get('num_subgroups', 2))
     advance_per_group = int(body.get('advance_per_group', 2))
 
@@ -121,6 +122,7 @@ def create_tournament(event):
         'name': name,
         'format': fmt,
         'match_type': match_type,
+        'points_to_win': points_to_win,
         'created_at': datetime.now(timezone.utc).isoformat(),
     }
     if excluded_player:
@@ -224,6 +226,7 @@ def list_tournaments(event):
             'group_id': i['group_id'],
             'format': i['format'],
             'match_type': i.get('match_type', 'singles'),
+            'points_to_win': i.get('points_to_win', 21),
             'status': i['status'],
             'created_at': i['created_at']
         }

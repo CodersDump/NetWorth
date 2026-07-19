@@ -65,6 +65,7 @@ def record_match(event):
     score_b = body.get('score_b')
     group_id = body.get('group_id')
     point_log = body.get('point_log')
+    points_to_win = body.get('points_to_win', 21)
 
     if match_type not in ('singles', 'doubles'):
         return _response(400, {'error': 'match_type must be singles or doubles'})
@@ -84,7 +85,8 @@ def record_match(event):
         if log_a != int(score_a) or log_b != int(score_b):
             return _response(400, {'error': 'point_log does not match score_a/score_b totals'})
 
-    item = _play_and_log(match_type, team_a, team_b, int(score_a), int(score_b), group_id, None, None, point_log)
+    item = _play_and_log(match_type, team_a, team_b, int(score_a), int(score_b), group_id, None, None,
+                          point_log, int(points_to_win))
     if item is None:
         return _response(404, {'error': 'one or more players not found'})
     return _response(200, item)
@@ -119,7 +121,8 @@ def compute_momentum_stats(point_log, winner):
     }
 
 
-def _play_and_log(match_type, team_a_ids, team_b_ids, score_a, score_b, group_id, tournament_id, stage, point_log=None):
+def _play_and_log(match_type, team_a_ids, team_b_ids, score_a, score_b, group_id, tournament_id, stage,
+                   point_log=None, points_to_win=21):
     team_a_players = [players_table.get_item(Key={'player_id': pid}).get('Item') for pid in team_a_ids]
     team_b_players = [players_table.get_item(Key={'player_id': pid}).get('Item') for pid in team_b_ids]
     if any(p is None for p in team_a_players) or any(p is None for p in team_b_players):
@@ -159,6 +162,7 @@ def _play_and_log(match_type, team_a_ids, team_b_ids, score_a, score_b, group_id
         'team_b_names': [p['name'] for p in team_b_players],
         'score_a': score_a,
         'score_b': score_b,
+        'points_to_win': points_to_win,
         'winner': winner,
         'ratings_after': new_ratings,
     }

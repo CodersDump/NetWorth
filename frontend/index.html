@@ -120,6 +120,15 @@
           </select>
         </label>
       </div>
+      <div>
+        <label>Points to win
+          <select id="points_to_win_select">
+            <option value="21" selected>21</option>
+            <option value="15">15</option>
+            <option value="11">11</option>
+          </select>
+        </label>
+      </div>
     </div>
 
     <div class="row">
@@ -207,6 +216,13 @@
       <select id="tournament_match_type">
         <option value="doubles">Doubles</option>
         <option value="singles">Singles</option>
+      </select>
+    </label>
+    <label>Points to win (applies to all matches in this tournament)
+      <select id="tournament_points_to_win">
+        <option value="21" selected>21</option>
+        <option value="15">15</option>
+        <option value="11">11</option>
       </select>
     </label>
     <div id="subgroup-options" style="display:none;">
@@ -373,7 +389,11 @@
     function updateLiveScoreDisplay() {
       const a = livePointLog.filter(p => p === 'A').length;
       const b = livePointLog.filter(p => p === 'B').length;
-      document.getElementById('live-score-display').textContent = `${a} - ${b}`;
+      const target = parseInt(document.getElementById('points_to_win_select').value, 10);
+      let display = `${a} - ${b}`;
+      if (a >= target - 1 && a > b) display += ' (match point A)';
+      if (b >= target - 1 && b > a) display += ' (match point B)';
+      document.getElementById('live-score-display').textContent = display;
       document.getElementById('score_a').value = a;
       document.getElementById('score_b').value = b;
     }
@@ -569,7 +589,8 @@
       resultEl.textContent = 'Recording...';
       try {
         const useLive = document.getElementById('live_scoring_toggle').checked;
-        const payload = { group_id, match_type, team_a, team_b, score_a, score_b };
+        const points_to_win = document.getElementById('points_to_win_select').value;
+        const payload = { group_id, match_type, team_a, team_b, score_a, score_b, points_to_win };
         if (useLive) {
           if (livePointLog.length === 0) {
             resultEl.textContent = 'Record at least one point before finishing.';
@@ -659,7 +680,7 @@
     async function loadTournamentsList() {
       const res = await fetch(`${API_BASE_URL}/tournaments`);
       const data = await res.json();
-      const items = (data.tournaments || []).map(t => ({ ...t, label: `${t.name} (${t.status})` }));
+      const items = (data.tournaments || []).map(t => ({ ...t, label: `${t.name} (${t.status}, to ${t.points_to_win || 21})` }));
       populateSelect(document.getElementById('tournament_select'), items, 'tournament_id', 'label', null);
     }
 
@@ -669,6 +690,7 @@
       const name = document.getElementById('tournament_name').value;
       const format = document.getElementById('tournament_format').value;
       const match_type = document.getElementById('tournament_match_type').value;
+      const points_to_win = document.getElementById('tournament_points_to_win').value;
       const num_subgroups = document.getElementById('num_subgroups').value;
       const advance_per_group = document.getElementById('advance_per_group').value;
       const resultEl = document.getElementById('create-tournament-result');
@@ -680,7 +702,7 @@
         const res = await fetch(`${API_BASE_URL}/tournaments`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ group_id, name, format, match_type, num_subgroups, advance_per_group })
+          body: JSON.stringify({ group_id, name, format, match_type, points_to_win, num_subgroups, advance_per_group })
         });
         const data = await res.json();
         if (res.ok) {
@@ -707,7 +729,7 @@
 
     function renderTournament(t) {
       const el = document.getElementById('tournament-detail');
-      let html = `<h3 style="font-size:16px;">${t.name} - ${t.status}</h3>`;
+      let html = `<h3 style="font-size:16px;">${t.name} - ${t.status} (games to ${t.points_to_win || 21})</h3>`;
 
       if (t.status === 'group_stage') {
         for (const [sgName, sg] of Object.entries(t.subgroups)) {
