@@ -2,347 +2,526 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>NetWorth - Badminton Rankings</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
 <style>
-  body { font-family: sans-serif; max-width: 720px; margin: 40px auto; padding: 0 16px; }
-  h1 { font-size: 22px; }
-  h2 { font-size: 18px; margin-top: 32px; }
-  label { display: block; margin-top: 12px; font-size: 14px; }
-  input, select { width: 100%; padding: 8px; margin-top: 4px; box-sizing: border-box; }
+  :root {
+    --court: #1F7A4D;
+    --court-dark: #14532D;
+    --shuttle: #FFD23F;
+    --smash: #FF4757;
+    --rally: #00B4D8;
+    --bg: #F5F9F6;
+    --surface: #FFFFFF;
+    --surface-2: #EEF4EF;
+    --text: #12181D;
+    --text-secondary: #52605A;
+    --border: #DCE6DF;
+    --radius: 10px;
+  }
+  [data-theme="dark"] {
+    --bg: #0F1B15;
+    --surface: #16241C;
+    --surface-2: #1D2E23;
+    --text: #E8F1EA;
+    --text-secondary: #9FB3A6;
+    --border: #2A3D31;
+    --court: #2FA968;
+    --court-dark: #1F7A4D;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: 'Inter', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    margin: 0;
+    padding: 0;
+    transition: background 0.2s, color 0.2s;
+  }
+  .app-shell { max-width: 880px; margin: 0 auto; padding: 0 16px 64px; }
+  header.app-header {
+    position: sticky; top: 0; z-index: 20;
+    background: var(--court);
+    color: #fff;
+    padding: 14px 16px;
+    display: flex; align-items: center; justify-content: space-between;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.12);
+  }
+  .app-title { display: flex; align-items: center; gap: 10px; }
+  .app-title h1 {
+    font-family: 'Rajdhani', sans-serif;
+    font-weight: 700;
+    font-size: 26px;
+    letter-spacing: 0.5px;
+    margin: 0;
+    color: #fff;
+  }
+  .theme-toggle {
+    background: rgba(255,255,255,0.15);
+    border: none;
+    color: #fff;
+    border-radius: 20px;
+    padding: 8px 14px;
+    font-size: 13px;
+    cursor: pointer;
+    font-family: 'Inter', sans-serif;
+  }
+  .theme-toggle:hover { background: rgba(255,255,255,0.28); }
+
+  nav.tab-strip {
+    position: sticky; top: 58px; z-index: 19;
+    display: flex;
+    overflow-x: auto;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    -webkit-overflow-scrolling: touch;
+  }
+  nav.tab-strip::-webkit-scrollbar { display: none; }
+  .tab-btn {
+    flex: 0 0 auto;
+    font-family: 'Rajdhani', sans-serif;
+    font-weight: 700;
+    font-size: 15px;
+    letter-spacing: 0.3px;
+    background: none;
+    border: none;
+    color: var(--text-secondary);
+    padding: 14px 18px 12px;
+    cursor: pointer;
+    border-bottom: 3px solid transparent;
+    white-space: nowrap;
+    margin: 0;
+  }
+  .tab-btn.active { color: var(--court); border-bottom-color: var(--shuttle); }
+  [data-theme="dark"] .tab-btn.active { color: var(--court); }
+
+  .tab-panel { display: none; padding-top: 20px; }
+  .tab-panel.active { display: block; }
+
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 18px;
+    margin-bottom: 16px;
+  }
+  .card h2 {
+    font-family: 'Rajdhani', sans-serif;
+    font-weight: 700;
+    font-size: 20px;
+    margin: 0 0 4px;
+    letter-spacing: 0.2px;
+  }
+  .card h4 { font-family: 'Rajdhani', sans-serif; font-weight: 700; font-size: 16px; }
+  .card-sub { color: var(--text-secondary); font-size: 13px; margin: 0 0 14px; }
+
+  label { display: block; margin-top: 12px; font-size: 13px; font-weight: 500; color: var(--text-secondary); }
+  input, select {
+    width: 100%; padding: 10px; margin-top: 4px; box-sizing: border-box;
+    background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius);
+    color: var(--text); font-family: 'Inter', sans-serif; font-size: 14px;
+  }
+  input:focus, select:focus { outline: 2px solid var(--rally); outline-offset: 1px; }
   input[type="checkbox"] { width: auto; padding: 0; margin: 0 6px 0 0; vertical-align: middle; }
-  button { margin-top: 12px; padding: 10px 16px; cursor: pointer; }
-  .result { margin-top: 12px; font-size: 14px; }
-  .row { display: flex; gap: 12px; }
-  .row > div { flex: 1; }
+
+  button {
+    margin-top: 12px; padding: 10px 18px; cursor: pointer;
+    background: var(--court); color: #fff; border: none; border-radius: var(--radius);
+    font-family: 'Inter', sans-serif; font-weight: 600; font-size: 13px;
+    transition: transform 0.08s, background 0.15s;
+  }
+  button:hover { background: var(--court-dark); }
+  button:active { transform: scale(0.97); }
+  button.secondary { background: var(--surface-2); color: var(--text); border: 1px solid var(--border); }
+  button.secondary:hover { background: var(--border); }
+  button.danger { background: var(--smash); }
+  button.danger:hover { background: #d63447; }
+
+  #live-point-a-btn, #live-point-b-btn { transition: transform 0.06s, background 0.12s; }
+  #live-point-a-btn:active, #live-point-b-btn:active { transform: scale(0.94); background: var(--shuttle); color: #1a1a1a; }
+
+  .result { margin-top: 12px; font-size: 13px; color: var(--text-secondary); }
+  .row { display: flex; gap: 12px; flex-wrap: wrap; }
+  .row > div { flex: 1; min-width: 140px; }
   table { width: 100%; border-collapse: collapse; margin-top: 12px; font-size: 13px; }
-  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid #ddd; }
-  .member-row { display: flex; justify-content: space-between; align-items: center; padding: 4px 0; }
-  .member-row button { margin-top: 0; padding: 4px 8px; font-size: 12px; }
-  hr { margin: 32px 0; }
-  .row strong { display: block; margin-bottom: 4px; font-size: 14px; }
+  th, td { text-align: left; padding: 8px; border-bottom: 1px solid var(--border); }
+  th { font-family: 'Rajdhani', sans-serif; font-weight: 700; color: var(--text-secondary); font-size: 12px; text-transform: uppercase; letter-spacing: 0.4px; }
+  td { font-variant-numeric: tabular-nums; }
+  .rating, .score-num { font-family: 'JetBrains Mono', monospace; }
+  .member-row { display: flex; justify-content: space-between; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--border); }
+  .member-row:last-child { border-bottom: none; }
+  .member-row button { margin-top: 0; padding: 5px 10px; font-size: 12px; }
+  hr { border: none; border-top: 1px solid var(--border); margin: 20px 0; }
+  .row strong { display: block; margin-bottom: 4px; font-size: 13px; }
   .row select { margin-top: 4px; }
+
+  @media (max-width: 640px) {
+    .app-shell { padding: 0 10px 48px; }
+    .card { padding: 14px; border-radius: 10px; }
+    .row { flex-direction: column; }
+    .tab-btn { padding: 12px 14px 10px; font-size: 14px; }
+    .app-title h1 { font-size: 22px; }
+  }
 </style>
 </head>
 <body>
-  <h1>NetWorth</h1>
-
-  <!-- Player registration -->
-  <h2>Register a player</h2>
-  <form id="register-form">
-    <label>Name
-      <input type="text" id="name" required>
-    </label>
-    <label>Skill level
-      <select id="skill_level">
-        <option value="beginner">Beginner</option>
-        <option value="intermediate" selected>Intermediate</option>
-        <option value="advanced">Advanced</option>
-      </select>
-    </label>
-    <button type="submit">Register</button>
-  </form>
-  <div id="result" class="result"></div>
-
-  <hr>
-
-  <!-- Delete a player -->
-  <h2>Delete a player</h2>
-  <form id="delete-form">
-    <label>Player
-      <select id="delete_player_id" required></select>
-    </label>
-    <button type="submit">Delete</button>
-  </form>
-  <div id="delete-result" class="result"></div>
-
-  <hr>
-
-  <!-- Edit a player -->
-  <h2>Edit a player's name</h2>
-  <form id="edit-player-form">
-    <label>Player
-      <select id="edit_player_select" required></select>
-    </label>
-    <label>New name
-      <input type="text" id="edit_player_name" required>
-    </label>
-    <button type="submit">Save name</button>
-  </form>
-  <div id="edit-player-result" class="result"></div>
-
-  <hr>
-
-  <!-- Groups -->
-  <h2>Groups</h2>
-
-  <form id="create-group-form">
-    <label>New group name
-      <input type="text" id="group_name" required>
-    </label>
-    <button type="submit">Create group</button>
-  </form>
-  <div id="create-group-result" class="result"></div>
-
-  <label>Select a group
-    <select id="group_select"></select>
-  </label>
-  <button id="refresh-groups-btn" type="button">Refresh groups</button>
-  <button id="delete-group-btn" type="button">Delete this group</button>
-  <div id="delete-group-result" class="result"></div>
-
-  <div id="group-members" style="margin-top: 16px;"></div>
-
-  <div style="margin-top: 16px;">
-    <strong>Add players to group</strong>
-    <div id="add-players-checklist" style="max-height:200px; overflow-y:auto; border:1px solid #ccc; padding:8px; margin-top:6px;"></div>
-    <button id="add-selected-players-btn" type="button" style="margin-top:8px;">Add selected to group</button>
-  </div>
-  <div id="group-action-result" class="result"></div>
-
-  <hr>
-
-  <!-- Game log -->
-  <h2>Record a match</h2>
-  <form id="match-form">
-    <div class="row">
-      <div>
-        <label>Group (optional)
-          <select id="match_group_select"><option value="">None</option></select>
-        </label>
-      </div>
-      <div>
-        <label>Match type
-          <select id="match_type_select">
-            <option value="doubles">Doubles</option>
-            <option value="singles">Singles</option>
-          </select>
-        </label>
-      </div>
-      <div>
-        <label>Points to win
-          <select id="points_to_win_select">
-            <option value="21" selected>21</option>
-            <option value="15">15</option>
-            <option value="11">11</option>
-          </select>
-        </label>
-      </div>
+  <header class="app-header">
+    <div class="app-title">
+      <svg width="26" height="26" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <circle cx="12" cy="7" r="4" fill="#fff"/>
+        <path d="M12 11 L6 21 L18 21 Z" fill="#fff" opacity="0.85"/>
+      </svg>
+      <h1>NetWorth</h1>
     </div>
+    <button class="theme-toggle" id="theme-toggle-btn" type="button">Dark mode</button>
+  </header>
 
-    <div class="row">
-      <div>
-        <strong>Team A</strong>
-        <select id="team_a1_select"></select>
-        <select id="team_a2_select" class="doubles-only"></select>
-      </div>
-      <div>
-        <strong>Team B</strong>
-        <select id="team_b1_select"></select>
-        <select id="team_b2_select" class="doubles-only"></select>
-      </div>
-    </div>
-    <button id="randomize-teams-btn" type="button">Randomize teams</button>
+  <nav class="tab-strip" id="tab-strip">
+    <button class="tab-btn active" data-tab="players">Players</button>
+    <button class="tab-btn" data-tab="groups">Groups</button>
+    <button class="tab-btn" data-tab="matches">Matches</button>
+    <button class="tab-btn" data-tab="tournaments">Tournaments</button>
+    <button class="tab-btn" data-tab="stats">Stats</button>
+  </nav>
 
-    <div style="margin-top:16px;">
-      <label><input type="checkbox" id="live_scoring_toggle" style="width:auto;display:inline-block;"> Use live point-by-point scoring</label>
-    </div>
-
-    <div id="manual-score-section" class="row">
-      <div>
-        <label>Score A
-          <input type="number" id="score_a" required>
-        </label>
-      </div>
-      <div>
-        <label>Score B
-          <input type="number" id="score_b" required>
-        </label>
-      </div>
-    </div>
-
-    <div id="live-score-section" style="display:none; margin-top:12px;">
-      <div style="display:flex; gap:16px; align-items:center;">
-        <button type="button" id="live-point-a-btn" style="flex:1; padding:24px; font-size:18px;">+1 Team A</button>
-        <div style="font-size:22px; font-weight:bold; min-width:80px; text-align:center;" id="live-score-display">0 - 0</div>
-        <button type="button" id="live-point-b-btn" style="flex:1; padding:24px; font-size:18px;">+1 Team B</button>
-      </div>
-      <div style="margin-top:8px;">
-        <button type="button" id="live-undo-btn">Undo last point</button>
-        <button type="button" id="live-reset-btn">Reset</button>
-      </div>
-    </div>
-
-    <button type="submit" id="match-submit-btn">Record match</button>
-  </form>
-  <div id="match-result" class="result"></div>
-
-  <h2>Game log</h2>
-  <div class="row">
-    <div>
-      <label>Filter by group
-        <select id="log_group_filter"><option value="">All groups</option></select>
-      </label>
-    </div>
-    <div>
-      <label>Filter by player
-        <select id="log_player_filter"><option value="">All players</option></select>
-      </label>
-    </div>
-  </div>
-  <button id="load-log-btn" type="button">Load game log</button>
-  <div id="game-log"></div>
-
-  <hr>
-
-  <!-- Partnerships / chemistry -->
-  <h2>Partnerships</h2>
-  <label>Player
-    <select id="partnerships_player_select"></select>
-  </label>
-  <button id="load-partnerships-btn" type="button">View partnerships</button>
-  <div id="partnerships-result"></div>
-
-  <hr>
-
-  <!-- Attendance -->
-  <h2>Attendance</h2>
-  <label>Filter by group (optional)
-    <select id="attendance_group_filter"><option value="">All groups</option></select>
-  </label>
-  <button id="load-attendance-btn" type="button">View attendance</button>
-  <div id="attendance-result"></div>
-
-  <hr>
-
-  <!-- Tournaments -->
-  <h2>Tournaments</h2>
-
-  <form id="create-tournament-form">
-    <label>Group
-      <select id="tournament_group_select"></select>
-    </label>
-    <div id="tournament-participants-section" style="margin-top:8px;">
-      <strong style="font-size:13px;">Who's playing today?</strong>
-      <div id="tournament-participants-checklist" style="max-height:180px; overflow-y:auto; border:1px solid #ccc; padding:8px; margin-top:4px;"></div>
-    </div>
-
-    <div id="filler-section" style="display:none; margin-top:12px; border:1px solid #d99; padding:8px;">
-      <p style="font-size:13px; margin:0 0 6px 0;">Odd number of players for doubles - pick someone to fill the last slot:</p>
-      <select id="filler_existing_select"></select>
-      <label><input type="checkbox" id="filler_new_toggle" style="width:auto;display:inline-block;"> This person isn't registered yet - add them just for this event</label>
-      <div id="filler-new-fields" style="display:none;">
-        <label>New player's name
-          <input type="text" id="filler_new_name">
-        </label>
-        <label>Skill level
-          <select id="filler_new_skill">
-            <option value="beginner">Beginner</option>
-            <option value="intermediate" selected>Intermediate</option>
-            <option value="advanced">Advanced</option>
-          </select>
-        </label>
-      </div>
-      <button type="button" id="confirm-filler-btn">Confirm and create tournament</button>
-      <div id="filler-result" class="result"></div>
-    </div>
-    <label>Tournament name
-      <input type="text" id="tournament_name" required>
-    </label>
-    <label>Format
-      <select id="tournament_format">
-        <option value="knockout">Random knockout bracket</option>
-        <option value="groups_then_knockout">Groups, then knockout</option>
-      </select>
-    </label>
-    <label>Match type
-      <select id="tournament_match_type">
-        <option value="doubles">Doubles</option>
-        <option value="singles">Singles</option>
-      </select>
-    </label>
-    <label>Pairing
-      <select id="tournament_pairing_mode">
-        <option value="random">Random</option>
-        <option value="seeded">Rating/experience-aware random</option>
-        <option value="manual">Manual (I'll pick the teams)</option>
-      </select>
-    </label>
-    <div id="manual-teams-section" style="display:none; margin-top:12px;">
-      <p style="font-size:13px; color:#555;">Build each team below, then create the tournament.</p>
-      <div id="manual-teams-container"></div>
-      <button type="button" id="add-manual-team-btn">Add team</button>
-    </div>
-    <label>Points to win (applies to all matches in this tournament)
-      <select id="tournament_points_to_win">
-        <option value="21" selected>21</option>
-        <option value="15">15</option>
-        <option value="11">11</option>
-      </select>
-    </label>
-    <label>Best of
-      <select id="tournament_best_of">
-        <option value="1" selected>Single game</option>
-        <option value="3">Best of 3</option>
-      </select>
-    </label>
-    <div id="subgroup-options" style="display:none;">
-      <div class="row">
-        <div>
-          <label>Number of groups
-            <input type="number" id="num_subgroups" value="2" min="2">
+  <div class="app-shell">
+    <div class="tab-panel active" id="tab-players">
+      <div class="card">
+        <h2>Register a player</h2>
+        <p class="card-sub">Add someone to the pool. They don't need to be in a group yet.</p>
+        <form id="register-form">
+          <label>Name
+            <input type="text" id="name" required>
           </label>
-        </div>
-        <div>
-          <label>Players advancing per group
-            <input type="number" id="advance_per_group" value="2" min="1">
+          <label>Skill level
+            <select id="skill_level">
+              <option value="beginner">Beginner</option>
+              <option value="intermediate" selected>Intermediate</option>
+              <option value="advanced">Advanced</option>
+            </select>
           </label>
+          <button type="submit">Register</button>
+        </form>
+        <div id="result" class="result"></div>
+      </div>
+
+      <div class="card">
+        <h2>Edit a player's name</h2>
+        <form id="edit-player-form">
+          <label>Player
+            <select id="edit_player_select" required></select>
+          </label>
+          <label>New name
+            <input type="text" id="edit_player_name" required>
+          </label>
+          <button type="submit" class="secondary">Save name</button>
+        </form>
+        <div id="edit-player-result" class="result"></div>
+      </div>
+
+      <div class="card">
+        <h2>Delete a player</h2>
+        <form id="delete-form">
+          <label>Player
+            <select id="delete_player_id" required></select>
+          </label>
+          <button type="submit" class="danger">Delete</button>
+        </form>
+        <div id="delete-result" class="result"></div>
+      </div>
+    </div>
+
+    <div class="tab-panel" id="tab-groups">
+      <div class="card">
+        <h2>Groups</h2>
+        <p class="card-sub">A group is a set of players you regularly play with.</p>
+        <form id="create-group-form">
+          <label>New group name
+            <input type="text" id="group_name" required>
+          </label>
+          <button type="submit">Create group</button>
+        </form>
+        <div id="create-group-result" class="result"></div>
+
+        <label style="margin-top:20px;">Select a group
+          <select id="group_select"></select>
+        </label>
+        <div class="row" style="margin-top:8px;">
+          <div><button id="refresh-groups-btn" type="button" class="secondary" style="width:100%;">Refresh groups</button></div>
+          <div><button id="delete-group-btn" type="button" class="danger" style="width:100%;">Delete this group</button></div>
+        </div>
+        <div id="delete-group-result" class="result"></div>
+
+        <div id="group-members" style="margin-top: 16px;"></div>
+
+        <div style="margin-top: 16px;">
+          <strong>Add players to group</strong>
+          <div id="add-players-checklist" style="max-height:200px; overflow-y:auto; border:1px solid var(--border); border-radius:var(--radius); padding:8px; margin-top:6px;"></div>
+          <button id="add-selected-players-btn" type="button" class="secondary" style="margin-top:8px;">Add selected to group</button>
+        </div>
+        <div id="group-action-result" class="result"></div>
+      </div>
+    </div>
+
+    <div class="tab-panel" id="tab-matches">
+      <div class="card">
+        <h2>Record a match</h2>
+        <form id="match-form">
+          <div class="row">
+            <div>
+              <label>Group (optional)
+                <select id="match_group_select"><option value="">None</option></select>
+              </label>
+            </div>
+            <div>
+              <label>Match type
+                <select id="match_type_select">
+                  <option value="doubles">Doubles</option>
+                  <option value="singles">Singles</option>
+                </select>
+              </label>
+            </div>
+            <div>
+              <label>Points to win
+                <select id="points_to_win_select">
+                  <option value="21" selected>21</option>
+                  <option value="15">15</option>
+                  <option value="11">11</option>
+                </select>
+              </label>
+            </div>
+          </div>
+
+          <div class="row">
+            <div>
+              <strong>Team A</strong>
+              <select id="team_a1_select"></select>
+              <select id="team_a2_select" class="doubles-only"></select>
+            </div>
+            <div>
+              <strong>Team B</strong>
+              <select id="team_b1_select"></select>
+              <select id="team_b2_select" class="doubles-only"></select>
+            </div>
+          </div>
+          <button id="randomize-teams-btn" type="button" class="secondary">Randomize teams</button>
+
+          <div style="margin-top:16px;">
+            <label style="display:inline-block;"><input type="checkbox" id="live_scoring_toggle"> Use live point-by-point scoring</label>
+          </div>
+
+          <div id="manual-score-section" class="row">
+            <div>
+              <label>Score A
+                <input type="number" id="score_a" required>
+              </label>
+            </div>
+            <div>
+              <label>Score B
+                <input type="number" id="score_b" required>
+              </label>
+            </div>
+          </div>
+
+          <div id="live-score-section" style="display:none; margin-top:12px;">
+            <div style="display:flex; gap:16px; align-items:center;">
+              <button type="button" id="live-point-a-btn" style="flex:1; padding:24px; font-size:18px;">+1 Team A</button>
+              <div style="font-size:22px; font-weight:bold; min-width:80px; text-align:center; font-family:'JetBrains Mono',monospace;" id="live-score-display">0 - 0</div>
+              <button type="button" id="live-point-b-btn" style="flex:1; padding:24px; font-size:18px;">+1 Team B</button>
+            </div>
+            <div style="margin-top:8px;">
+              <button type="button" id="live-undo-btn" class="secondary">Undo last point</button>
+              <button type="button" id="live-reset-btn" class="secondary">Reset</button>
+            </div>
+          </div>
+
+          <button type="submit" id="match-submit-btn">Record match</button>
+        </form>
+        <div id="match-result" class="result"></div>
+      </div>
+
+      <div class="card">
+        <h2>Game log</h2>
+        <div class="row">
+          <div>
+            <label>Filter by group
+              <select id="log_group_filter"><option value="">All groups</option></select>
+            </label>
+          </div>
+          <div>
+            <label>Filter by player
+              <select id="log_player_filter"><option value="">All players</option></select>
+            </label>
+          </div>
+        </div>
+        <button id="load-log-btn" type="button" class="secondary">Load game log</button>
+        <div id="game-log"></div>
+      </div>
+    </div>
+
+    <div class="tab-panel" id="tab-stats">
+      <div class="card">
+        <h2>Partnerships</h2>
+        <p class="card-sub">See how a player's doubles record looks with each of their partners.</p>
+        <label>Player
+          <select id="partnerships_player_select"></select>
+        </label>
+        <button id="load-partnerships-btn" type="button" class="secondary">View partnerships</button>
+        <div id="partnerships-result"></div>
+      </div>
+
+      <div class="card">
+        <h2>Attendance</h2>
+        <p class="card-sub">Sessions attended and recent activity, per player.</p>
+        <label>Filter by group (optional)
+          <select id="attendance_group_filter"><option value="">All groups</option></select>
+        </label>
+        <button id="load-attendance-btn" type="button" class="secondary">View attendance</button>
+        <div id="attendance-result"></div>
+      </div>
+    </div>
+
+    <div class="tab-panel" id="tab-tournaments">
+      <div class="card">
+        <h2>Create a tournament</h2>
+        <form id="create-tournament-form">
+          <label>Group
+            <select id="tournament_group_select"></select>
+          </label>
+          <div id="tournament-participants-section" style="margin-top:8px;">
+            <strong style="font-size:13px;">Who's playing today?</strong>
+            <div id="tournament-participants-checklist" style="max-height:180px; overflow-y:auto; border:1px solid var(--border); border-radius:var(--radius); padding:8px; margin-top:4px;"></div>
+          </div>
+
+          <div id="filler-section" style="display:none; margin-top:12px; border:1px solid var(--smash); border-radius:var(--radius); padding:10px;">
+            <p style="font-size:13px; margin:0 0 6px 0;">Odd number of players for doubles - pick someone to fill the last slot:</p>
+            <select id="filler_existing_select"></select>
+            <label style="display:inline-block;"><input type="checkbox" id="filler_new_toggle"> This person isn't registered yet - add them just for this event</label>
+            <div id="filler-new-fields" style="display:none;">
+              <label>New player's name
+                <input type="text" id="filler_new_name">
+              </label>
+              <label>Skill level
+                <select id="filler_new_skill">
+                  <option value="beginner">Beginner</option>
+                  <option value="intermediate" selected>Intermediate</option>
+                  <option value="advanced">Advanced</option>
+                </select>
+              </label>
+            </div>
+            <button type="button" id="confirm-filler-btn">Confirm and create tournament</button>
+            <div id="filler-result" class="result"></div>
+          </div>
+          <label>Tournament name
+            <input type="text" id="tournament_name" required>
+          </label>
+          <label>Format
+            <select id="tournament_format">
+              <option value="knockout">Random knockout bracket</option>
+              <option value="groups_then_knockout">Groups, then knockout</option>
+            </select>
+          </label>
+          <label>Match type
+            <select id="tournament_match_type">
+              <option value="doubles">Doubles</option>
+              <option value="singles">Singles</option>
+            </select>
+          </label>
+          <label>Pairing
+            <select id="tournament_pairing_mode">
+              <option value="random">Random</option>
+              <option value="seeded">Rating/experience-aware random</option>
+              <option value="manual">Manual (I'll pick the teams)</option>
+            </select>
+          </label>
+          <div id="manual-teams-section" style="display:none; margin-top:12px;">
+            <p class="card-sub">Build each team below, then create the tournament.</p>
+            <div id="manual-teams-container"></div>
+            <button type="button" id="add-manual-team-btn" class="secondary">Add team</button>
+          </div>
+          <label>Points to win (applies to all matches in this tournament)
+            <select id="tournament_points_to_win">
+              <option value="21" selected>21</option>
+              <option value="15">15</option>
+              <option value="11">11</option>
+            </select>
+          </label>
+          <label>Best of
+            <select id="tournament_best_of">
+              <option value="1" selected>Single game</option>
+              <option value="3">Best of 3</option>
+            </select>
+          </label>
+          <div id="subgroup-options" style="display:none;">
+            <div class="row">
+              <div>
+                <label>Number of groups
+                  <input type="number" id="num_subgroups" value="2" min="2">
+                </label>
+              </div>
+              <div>
+                <label>Players advancing per group
+                  <input type="number" id="advance_per_group" value="2" min="1">
+                </label>
+              </div>
+            </div>
+          </div>
+          <button type="submit">Create tournament</button>
+        </form>
+        <div id="create-tournament-result" class="result"></div>
+      </div>
+
+      <div class="card">
+        <h2>View a tournament</h2>
+        <label>All tournaments
+          <select id="tournament_select"></select>
+        </label>
+        <div class="row" style="margin-top:8px;">
+          <div><button id="load-tournament-btn" type="button" class="secondary" style="width:100%;">Load tournament</button></div>
+          <div><button id="delete-tournament-btn" type="button" class="danger" style="width:100%;">Delete this tournament</button></div>
+        </div>
+        <div id="delete-tournament-result" class="result"></div>
+
+        <label style="display:inline-block; margin-top:14px;"><input type="checkbox" id="tournament_live_toggle"> Use live point-by-point scoring for tournament matches</label>
+
+        <div id="team-composition-preview" style="margin-top:12px;"></div>
+
+        <div id="tournament-detail" style="margin-top: 16px;"></div>
+
+        <div id="substitution-section" style="display:none; margin-top:16px; border-top:1px solid var(--border); padding-top:16px;">
+          <h4>Substitute a player</h4>
+          <p class="card-sub">Only affects this team's future (not-yet-played) matches in this tournament.</p>
+          <label>Team
+            <select id="sub_team_select"></select>
+          </label>
+          <label>Player being replaced
+            <select id="sub_old_player_select"></select>
+          </label>
+          <label>Replacement player
+            <select id="sub_new_player_select"></select>
+          </label>
+          <label style="display:inline-block;"><input type="checkbox" id="sub_new_player_toggle"> This person isn't registered yet - add them now</label>
+          <div id="sub_new_player_register_fields" style="display:none;">
+            <label>New player's name
+              <input type="text" id="sub_new_player_name">
+            </label>
+            <label>Skill level
+              <select id="sub_new_player_skill">
+                <option value="beginner">Beginner</option>
+                <option value="intermediate" selected>Intermediate</option>
+                <option value="advanced">Advanced</option>
+              </select>
+            </label>
+          </div>
+          <button type="button" id="submit-substitution-btn" class="secondary">Substitute</button>
+          <div id="substitution-result" class="result"></div>
         </div>
       </div>
     </div>
-    <button type="submit">Create tournament</button>
-  </form>
-  <div id="create-tournament-result" class="result"></div>
 
-  <label>All tournaments
-    <select id="tournament_select"></select>
-  </label>
-  <button id="load-tournament-btn" type="button">Load tournament</button>
-  <button id="delete-tournament-btn" type="button">Delete this tournament</button>
-  <div id="delete-tournament-result" class="result"></div>
-
-  <label><input type="checkbox" id="tournament_live_toggle" style="width:auto;display:inline-block;"> Use live point-by-point scoring for tournament matches</label>
-
-  <div id="team-composition-preview" style="margin-top:12px;"></div>
-
-  <div id="tournament-detail" style="margin-top: 16px;"></div>
-
-  <div id="substitution-section" style="display:none; margin-top:16px;">
-    <h4 style="font-size:14px;">Substitute a player</h4>
-    <p style="font-size:13px; color:#555;">Only affects this team's future (not-yet-played) matches in this tournament.</p>
-    <label>Team
-      <select id="sub_team_select"></select>
-    </label>
-    <label>Player being replaced
-      <select id="sub_old_player_select"></select>
-    </label>
-    <label>Replacement player
-      <select id="sub_new_player_select"></select>
-    </label>
-    <label><input type="checkbox" id="sub_new_player_toggle" style="width:auto;display:inline-block;"> This person isn't registered yet - add them now</label>
-    <div id="sub_new_player_register_fields" style="display:none;">
-      <label>New player's name
-        <input type="text" id="sub_new_player_name">
-      </label>
-      <label>Skill level
-        <select id="sub_new_player_skill">
-          <option value="beginner">Beginner</option>
-          <option value="intermediate" selected>Intermediate</option>
-          <option value="advanced">Advanced</option>
-        </select>
-      </label>
-    </div>
-    <button type="button" id="submit-substitution-btn">Substitute</button>
-    <div id="substitution-result" class="result"></div>
   </div>
 
   <script>
@@ -1654,6 +1833,32 @@
     document.getElementById('tournament_live_toggle').addEventListener('change', () => {
       if (currentTournamentData) renderTournament(currentTournamentData);
     });
+
+    document.querySelectorAll('.tab-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+        document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+        btn.classList.add('active');
+        document.getElementById(`tab-${btn.dataset.tab}`).classList.add('active');
+      });
+    });
+
+    function applyTheme(theme) {
+      document.documentElement.setAttribute('data-theme', theme);
+      document.getElementById('theme-toggle-btn').textContent = theme === 'dark' ? 'Light mode' : 'Dark mode';
+      localStorage.setItem('networth_theme', theme);
+    }
+
+    document.getElementById('theme-toggle-btn').addEventListener('click', () => {
+      const current = document.documentElement.getAttribute('data-theme');
+      applyTheme(current === 'dark' ? 'light' : 'dark');
+    });
+
+    (function initTheme() {
+      const saved = localStorage.getItem('networth_theme');
+      const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+      applyTheme(saved || (prefersDark ? 'dark' : 'light'));
+    })();
   </script>
 </body>
 </html>
