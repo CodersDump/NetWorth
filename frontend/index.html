@@ -292,6 +292,8 @@
 
   <label><input type="checkbox" id="tournament_live_toggle" style="width:auto;display:inline-block;"> Use live point-by-point scoring for tournament matches</label>
 
+  <div id="team-composition-preview" style="margin-top:12px;"></div>
+
   <div id="tournament-detail" style="margin-top: 16px;"></div>
 
   <div id="substitution-section" style="display:none; margin-top:16px;">
@@ -1011,6 +1013,7 @@
           document.getElementById('tournament_name').value = '';
           await loadTournamentsList();
           document.getElementById('tournament_select').value = data.tournament_id;
+          renderTeamCompositionBars(data, 'team-composition-preview');
           renderTournament(data);
         } else {
           resultEl.textContent = `Error: ${data.error}`;
@@ -1075,6 +1078,57 @@
         }
       }
       return Object.values(entities).filter(e => e.members && e.members.length === 2);
+    }
+
+    function getAllTeamEntities(t) {
+      const entities = {};
+      if (t.subgroups) {
+        for (const sg of Object.values(t.subgroups)) {
+          for (const e of sg.members) entities[e.player_id] = e;
+        }
+      }
+      if (t.knockout && t.knockout.rounds && t.knockout.rounds[0]) {
+        for (const m of t.knockout.rounds[0]) {
+          if (m.player_a) entities[m.player_a.player_id] = m.player_a;
+          if (m.player_b) entities[m.player_b.player_id] = m.player_b;
+        }
+      }
+      return Object.values(entities);
+    }
+
+    const TEAM_BAR_COLORS = ['#4a90d9', '#7ab8f5'];
+
+    function renderTeamCompositionBars(t, containerId) {
+      const container = document.getElementById(containerId);
+      const entities = getAllTeamEntities(t);
+      if (!entities.length) { container.innerHTML = ''; return; }
+
+      const withRatings = entities.map(e => {
+        const memberRatings = e.members.map(pid => {
+          const p = allPlayers.find(pl => pl.player_id === pid);
+          return { player_id: pid, name: p ? p.name : pid, rating: p ? p.rating : 1000 };
+        });
+        const avg = memberRatings.reduce((sum, m) => sum + Number(m.rating), 0) / memberRatings.length;
+        return { name: e.name, members: memberRatings, avgRating: avg };
+      });
+
+      const maxAvg = Math.max(...withRatings.map(x => x.avgRating));
+      withRatings.sort((a, b) => b.avgRating - a.avgRating);
+
+      let html = '<h4 style="font-size:14px;">Team balance</h4>';
+      withRatings.forEach(team => {
+        const widthPct = Math.max(15, (team.avgRating / maxAvg) * 100);
+        html += `<div style="margin-bottom:10px;">
+          <div style="font-size:13px; margin-bottom:2px;">${team.name} - avg Elo: ${Math.round(team.avgRating)}</div>
+          <div style="display:flex; height:26px; border:1px solid #ccc; width:${widthPct}%; min-width:180px;">`;
+        team.members.forEach((m, idx) => {
+          const flexBasis = m.rating;
+          const color = TEAM_BAR_COLORS[idx % TEAM_BAR_COLORS.length];
+          html += `<div style="flex:${flexBasis}; background:${color}; color:white; font-size:11px; display:flex; align-items:center; justify-content:center; overflow:hidden; white-space:nowrap;">${m.name} (${m.rating})</div>`;
+        });
+        html += `</div></div>`;
+      });
+      container.innerHTML = html;
     }
 
     function populateSubstitutionSection(t) {
@@ -1186,6 +1240,7 @@
     function renderTournament(t) {
       currentTournamentData = t;
       populateSubstitutionSection(t);
+      renderTeamCompositionBars(t, 'team-composition-preview');
       const el = document.getElementById('tournament-detail');
       const bestOf = t.best_of || 1;
       const liveMode = document.getElementById('tournament_live_toggle').checked;

@@ -373,12 +373,54 @@ def get_tournament(tournament_id):
     return _response(200, item)
 
 
+def recompute_all_ratings():
+    """Elo is path-dependent - each match's rating change depends on the
+    ratings at that exact moment, which depend on everything before it.
+    Simply subtracting a delta when a match is deleted isn't mathematically
+    safe if anything happened after it. The only fully correct fix: reset
+    everyone to 1000 and replay every remaining match in chronological
+    order, recomputing from scratch."""
+    players = players_table.scan().get('Items', [])
+    current_ratings = {p['player_id']: 1000.0 for p in players}
+
+    matches = matches_table.scan().get('Items', [])
+    matches.sort(key=lambda m: m.get('date', ''))
+
+    for m in matches:
+        team_a = m.get('team_a') or []
+        team_b = m.get('team_b') or []
+        score_a = m.get('score_a')
+        score_b = m.get('score_b')
+        if not team_a or not team_b or score_a is None or score_b is None:
+            continue
+
+        score_a, score_b = float(score_a), float(score_b)
+        rating_a_avg = sum(current_ratings.get(pid, 1000.0) for pid in team_a) / len(team_a)
+        rating_b_avg = sum(current_ratings.get(pid, 1000.0) for pid in team_b) / len(team_b)
+
+        actual_a = 1.0 if score_a > score_b else (0.0 if score_a < score_b else 0.5)
+        actual_b = 1.0 - actual_a
+        expected_a = 1 / (1 + 10 ** ((rating_b_avg - rating_a_avg) / 400))
+        expected_b = 1 - expected_a
+        delta_a = K_FACTOR * (actual_a - expected_a)
+        delta_b = K_FACTOR * (actual_b - expected_b)
+
+        for pid in team_a:
+            current_ratings[pid] = current_ratings.get(pid, 1000.0) + delta_a
+        for pid in team_b:
+            current_ratings[pid] = current_ratings.get(pid, 1000.0) + delta_b
+
+    for pid, rating in current_ratings.items():
+        players_table.update_item(Key={'player_id': pid}, UpdateExpression='SET rating = :r',
+                                   ExpressionAttributeValues={':r': int(round(rating))})
+
+
 def delete_tournament(tournament_id, event):
     """Deletes this tournament AND every match record tagged with its
-    tournament_id (e.g. from a test tournament you're cleaning up).
-    Does NOT reverse the Elo rating changes those matches already caused -
-    ratings stay as they are. If you need ratings reset too, that would
-    require recomputing from full match history, which isn't built yet."""
+    tournament_id (e.g. from a test tournament you're cleaning up), then
+    recomputes every player's rating from scratch off the remaining match
+    history - see recompute_all_ratings() for why a simple delta-subtract
+    isn't safe."""
     body = json.loads(event.get('body') or '{}')
     if body.get('confirm') != CONFIRMATION_CODE:
         return _response(400, {'error': "confirmation code is missing or incorrect"})
@@ -395,11 +437,15 @@ def delete_tournament(tournament_id, event):
             deleted_match_count += 1
 
     tournaments_table.delete_item(Key={'tournament_id': tournament_id})
+
+    if deleted_match_count > 0:
+        recompute_all_ratings()
+
     return _response(200, {
         'deleted': tournament_id,
         'name': existing.get('name'),
         'matches_deleted': deleted_match_count,
-        'note': 'Player ratings were NOT reverted for the deleted matches.'
+        'note': 'Player ratings were recomputed from scratch using the remaining match history.' if deleted_match_count > 0 else 'No matches were attached to this tournament.'
     })
 
 
