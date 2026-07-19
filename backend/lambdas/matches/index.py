@@ -205,8 +205,15 @@ def list_matches(event):
     params = event.get('queryStringParameters') or {}
     group_id = params.get('group_id')
     player_id = params.get('player_id')
+    partnerships_for = params.get('partnerships_for')
+    attendance = params.get('attendance')
 
     items = matches_table.scan().get('Items', [])
+
+    if partnerships_for:
+        return _response(200, compute_partnerships(partnerships_for, items))
+    if attendance:
+        return _response(200, compute_attendance(items, group_id))
 
     if group_id:
         items = [i for i in items if i.get('group_id') == group_id]
@@ -218,32 +225,94 @@ def list_matches(event):
     return _response(200, {'matches': items})
 
 
-def _response(status_code, body_dict):
-    return {
-        'statusCode': status_code,
-        'headers': {
-            'Content-Type': 'application/json',
-            'Access-Control-Allow-Origin': '*'
-        },
-        'body': json.dumps(body_dict, default=str)
-    }
+def compute_partnerships(player_id, items):
+    """For a given player, tally win/loss record with each doubles partner
+    they've played alongside. This is a straightforward performance
+    breakdown (not a full statistical synergy score against individual
+    rating expectations, which would need historical pre-match ratings we
+    don't currently snapshot)."""
+    partner_stats = {}
+    for m in items:
+        if m.get('match_type') != 'doubles':
+            continue
+        team_a = m.get('team_a') or []
+        team_b = m.get('team_b') or []
+        if player_id in team_a and len(team_a) == 2:
+            team, won = team_a, (m.get('winner') == 'A')
+        elif player_id in team_b and len(team_b) == 2:
+            team, won = team_b, (m.get('winner') == 'B')
+        else:
+            continue
+
+        partner_id = next((pid for pid in team if pid != player_id), None)
+        if not partner_id:
+            continue
+        if partner_id not in partner_stats:
+            partner_stats[partner_id] = {'partner_id': partner_id, 'matches': 0, 'wins': 0, 'losses': 0}
+        stats = partner_stats[partner_id]
+        stats['matches'] += 1
+        if won:
+            stats['wins'] += 1
+        elif m.get('winner') in ('A', 'B'):
+            stats['losses'] += 1
+
+    result = []
+    for pid, stats in partner_stats.items():
+        p = players_table.get_item(Key={'player_id': pid}).get('Item')
+        stats['partner_name'] = p['name'] if p else pid
+        stats['win_rate'] = round(stats['wins'] / stats['matches'] * 100, 1) if stats['matches'] else 0
+        result.append(stats)
+
+    result.sort(key=lambda s: -s['matches'])
+    return {'player_id': player_id, 'partnerships': result}
 
 
-def list_matches(event):
-    params = event.get('queryStringParameters') or {}
-    group_id = params.get('group_id')
-    player_id = params.get('player_id')
+def compute_attendance(items, group_id_filter=None):
+    """Per-player attendance/consistency: total matches, distinct calendar
+    dates played (a proxy for 'sessions attended'), and recent activity
+    windows. Optionally scoped to one group."""
+    if group_id_filter:
+        items = [i for i in items if i.get('group_id') == group_id_filter]
 
-    items = matches_table.scan().get('Items', [])
+    now = datetime.now(timezone.utc)
+    player_stats = {}
+    for m in items:
+        date_str = m.get('date')
+        if not date_str:
+            continue
+        try:
+            match_date = datetime.fromisoformat(date_str)
+        except ValueError:
+            continue
+        days_ago = (now - match_date).days
+        day_key = date_str[:10]
 
-    if group_id:
-        items = [i for i in items if i.get('group_id') == group_id]
-    if player_id:
-        items = [i for i in items if player_id in (i.get('team_a') or []) or player_id in (i.get('team_b') or [])]
+        for pid in (m.get('team_a') or []) + (m.get('team_b') or []):
+            if pid not in player_stats:
+                player_stats[pid] = {'player_id': pid, 'total_matches': 0, 'session_dates': set(),
+                                      'last_30_days': 0, 'last_90_days': 0}
+            s = player_stats[pid]
+            s['total_matches'] += 1
+            s['session_dates'].add(day_key)
+            if days_ago <= 30:
+                s['last_30_days'] += 1
+            if days_ago <= 90:
+                s['last_90_days'] += 1
 
-    items.sort(key=lambda i: i.get('date', ''), reverse=True)
+    result = []
+    for pid, s in player_stats.items():
+        p = players_table.get_item(Key={'player_id': pid}).get('Item')
+        result.append({
+            'player_id': pid,
+            'name': p['name'] if p else pid,
+            'total_matches': s['total_matches'],
+            'sessions_attended': len(s['session_dates']),
+            'matches_last_30_days': s['last_30_days'],
+            'matches_last_90_days': s['last_90_days'],
+        })
 
-    return _response(200, {'matches': items})
+    result.sort(key=lambda r: -r['sessions_attended'])
+    return {'attendance': result}
 
 
 def _response(status_code, body_dict):

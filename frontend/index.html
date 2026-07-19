@@ -196,6 +196,26 @@
 
   <hr>
 
+  <!-- Partnerships / chemistry -->
+  <h2>Partnerships</h2>
+  <label>Player
+    <select id="partnerships_player_select"></select>
+  </label>
+  <button id="load-partnerships-btn" type="button">View partnerships</button>
+  <div id="partnerships-result"></div>
+
+  <hr>
+
+  <!-- Attendance -->
+  <h2>Attendance</h2>
+  <label>Filter by group (optional)
+    <select id="attendance_group_filter"><option value="">All groups</option></select>
+  </label>
+  <button id="load-attendance-btn" type="button">View attendance</button>
+  <div id="attendance-result"></div>
+
+  <hr>
+
   <!-- Tournaments -->
   <h2>Tournaments</h2>
 
@@ -322,6 +342,7 @@
       populateSelect(document.getElementById('delete_player_id'), labeled, 'player_id', 'label', null);
       populateSelect(document.getElementById('edit_player_select'), labeled, 'player_id', 'label', null);
       populateSelect(document.getElementById('log_player_filter'), labeled, 'player_id', 'label', 'All players');
+      populateSelect(document.getElementById('partnerships_player_select'), labeled, 'player_id', 'label', null);
       populateTeamSelects();
     }
 
@@ -332,6 +353,7 @@
       populateSelect(document.getElementById('group_select'), allGroups, 'group_id', 'group_name', null);
       populateSelect(document.getElementById('match_group_select'), allGroups, 'group_id', 'group_name', 'None');
       populateSelect(document.getElementById('log_group_filter'), allGroups, 'group_id', 'group_name', 'All groups');
+      populateSelect(document.getElementById('attendance_group_filter'), allGroups, 'group_id', 'group_name', 'All groups');
       if (allGroups.length) {
         loadGroupMembers(document.getElementById('group_select').value);
       }
@@ -743,6 +765,54 @@
         logEl.innerHTML = html;
       } catch (err) {
         logEl.textContent = `Request failed: ${err.message}`;
+      }
+    });
+
+    document.getElementById('load-partnerships-btn').addEventListener('click', async () => {
+      const playerId = document.getElementById('partnerships_player_select').value;
+      const resultEl = document.getElementById('partnerships-result');
+      if (!playerId) { resultEl.textContent = 'Select a player first.'; return; }
+      resultEl.textContent = 'Loading...';
+
+      try {
+        const res = await fetch(`${API_BASE_URL}/matches?partnerships_for=${playerId}`);
+        const data = await res.json();
+        if (!res.ok) { resultEl.textContent = `Error: ${data.error}`; return; }
+        if (!data.partnerships.length) { resultEl.innerHTML = '<p style="font-size:13px;color:#555;">No doubles matches recorded yet.</p>'; return; }
+
+        let html = '<table><tr><th>Partner</th><th>Matches</th><th>W</th><th>L</th><th>Win %</th></tr>';
+        data.partnerships.forEach(p => {
+          html += `<tr><td>${p.partner_name}</td><td>${p.matches}</td><td>${p.wins}</td><td>${p.losses}</td><td>${p.win_rate}%</td></tr>`;
+        });
+        html += '</table>';
+        resultEl.innerHTML = html;
+      } catch (err) {
+        resultEl.textContent = `Request failed: ${err.message}`;
+      }
+    });
+
+    document.getElementById('load-attendance-btn').addEventListener('click', async () => {
+      const groupId = document.getElementById('attendance_group_filter').value;
+      const resultEl = document.getElementById('attendance-result');
+      resultEl.textContent = 'Loading...';
+
+      const params = new URLSearchParams({ attendance: 'true' });
+      if (groupId) params.set('group_id', groupId);
+
+      try {
+        const res = await fetch(`${API_BASE_URL}/matches?${params.toString()}`);
+        const data = await res.json();
+        if (!res.ok) { resultEl.textContent = `Error: ${data.error}`; return; }
+        if (!data.attendance.length) { resultEl.innerHTML = '<p style="font-size:13px;color:#555;">No matches recorded yet.</p>'; return; }
+
+        let html = '<table><tr><th>Player</th><th>Sessions</th><th>Total Matches</th><th>Last 30d</th><th>Last 90d</th></tr>';
+        data.attendance.forEach(a => {
+          html += `<tr><td>${a.name}</td><td>${a.sessions_attended}</td><td>${a.total_matches}</td><td>${a.matches_last_30_days}</td><td>${a.matches_last_90_days}</td></tr>`;
+        });
+        html += '</table>';
+        resultEl.innerHTML = html;
+      } catch (err) {
+        resultEl.textContent = `Request failed: ${err.message}`;
       }
     });
 
