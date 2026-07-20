@@ -793,7 +793,10 @@
         opt.textContent = placeholder;
         selectEl.appendChild(opt);
       }
-      items.forEach(item => {
+      const sortedItems = [...items].sort((a, b) =>
+        String(a[labelKey] ?? '').localeCompare(String(b[labelKey] ?? ''))
+      );
+      sortedItems.forEach(item => {
         const opt = document.createElement('option');
         opt.value = item[valueKey];
         opt.textContent = item[labelKey];
@@ -853,7 +856,8 @@
         membersEl.innerHTML = '<p style="font-size:13px;color:#555;">No members yet.</p>';
         return;
       }
-      membersEl.innerHTML = '<strong>Members:</strong>' + data.members.map(m =>
+      const sortedMembers = [...data.members].sort((a, b) => a.name.localeCompare(b.name));
+      membersEl.innerHTML = '<strong>Members:</strong>' + sortedMembers.map(m =>
         `<div class="member-row"><span>${m.name} (${m.rating})</span><button onclick="removePlayerFromGroup('${groupId}','${m.player_id}')">Remove</button></div>`
       ).join('');
     }
@@ -873,7 +877,8 @@
 
     function renderAddPlayersChecklist() {
       const container = document.getElementById('add-players-checklist');
-      const available = allPlayers.filter(p => !currentGroupMemberIds.has(p.player_id));
+      const available = allPlayers.filter(p => !currentGroupMemberIds.has(p.player_id))
+        .sort((a, b) => a.name.localeCompare(b.name));
       if (!available.length) {
         container.innerHTML = '<p style="font-size:13px;color:#555;margin:0;">Everyone registered is already in this group.</p>';
         return;
@@ -2079,7 +2084,7 @@
         updateParticipantsCount();
         return;
       }
-      container.innerHTML = data.members.map(m =>
+      container.innerHTML = [...data.members].sort((a, b) => a.name.localeCompare(b.name)).map(m =>
         `<label style="display:block; padding:2px 0;"><input type="checkbox" class="tournament-participant-checkbox" value="${m.player_id}" checked> ${m.name} (${m.rating})</label>`
       ).join('');
       updateParticipantsCount();
