@@ -768,6 +768,7 @@
       <button type="button" id="split-undo-btn" class="secondary" style="margin-top:0;">Undo</button>
       <button type="button" id="split-submit-btn" style="margin-top:0;">Submit</button>
       <button type="button" id="split-reset-btn" class="secondary" style="margin-top:0;">Reset</button>
+      <button type="button" id="split-exit-btn" class="secondary" style="margin-top:0;">Exit</button>
     </div>
     <div id="split-zone-b" style="flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; background:var(--court-dark); color:#fff; cursor:pointer;">
       <div id="split-name-b" style="font-family:'Rajdhani',sans-serif; font-weight:700; font-size:22px; margin-bottom:8px;">Team B</div>
@@ -961,14 +962,27 @@
       refreshTeamSelectOptions();
     });
 
-    document.getElementById('randomize-teams-btn').addEventListener('click', () => {
+    document.getElementById('randomize-teams-btn').addEventListener('click', async () => {
       const isDoubles = document.getElementById('match_type_select').value === 'doubles';
       const needed = isDoubles ? 4 : 2;
-      if (allPlayers.length < needed) {
-        alert(`Need at least ${needed} registered players to randomize.`);
+      const groupId = document.getElementById('match_group_select').value;
+
+      let pool = allPlayers;
+      if (groupId) {
+        try {
+          const res = await fetch(`${API_BASE_URL}/groups/${groupId}`);
+          const data = await res.json();
+          if (res.ok && data.members) pool = data.members;
+        } catch (err) {
+          // fall back to allPlayers if the group fetch fails
+        }
+      }
+
+      if (pool.length < needed) {
+        alert(`Need at least ${needed} players${groupId ? ' in this group' : ''} to randomize.`);
         return;
       }
-      const shuffled = [...allPlayers].sort(() => Math.random() - 0.5).slice(0, needed);
+      const shuffled = [...pool].sort(() => Math.random() - 0.5).slice(0, needed);
       document.getElementById('team_a1_select').value = shuffled[0].player_id;
       document.getElementById('team_b1_select').value = shuffled[1].player_id;
       if (isDoubles) {
@@ -1124,6 +1138,11 @@
       document.getElementById('split_screen_toggle').checked = false;
       closeSplitScreen();
       document.getElementById('match-form').requestSubmit();
+    });
+    document.getElementById('split-exit-btn').addEventListener('click', (e) => {
+      e.stopPropagation();
+      document.getElementById('split_screen_toggle').checked = false;
+      closeSplitScreen();
     });
 
     // ---------- registration ----------
