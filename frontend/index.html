@@ -1428,6 +1428,26 @@
           data.comeback_top5.forEach(c => { html += `<tr><td>${c.winner_names.join(' & ')}</td><td>${c.deficit_overcome}</td></tr>`; });
           html += '</table>';
         }
+        if (data.most_consistent && data.most_consistent.length) {
+          html += '<h4>Most consistent</h4><p class="card-sub">Lowest swing in rating from match to match (needs 3+ matches).</p><table><tr><th>Player</th><th>Matches</th><th>Volatility</th></tr>';
+          data.most_consistent.forEach(p => { html += `<tr><td>${p.name}</td><td>${p.matches}</td><td>${p.volatility}</td></tr>`; });
+          html += '</table>';
+        }
+        if (data.most_volatile && data.most_volatile.length) {
+          html += '<h4>Most volatile</h4><p class="card-sub">Biggest swings, win or lose - the streaky players.</p><table><tr><th>Player</th><th>Matches</th><th>Volatility</th></tr>';
+          data.most_volatile.forEach(p => { html += `<tr><td>${p.name}</td><td>${p.matches}</td><td>${p.volatility}</td></tr>`; });
+          html += '</table>';
+        }
+        if (data.format_specialists && data.format_specialists.length) {
+          html += '<h4>Format specialists</h4><p class="card-sub">Biggest gap between singles and doubles win rate (needs 2+ matches in each).</p><table><tr><th>Player</th><th>Singles win %</th><th>Doubles win %</th><th>Stronger in</th></tr>';
+          data.format_specialists.forEach(p => { html += `<tr><td>${p.name}</td><td>${p.singles_win_pct}%</td><td>${p.doubles_win_pct}%</td><td>${p.stronger_format}</td></tr>`; });
+          html += '</table>';
+        }
+        if (data.deep_run_rates && data.deep_run_rates.length) {
+          html += '<h4>Deep-run rate</h4><p class="card-sub">Of the tournaments a player has entered, how often they reached the knockout stage.</p><table><tr><th>Player</th><th>Tournaments entered</th><th>Reached knockout</th><th>Rate</th></tr>';
+          data.deep_run_rates.forEach(p => { html += `<tr><td>${p.name}</td><td>${p.tournaments_entered}</td><td>${p.reached_knockout}</td><td>${p.deep_run_rate}%</td></tr>`; });
+          html += '</table>';
+        }
         if (!html) html = '<p style="font-size:13px;color:var(--text-secondary);">Not enough match history yet.</p>';
         resultEl.innerHTML = html;
       } catch (err) {

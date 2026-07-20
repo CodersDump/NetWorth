@@ -338,9 +338,10 @@ def compute_attendance(items, group_id_filter=None):
 def compute_hall_of_fame(items, group_id_filter=None):
     """Highlight stats computed from full chronological match history:
     longest win streak, biggest blowout, peak rating ever per player,
-    biggest upsets (giant-killer), and best comebacks (only available for
-    matches recorded via the live point-by-point counter, since that's the
-    only source of momentum data)."""
+    biggest upsets (giant-killer), best comebacks (only available for
+    matches recorded via the live point-by-point counter), rating
+    consistency/volatility, singles-vs-doubles specialization, and
+    group-stage-vs-knockout performance (deep-run rate)."""
     if group_id_filter:
         items = [i for i in items if i.get('group_id') == group_id_filter]
 
@@ -353,9 +354,19 @@ def compute_hall_of_fame(items, group_id_filter=None):
     biggest_blowout = None
     giant_killer_candidates = []
     comeback_candidates = []
+    player_deltas = {}       # pid -> {'name':, 'deltas': [...]}
+    format_stats = {}        # pid -> {'name':, 'singles_w','singles_l','doubles_w','doubles_l'}
+    stage_stats = {}         # pid -> {'name':, 'group_w','group_l','knockout_w','knockout_l'}
+    tournament_stage_sets = {}  # pid -> {'group_tournaments': set(), 'knockout_tournaments': set()}
 
     def team_avg(team_ids):
         return sum(rolling_ratings.get(pid, 1000.0) for pid in team_ids) / len(team_ids) if team_ids else 1000.0
+
+    def get_name(pid, ids_a, names_a, ids_b, names_b):
+        for ids, names in ((ids_a, names_a), (ids_b, names_b)):
+            if pid in ids and ids.index(pid) < len(names):
+                return names[ids.index(pid)]
+        return pid
 
     for m in matches:
         team_a = m.get('team_a') or []
@@ -365,12 +376,16 @@ def compute_hall_of_fame(items, group_id_filter=None):
         score_a = m.get('score_a')
         score_b = m.get('score_b')
         winner = m.get('winner')
+        match_type = m.get('match_type')
+        stage = m.get('stage')
+        tournament_id = m.get('tournament_id')
         if not team_a or not team_b or score_a is None or score_b is None:
             continue
         score_a, score_b = float(score_a), float(score_b)
 
         pre_a = team_avg(team_a)
         pre_b = team_avg(team_b)
+        pre_individual = {pid: rolling_ratings.get(pid, 1000.0) for pid in team_a + team_b}
 
         if winner in ('A', 'B'):
             winners = team_a if winner == 'A' else team_b
@@ -396,6 +411,22 @@ def compute_hall_of_fame(items, group_id_filter=None):
                     'score': f"{int(score_a)}-{int(score_b)}" if winner == 'A' else f"{int(score_b)}-{int(score_a)}"
                 })
 
+            for pid in team_a + team_b:
+                name = get_name(pid, team_a, team_a_names, team_b, team_b_names)
+                won = pid in winners
+                if match_type in ('singles', 'doubles'):
+                    fs = format_stats.setdefault(pid, {'name': name, 'singles_w': 0, 'singles_l': 0, 'doubles_w': 0, 'doubles_l': 0})
+                    key = 'singles' if match_type == 'singles' else 'doubles'
+                    fs[f'{key}_w' if won else f'{key}_l'] += 1
+                if stage in ('group', 'knockout'):
+                    ss = stage_stats.setdefault(pid, {'name': name, 'group_w': 0, 'group_l': 0, 'knockout_w': 0, 'knockout_l': 0})
+                    ss[f'{stage}_w' if won else f'{stage}_l'] += 1
+
+        if stage in ('group', 'knockout') and tournament_id:
+            for pid in team_a + team_b:
+                sets = tournament_stage_sets.setdefault(pid, {'group_tournaments': set(), 'knockout_tournaments': set()})
+                sets[f'{stage}_tournaments'].add(tournament_id)
+
         margin = abs(score_a - score_b)
         if biggest_blowout is None or margin > biggest_blowout['margin']:
             biggest_blowout = {
@@ -415,24 +446,74 @@ def compute_hall_of_fame(items, group_id_filter=None):
         ratings_after = m.get('ratings_after') or {}
         for pid, rating in ratings_after.items():
             rating = float(rating)
+            name = get_name(pid, team_a, team_a_names, team_b, team_b_names)
+            entry = player_deltas.setdefault(pid, {'name': name, 'deltas': []})
+            entry['deltas'].append(rating - pre_individual.get(pid, 1000.0))
+
             rolling_ratings[pid] = rating
             if pid not in peak_rating or rating > peak_rating[pid]['rating']:
-                name = None
-                for ids, names in ((team_a, team_a_names), (team_b, team_b_names)):
-                    if pid in ids:
-                        name = names[ids.index(pid)]
-                        break
-                peak_rating[pid] = {'player_id': pid, 'name': name or pid, 'rating': int(round(rating))}
+                peak_rating[pid] = {'player_id': pid, 'name': name, 'rating': int(round(rating))}
 
     giant_killer_candidates.sort(key=lambda g: -g['upset_gap'])
     comeback_candidates.sort(key=lambda c: -c['deficit_overcome'])
+
+    # Consistency / volatility - population standard deviation of rating deltas, min 3 matches
+    consistency_rows = []
+    for pid, entry in player_deltas.items():
+        deltas = entry['deltas']
+        if len(deltas) < 3:
+            continue
+        mean_delta = sum(deltas) / len(deltas)
+        variance = sum((d - mean_delta) ** 2 for d in deltas) / len(deltas)
+        stdev = round(variance ** 0.5, 1)
+        consistency_rows.append({'player_id': pid, 'name': entry['name'], 'matches': len(deltas), 'volatility': stdev})
+    consistency_rows.sort(key=lambda r: r['volatility'])
+    most_consistent = consistency_rows[:5]
+    most_volatile = sorted(consistency_rows, key=lambda r: -r['volatility'])[:5]
+
+    # Format specialist - biggest gap between singles and doubles win rate, min 2 matches in each
+    format_rows = []
+    for pid, fs in format_stats.items():
+        singles_total = fs['singles_w'] + fs['singles_l']
+        doubles_total = fs['doubles_w'] + fs['doubles_l']
+        if singles_total < 2 or doubles_total < 2:
+            continue
+        singles_pct = round(fs['singles_w'] / singles_total * 100, 1)
+        doubles_pct = round(fs['doubles_w'] / doubles_total * 100, 1)
+        format_rows.append({
+            'player_id': pid, 'name': fs['name'],
+            'singles_win_pct': singles_pct, 'doubles_win_pct': doubles_pct,
+            'gap': round(abs(singles_pct - doubles_pct), 1),
+            'stronger_format': 'singles' if singles_pct > doubles_pct else 'doubles'
+        })
+    format_rows.sort(key=lambda r: -r['gap'])
+
+    # Deep-run rate - fraction of tournament appearances that included a knockout-stage match
+    deep_run_rows = []
+    for pid, sets in tournament_stage_sets.items():
+        all_tournaments = sets['group_tournaments'] | sets['knockout_tournaments']
+        if not all_tournaments:
+            continue
+        name = stage_stats.get(pid, {}).get('name') or format_stats.get(pid, {}).get('name') or pid
+        rate = round(len(sets['knockout_tournaments']) / len(all_tournaments) * 100, 1)
+        deep_run_rows.append({
+            'player_id': pid, 'name': name,
+            'tournaments_entered': len(all_tournaments),
+            'reached_knockout': len(sets['knockout_tournaments']),
+            'deep_run_rate': rate
+        })
+    deep_run_rows.sort(key=lambda r: -r['deep_run_rate'])
 
     return {
         'longest_win_streak': best_streak if best_streak['player_id'] else None,
         'biggest_blowout': biggest_blowout,
         'peak_ratings': sorted(peak_rating.values(), key=lambda p: -p['rating'])[:10],
         'giant_killer_top5': giant_killer_candidates[:5],
-        'comeback_top5': comeback_candidates[:5]
+        'comeback_top5': comeback_candidates[:5],
+        'most_consistent': most_consistent,
+        'most_volatile': most_volatile,
+        'format_specialists': format_rows[:5],
+        'deep_run_rates': deep_run_rows[:10]
     }
 
 
