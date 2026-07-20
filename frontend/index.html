@@ -357,6 +357,18 @@
             </label>
           </div>
         </div>
+        <div class="row">
+          <div>
+            <label>From date
+              <input type="date" id="log_date_from">
+            </label>
+          </div>
+          <div>
+            <label>To date
+              <input type="date" id="log_date_to">
+            </label>
+          </div>
+        </div>
         <button id="load-log-btn" type="button" class="secondary">Load game log</button>
         <div id="game-log"></div>
       </div>
@@ -1029,12 +1041,16 @@
     document.getElementById('load-log-btn').addEventListener('click', async () => {
       const groupId = document.getElementById('log_group_filter').value;
       const playerId = document.getElementById('log_player_filter').value;
+      const dateFrom = document.getElementById('log_date_from').value;
+      const dateTo = document.getElementById('log_date_to').value;
       const logEl = document.getElementById('game-log');
       logEl.textContent = 'Loading...';
 
       const params = new URLSearchParams();
       if (groupId) params.set('group_id', groupId);
       if (playerId) params.set('player_id', playerId);
+      if (dateFrom) params.set('date_from', dateFrom);
+      if (dateTo) params.set('date_to', dateTo);
 
       try {
         const res = await fetch(`${API_BASE_URL}/matches?${params.toString()}`);

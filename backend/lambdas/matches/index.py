@@ -205,6 +205,8 @@ def list_matches(event):
     params = event.get('queryStringParameters') or {}
     group_id = params.get('group_id')
     player_id = params.get('player_id')
+    date_from = params.get('date_from')  # 'YYYY-MM-DD'
+    date_to = params.get('date_to')      # 'YYYY-MM-DD'
     partnerships_for = params.get('partnerships_for')
     attendance = params.get('attendance')
 
@@ -219,6 +221,11 @@ def list_matches(event):
         items = [i for i in items if i.get('group_id') == group_id]
     if player_id:
         items = [i for i in items if player_id in (i.get('team_a') or []) or player_id in (i.get('team_b') or [])]
+    if date_from:
+        items = [i for i in items if i.get('date', '') >= date_from]
+    if date_to:
+        # date_to is a calendar day - include the whole day (matches are stored in UTC)
+        items = [i for i in items if i.get('date', '') <= date_to + 'T23:59:59.999999+00:00']
 
     items.sort(key=lambda i: i.get('date', ''), reverse=True)
 
