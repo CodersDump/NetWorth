@@ -9,7 +9,6 @@
 <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js"></script>
 <style>
   :root {
     --court: #1F7A4D;
@@ -430,60 +429,43 @@
 
       <div class="card">
         <h2>Partnerships</h2>
-        <p class="card-sub">See how a player's doubles record looks with each of their partners.</p>
-        <label>Player
-          <select id="partnerships_player_select"></select>
-        </label>
-        <button id="load-partnerships-btn" type="button" class="secondary">View partnerships</button>
-        <div id="partnerships-result"></div>
-      </div>
-
-      <div class="card">
-        <h2>Partner network</h2>
-        <p class="card-sub">Who's been paired with whom, and how often - useful for spotting cliques or players who never mix.</p>
-        <div class="row">
-          <div>
-            <label>Filter by group (optional)
-              <select id="network_group_filter"><option value="">All groups</option></select>
-            </label>
-          </div>
-          <div>
-            <label>View
-              <select id="network_view_mode">
-                <option value="chord">Circular (chord)</option>
-                <option value="force">Force-directed</option>
-              </select>
-            </label>
-          </div>
-        </div>
-        <button id="load-network-btn" type="button" class="secondary">Load network</button>
-        <div id="network-result" style="margin-top:12px; overflow-x:auto;">
-          <svg id="network-svg" width="600" height="600" style="max-width:100%; height:auto;"></svg>
-        </div>
-      </div>
-
-      <div class="card">
-        <h2>Partner distribution</h2>
-        <p class="card-sub">One player's partner mix as a radar - each spoke is a partner, the shape shows who they lean toward.</p>
+        <p class="card-sub">See how a player's doubles record looks with each partner, and their overall partner mix as a shape.</p>
         <div class="row">
           <div>
             <label>Player
-              <select id="radar_player_select"></select>
+              <select id="partnerships_player_select"></select>
             </label>
           </div>
           <div>
             <label>Scope
-              <select id="radar_scope_group"><option value="">All plays</option></select>
+              <select id="partnerships_scope_group"><option value="">All plays</option></select>
             </label>
           </div>
         </div>
-        <label>Show top
-          <select id="radar_top_n">
-            <option value="10" selected>10 partners</option>
-            <option value="15">15 partners</option>
-          </select>
+        <div class="row">
+          <div>
+            <label>Tournament matches
+              <select id="partnerships_tournament_filter">
+                <option value="include" selected>Include</option>
+                <option value="exclude">Exclude</option>
+              </select>
+            </label>
+          </div>
+          <div>
+            <label>Show top
+              <select id="partnerships_top_n">
+                <option value="10" selected>10 partners</option>
+                <option value="15">15 partners</option>
+              </select>
+            </label>
+          </div>
+        </div>
+        <label style="display:inline-block; margin-top:10px;">
+          <input type="checkbox" id="partnerships_highlight_tournament"> Highlight tournament-driven share separately
         </label>
-        <button id="load-radar-btn" type="button" class="secondary">Load distribution</button>
+
+        <div id="partnerships-result" style="margin-top:12px;"></div>
+
         <div id="radar-result" style="margin-top:12px; overflow-x:auto;">
           <svg id="radar-svg" width="600" height="600" style="max-width:100%; height:auto;"></svg>
         </div>
@@ -693,7 +675,6 @@
       populateSelect(document.getElementById('rating_history_player2_select'), labeled, 'player_id', 'label', 'None');
       populateSelect(document.getElementById('rating_history_player3_select'), labeled, 'player_id', 'label', 'None');
       populateSelect(document.getElementById('rating_history_player4_select'), labeled, 'player_id', 'label', 'None');
-      populateSelect(document.getElementById('radar_player_select'), labeled, 'player_id', 'label', null);
       populateTeamSelects();
     }
 
@@ -706,8 +687,7 @@
       populateSelect(document.getElementById('log_group_filter'), allGroups, 'group_id', 'group_name', 'All groups');
       populateSelect(document.getElementById('attendance_group_filter'), allGroups, 'group_id', 'group_name', 'All groups');
       populateSelect(document.getElementById('rankings_scope_select'), allGroups, 'group_id', 'group_name', 'All players');
-      populateSelect(document.getElementById('network_group_filter'), allGroups, 'group_id', 'group_name', 'All groups');
-      populateSelect(document.getElementById('radar_scope_group'), allGroups, 'group_id', 'group_name', 'All plays');
+      populateSelect(document.getElementById('partnerships_scope_group'), allGroups, 'group_id', 'group_name', 'All plays');
       populateSelect(document.getElementById('hof_group_filter'), allGroups, 'group_id', 'group_name', 'All groups');
       if (allGroups.length) {
         loadGroupMembers(document.getElementById('group_select').value);
@@ -1203,27 +1183,57 @@
       }
     });
 
-    document.getElementById('load-partnerships-btn').addEventListener('click', async () => {
+    async function loadPartnershipsSection() {
       const playerId = document.getElementById('partnerships_player_select').value;
-      const resultEl = document.getElementById('partnerships-result');
-      if (!playerId) { resultEl.textContent = 'Select a player first.'; return; }
-      resultEl.textContent = 'Loading...';
+      const groupId = document.getElementById('partnerships_scope_group').value;
+      const tournamentFilter = document.getElementById('partnerships_tournament_filter').value;
+      const topN = document.getElementById('partnerships_top_n').value;
+      const highlightTournament = document.getElementById('partnerships_highlight_tournament').checked;
+      const tableEl = document.getElementById('partnerships-result');
+      const svg = document.getElementById('radar-svg');
+      if (!playerId) { tableEl.textContent = 'Select a player first.'; svg.innerHTML = ''; return; }
+
+      tableEl.textContent = 'Loading...';
+      svg.innerHTML = '<text x="10" y="20" fill="var(--text-secondary)">Loading...</text>';
+
+      const baseParams = new URLSearchParams();
+      if (groupId) baseParams.set('group_id', groupId);
+      baseParams.set('tournament_filter', tournamentFilter);
 
       try {
-        const res = await fetch(`${API_BASE_URL}/matches?partnerships_for=${playerId}`);
-        const data = await res.json();
-        if (!res.ok) { resultEl.textContent = `Error: ${data.error}`; return; }
-        if (!data.partnerships.length) { resultEl.innerHTML = '<p style="font-size:13px;color:#555;">No doubles matches recorded yet.</p>'; return; }
+        const tableParams = new URLSearchParams(baseParams);
+        tableParams.set('partnerships_for', playerId);
+        const tableRes = await fetch(`${API_BASE_URL}/matches?${tableParams.toString()}`);
+        const tableData = await tableRes.json();
+        if (!tableRes.ok) { tableEl.textContent = `Error: ${tableData.error}`; }
+        else if (!tableData.partnerships.length) {
+          tableEl.innerHTML = '<p style="font-size:13px;color:var(--text-secondary);">No doubles matches in this scope yet.</p>';
+        } else {
+          let html = '<table><tr><th>Partner</th><th>Matches</th><th>W</th><th>L</th><th>Win %</th></tr>';
+          tableData.partnerships.forEach(p => {
+            html += `<tr><td>${p.partner_name}</td><td>${p.matches}</td><td>${p.wins}</td><td>${p.losses}</td><td>${p.win_rate}%</td></tr>`;
+          });
+          html += '</table>';
+          tableEl.innerHTML = html;
+        }
 
-        let html = '<table><tr><th>Partner</th><th>Matches</th><th>W</th><th>L</th><th>Win %</th></tr>';
-        data.partnerships.forEach(p => {
-          html += `<tr><td>${p.partner_name}</td><td>${p.matches}</td><td>${p.wins}</td><td>${p.losses}</td><td>${p.win_rate}%</td></tr>`;
-        });
-        html += '</table>';
-        resultEl.innerHTML = html;
+        const radarParams = new URLSearchParams(baseParams);
+        radarParams.set('radar_for', playerId);
+        radarParams.set('top_n', topN);
+        const radarRes = await fetch(`${API_BASE_URL}/matches?${radarParams.toString()}`);
+        const radarData = await radarRes.json();
+        if (!radarRes.ok) { svg.innerHTML = `<text x="10" y="20" fill="var(--smash)">Error: ${radarData.error}</text>`; return; }
+        if (!radarData.partners.length) { svg.innerHTML = '<text x="10" y="20" fill="var(--text-secondary)">No doubles matches in this scope yet.</text>'; return; }
+        renderPartnerRadar(radarData, highlightTournament);
       } catch (err) {
-        resultEl.textContent = `Request failed: ${err.message}`;
+        tableEl.textContent = `Request failed: ${err.message}`;
+        svg.innerHTML = '';
       }
+    }
+
+    ['partnerships_player_select', 'partnerships_scope_group', 'partnerships_tournament_filter',
+     'partnerships_top_n', 'partnerships_highlight_tournament'].forEach(id => {
+      document.getElementById(id).addEventListener('change', loadPartnershipsSection);
     });
 
     document.getElementById('load-rankings-btn').addEventListener('click', async () => {
@@ -1320,108 +1330,7 @@
         .map(m => ({ x: m.date, y: Number(m.ratings_after[playerId]) }));
     }
 
-    document.getElementById('load-network-btn').addEventListener('click', async () => {
-      const groupId = document.getElementById('network_group_filter').value;
-      const viewMode = document.getElementById('network_view_mode').value;
-      const svg = document.getElementById('network-svg');
-      svg.innerHTML = '<text x="10" y="20" fill="var(--text-secondary)">Loading...</text>';
-
-      try {
-        const params = new URLSearchParams({ network: 'true' });
-        if (groupId) params.set('group_id', groupId);
-        const res = await fetch(`${API_BASE_URL}/matches?${params.toString()}`);
-        const data = await res.json();
-        if (!res.ok) { svg.innerHTML = `<text x="10" y="20" fill="var(--smash)">Error: ${data.error}</text>`; return; }
-        if (!data.nodes.length) { svg.innerHTML = '<text x="10" y="20" fill="var(--text-secondary)">No doubles matches recorded yet.</text>'; return; }
-
-        if (viewMode === 'chord') renderChordNetwork(data);
-        else renderForceNetwork(data);
-      } catch (err) {
-        svg.innerHTML = `<text x="10" y="20" fill="var(--smash)">Request failed: ${err.message}</text>`;
-      }
-    });
-
-    function renderChordNetwork(data) {
-      const svg = document.getElementById('network-svg');
-      const size = 600, center = size / 2, radius = size / 2 - 60;
-      const n = data.nodes.length;
-      const positions = {};
-      data.nodes.forEach((node, i) => {
-        const angle = (2 * Math.PI * i) / n - Math.PI / 2;
-        positions[node.player_id] = {
-          x: center + radius * Math.cos(angle),
-          y: center + radius * Math.sin(angle)
-        };
-      });
-
-      const maxWeight = Math.max(...data.edges.map(e => e.matches_together), 1);
-      let svgContent = '';
-      data.edges.forEach(edge => {
-        const p1 = positions[edge.player_a], p2 = positions[edge.player_b];
-        if (!p1 || !p2) return;
-        const strokeWidth = 1 + (edge.matches_together / maxWeight) * 6;
-        svgContent += `<line x1="${p1.x}" y1="${p1.y}" x2="${p2.x}" y2="${p2.y}" stroke="var(--court)" stroke-width="${strokeWidth}" stroke-opacity="0.6" />`;
-      });
-      data.nodes.forEach(node => {
-        const p = positions[node.player_id];
-        svgContent += `<circle cx="${p.x}" cy="${p.y}" r="6" fill="var(--shuttle)" stroke="var(--court)" stroke-width="1.5" />`;
-        const labelX = center + (radius + 18) * Math.cos(Math.atan2(p.y - center, p.x - center));
-        const labelY = center + (radius + 18) * Math.sin(Math.atan2(p.y - center, p.x - center));
-        svgContent += `<text x="${labelX}" y="${labelY}" font-size="12" fill="var(--text)" text-anchor="middle">${node.name}</text>`;
-      });
-      svg.innerHTML = svgContent;
-    }
-
-    function renderForceNetwork(data) {
-      const svg = document.getElementById('network-svg');
-      const size = 600;
-      const nodes = data.nodes.map(n => ({ ...n, id: n.player_id }));
-      const links = data.edges.map(e => ({ source: e.player_a, target: e.player_b, weight: e.matches_together }));
-
-      const simulation = d3.forceSimulation(nodes)
-        .force('link', d3.forceLink(links).id(d => d.id).distance(90).strength(0.3))
-        .force('charge', d3.forceManyBody().strength(-220))
-        .force('center', d3.forceCenter(size / 2, size / 2))
-        .force('collide', d3.forceCollide(30))
-        .stop();
-
-      for (let i = 0; i < 300; i++) simulation.tick();
-
-      const maxWeight = Math.max(...links.map(l => l.weight), 1);
-      let svgContent = '';
-      links.forEach(link => {
-        const strokeWidth = 1 + (link.weight / maxWeight) * 6;
-        svgContent += `<line x1="${link.source.x}" y1="${link.source.y}" x2="${link.target.x}" y2="${link.target.y}" stroke="var(--court)" stroke-width="${strokeWidth}" stroke-opacity="0.6" />`;
-      });
-      nodes.forEach(node => {
-        svgContent += `<circle cx="${node.x}" cy="${node.y}" r="7" fill="var(--shuttle)" stroke="var(--court)" stroke-width="1.5" />`;
-        svgContent += `<text x="${node.x}" y="${node.y - 12}" font-size="12" fill="var(--text)" text-anchor="middle">${node.name}</text>`;
-      });
-      svg.innerHTML = svgContent;
-    }
-
-    document.getElementById('load-radar-btn').addEventListener('click', async () => {
-      const playerId = document.getElementById('radar_player_select').value;
-      const groupId = document.getElementById('radar_scope_group').value;
-      const topN = document.getElementById('radar_top_n').value;
-      const svg = document.getElementById('radar-svg');
-      if (!playerId) { svg.innerHTML = '<text x="10" y="20" fill="var(--text-secondary)">Select a player first.</text>'; return; }
-      svg.innerHTML = '<text x="10" y="20" fill="var(--text-secondary)">Loading...</text>';
-
-      try {
-        const params = new URLSearchParams({ radar_for: playerId, top_n: topN });
-        if (groupId) params.set('group_id', groupId);
-        const res = await fetch(`${API_BASE_URL}/matches?${params.toString()}`);
-        const data = await res.json();
-        if (!res.ok) { svg.innerHTML = `<text x="10" y="20" fill="var(--smash)">Error: ${data.error}</text>`; return; }
-        if (!data.partners.length) { svg.innerHTML = '<text x="10" y="20" fill="var(--text-secondary)">No doubles matches recorded in this scope.</text>'; return; }
-        renderPartnerRadar(data);
-      } catch (err) {
-        svg.innerHTML = `<text x="10" y="20" fill="var(--smash)">Request failed: ${err.message}</text>`;
-      }
-    });
-
-    function renderPartnerRadar(data) {
+    function renderPartnerRadar(data, highlightTournament) {
       const svg = document.getElementById('radar-svg');
       const size = 600, center = size / 2, maxRadius = size / 2 - 90;
       const n = data.partners.length;
@@ -1443,13 +1352,31 @@
       const polygonPoints = points.map(pt => `${pt.x},${pt.y}`).join(' ');
       svgContent += `<polygon points="${polygonPoints}" fill="var(--court)" fill-opacity="0.3" stroke="var(--court)" stroke-width="1.5" />`;
 
+      if (highlightTournament) {
+        const nonTournamentPoints = data.partners.map((p, i) => {
+          const angle = spokeAngles[i];
+          const nonTournamentPct = p.percentage - p.tournament_percentage;
+          const r = (nonTournamentPct / 100) * maxRadius;
+          return { x: center + r * Math.cos(angle), y: center + r * Math.sin(angle) };
+        });
+        const nonTournamentPolygon = nonTournamentPoints.map(pt => `${pt.x},${pt.y}`).join(' ');
+        svgContent += `<polygon points="${nonTournamentPolygon}" fill="none" stroke="var(--shuttle)" stroke-width="2" stroke-dasharray="6 4" />`;
+      }
+
       data.partners.forEach((p, i) => {
         const angle = spokeAngles[i];
         const labelX = center + (maxRadius + 30) * Math.cos(angle);
         const labelY = center + (maxRadius + 30) * Math.sin(angle);
+        const pctLabel = highlightTournament && p.tournament_matches > 0
+          ? `${p.percentage}% (${p.tournament_percentage}% from tournaments)`
+          : `${p.percentage}%`;
         svgContent += `<text x="${labelX}" y="${labelY - 6}" font-size="13" fill="var(--text)" text-anchor="middle">${p.name}</text>`;
-        svgContent += `<text x="${labelX}" y="${labelY + 10}" font-size="11" fill="var(--text-secondary)" text-anchor="middle">${p.percentage}%</text>`;
+        svgContent += `<text x="${labelX}" y="${labelY + 10}" font-size="11" fill="var(--text-secondary)" text-anchor="middle">${pctLabel}</text>`;
       });
+
+      if (highlightTournament) {
+        svgContent += `<text x="${center}" y="${size - 20}" font-size="11" fill="var(--text-secondary)" text-anchor="middle">Solid = overall share. Dashed = share from standalone (non-tournament) matches only.</text>`;
+      }
 
       svgContent += `<circle cx="${center}" cy="${center}" r="3" fill="var(--text)" />`;
       svgContent += `<text x="${center}" y="${center - 10}" font-size="11" fill="var(--text-secondary)" text-anchor="middle">${data.total_matches} matches</text>`;

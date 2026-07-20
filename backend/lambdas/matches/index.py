@@ -209,26 +209,26 @@ def list_matches(event):
     date_to = params.get('date_to')      # 'YYYY-MM-DD'
     partnerships_for = params.get('partnerships_for')
     attendance = params.get('attendance')
-    network = params.get('network')
     hall_of_fame = params.get('hall_of_fame')
     radar_for = params.get('radar_for')
     top_n = int(params.get('top_n', 10))
+    tournament_filter = params.get('tournament_filter', 'include')  # 'include' | 'exclude'
 
     items = matches_table.scan().get('Items', [])
 
-    if partnerships_for:
-        return _response(200, compute_partnerships(partnerships_for, items))
-    if attendance:
-        return _response(200, compute_attendance(items, group_id))
-    if network:
-        return _response(200, compute_network(items, group_id))
-    if hall_of_fame:
-        return _response(200, compute_hall_of_fame(items, group_id))
-    if radar_for:
+    if partnerships_for or radar_for:
         scoped_items = items
         if group_id:
             scoped_items = [i for i in scoped_items if i.get('group_id') == group_id]
+        if tournament_filter == 'exclude':
+            scoped_items = [i for i in scoped_items if not i.get('tournament_id')]
+        if partnerships_for:
+            return _response(200, compute_partnerships(partnerships_for, scoped_items))
         return _response(200, compute_partner_distribution(radar_for, scoped_items, top_n))
+    if attendance:
+        return _response(200, compute_attendance(items, group_id))
+    if hall_of_fame:
+        return _response(200, compute_hall_of_fame(items, group_id))
 
     if group_id:
         items = [i for i in items if i.get('group_id') == group_id]
@@ -333,36 +333,6 @@ def compute_attendance(items, group_id_filter=None):
 
     result.sort(key=lambda r: -r['sessions_attended'])
     return {'attendance': result}
-
-
-def compute_network(items, group_id_filter=None):
-    """Partnership graph data: one node per player who's appeared in a
-    doubles match, one edge per pair who've been teammates, weighted by
-    how many times. Same data feeds both a force-directed view and a
-    circular/chord view on the frontend - only the drawing differs."""
-    if group_id_filter:
-        items = [i for i in items if i.get('group_id') == group_id_filter]
-
-    node_names = {}
-    edge_counts = {}
-
-    for m in items:
-        if m.get('match_type') != 'doubles':
-            continue
-        for team, names in ((m.get('team_a') or [], m.get('team_a_names') or []),
-                             (m.get('team_b') or [], m.get('team_b_names') or [])):
-            if len(team) != 2:
-                continue
-            for pid, name in zip(team, names):
-                node_names[pid] = name
-            pair_key = tuple(sorted(team))
-            edge_counts[pair_key] = edge_counts.get(pair_key, 0) + 1
-
-    nodes = [{'player_id': pid, 'name': name} for pid, name in node_names.items()]
-    edges = [{'player_a': pair[0], 'player_b': pair[1], 'matches_together': count}
-              for pair, count in edge_counts.items()]
-
-    return {'nodes': nodes, 'edges': edges}
 
 
 def compute_hall_of_fame(items, group_id_filter=None):
@@ -470,8 +440,12 @@ def compute_partner_distribution(player_id, items, top_n=10):
     """For the radar/spider chart: one player's doubles partners, sorted by
     how often they've played together, capped at top_n so the chart stays
     readable. Percentages are based on the total within whatever scope was
-    already applied to `items` (a specific group, or every match)."""
+    already applied to `items` (a specific group, or every match). Also
+    tracks how many of each partner's matches came from a tournament
+    (fixed pairing) versus standalone play, so the frontend can optionally
+    highlight the tournament-driven share separately."""
     partner_counts = {}
+    partner_tournament_counts = {}
     total = 0
     for m in items:
         if m.get('match_type') != 'doubles':
@@ -488,16 +462,21 @@ def compute_partner_distribution(player_id, items, top_n=10):
         if not partner_id:
             continue
         partner_counts[partner_id] = partner_counts.get(partner_id, 0) + 1
+        if m.get('tournament_id'):
+            partner_tournament_counts[partner_id] = partner_tournament_counts.get(partner_id, 0) + 1
         total += 1
 
     result = []
     for pid, count in partner_counts.items():
         p = players_table.get_item(Key={'player_id': pid}).get('Item')
+        tcount = partner_tournament_counts.get(pid, 0)
         result.append({
             'partner_id': pid,
             'name': p['name'] if p else pid,
             'matches': count,
-            'percentage': round(count / total * 100, 1) if total else 0
+            'percentage': round(count / total * 100, 1) if total else 0,
+            'tournament_matches': tcount,
+            'tournament_percentage': round(tcount / total * 100, 1) if total else 0
         })
 
     result.sort(key=lambda r: -r['matches'])
