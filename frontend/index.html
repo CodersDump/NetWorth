@@ -9,6 +9,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js"></script>
 <style>
   :root {
     --court: #1F7A4D;
@@ -389,7 +390,7 @@
 
       <div class="card">
         <h2>Rating history</h2>
-        <p class="card-sub">How a player's rating has moved over time. Add a second player to compare.</p>
+        <p class="card-sub">How a player's rating has moved over time. Compare up to 4 players.</p>
         <div class="row">
           <div>
             <label>Player
@@ -402,6 +403,25 @@
             </label>
           </div>
         </div>
+        <div class="row">
+          <div>
+            <label>Compare with (optional)
+              <select id="rating_history_player3_select"><option value="">None</option></select>
+            </label>
+          </div>
+          <div>
+            <label>Compare with (optional)
+              <select id="rating_history_player4_select"><option value="">None</option></select>
+            </label>
+          </div>
+        </div>
+        <label style="display:inline-block; margin-top:10px;">
+          X-axis:
+          <select id="rating_history_xaxis_mode" style="width:auto; display:inline-block; margin-top:0;">
+            <option value="time">Calendar time</option>
+            <option value="sequence">Match sequence</option>
+          </select>
+        </label>
         <button id="load-rating-history-btn" type="button" class="secondary">View rating history</button>
         <div id="rating-history-result" style="margin-top:12px;">
           <canvas id="rating-history-canvas" height="220"></canvas>
@@ -416,6 +436,44 @@
         </label>
         <button id="load-partnerships-btn" type="button" class="secondary">View partnerships</button>
         <div id="partnerships-result"></div>
+      </div>
+
+      <div class="card">
+        <h2>Partner network</h2>
+        <p class="card-sub">Who's been paired with whom, and how often - useful for spotting cliques or players who never mix.</p>
+        <div class="row">
+          <div>
+            <label>Filter by group (optional)
+              <select id="network_group_filter"><option value="">All groups</option></select>
+            </label>
+          </div>
+          <div>
+            <label>View
+              <select id="network_view_mode">
+                <option value="chord">Circular (chord)</option>
+                <option value="force">Force-directed</option>
+              </select>
+            </label>
+          </div>
+        </div>
+        <button id="load-network-btn" type="button" class="secondary">Load network</button>
+        <div id="network-result" style="margin-top:12px; overflow-x:auto;">
+          <svg id="network-svg" width="600" height="600" style="max-width:100%;"></svg>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Hall of fame</h2>
+        <p class="card-sub">Highlights pulled from full match history.</p>
+        <div class="row">
+          <div>
+            <label>Filter by group (optional)
+              <select id="hof_group_filter"><option value="">All groups</option></select>
+            </label>
+          </div>
+        </div>
+        <button id="load-hof-btn" type="button" class="secondary">Load hall of fame</button>
+        <div id="hof-result" style="margin-top:12px;"></div>
       </div>
 
       <div class="card">
@@ -606,6 +664,8 @@
       populateSelect(document.getElementById('partnerships_player_select'), labeled, 'player_id', 'label', null);
       populateSelect(document.getElementById('rating_history_player1_select'), labeled, 'player_id', 'label', null);
       populateSelect(document.getElementById('rating_history_player2_select'), labeled, 'player_id', 'label', 'None');
+      populateSelect(document.getElementById('rating_history_player3_select'), labeled, 'player_id', 'label', 'None');
+      populateSelect(document.getElementById('rating_history_player4_select'), labeled, 'player_id', 'label', 'None');
       populateTeamSelects();
     }
 
@@ -618,6 +678,8 @@
       populateSelect(document.getElementById('log_group_filter'), allGroups, 'group_id', 'group_name', 'All groups');
       populateSelect(document.getElementById('attendance_group_filter'), allGroups, 'group_id', 'group_name', 'All groups');
       populateSelect(document.getElementById('rankings_scope_select'), allGroups, 'group_id', 'group_name', 'All players');
+      populateSelect(document.getElementById('network_group_filter'), allGroups, 'group_id', 'group_name', 'All groups');
+      populateSelect(document.getElementById('hof_group_filter'), allGroups, 'group_id', 'group_name', 'All groups');
       if (allGroups.length) {
         loadGroupMembers(document.getElementById('group_select').value);
       }
@@ -1168,43 +1230,48 @@
     let ratingHistoryChart = null;
 
     document.getElementById('load-rating-history-btn').addEventListener('click', async () => {
-      const player1Id = document.getElementById('rating_history_player1_select').value;
-      const player2Id = document.getElementById('rating_history_player2_select').value;
+      const playerIds = [
+        document.getElementById('rating_history_player1_select').value,
+        document.getElementById('rating_history_player2_select').value,
+        document.getElementById('rating_history_player3_select').value,
+        document.getElementById('rating_history_player4_select').value
+      ].filter(Boolean);
+      const xAxisMode = document.getElementById('rating_history_xaxis_mode').value;
       const resultEl = document.getElementById('rating-history-result');
-      if (!player1Id) { return; }
+      if (!playerIds.length) { return; }
+
+      const colors = ['#1F7A4D', '#FF4757', '#00B4D8', '#FFD23F'];
 
       try {
         const datasets = [];
-        const player1 = allPlayers.find(p => p.player_id === player1Id);
-        const points1 = await fetchRatingHistory(player1Id);
-        datasets.push({
-          label: player1 ? player1.name : player1Id,
-          data: points1,
-          borderColor: '#1F7A4D',
-          backgroundColor: '#1F7A4D',
-          tension: 0.15
-        });
-
-        if (player2Id) {
-          const player2 = allPlayers.find(p => p.player_id === player2Id);
-          const points2 = await fetchRatingHistory(player2Id);
+        for (let i = 0; i < playerIds.length; i++) {
+          const pid = playerIds[i];
+          const player = allPlayers.find(p => p.player_id === pid);
+          const points = await fetchRatingHistory(pid);
+          const chartPoints = xAxisMode === 'sequence'
+            ? points.map((p, idx) => ({ x: idx + 1, y: p.y }))
+            : points.map(p => ({ x: p.x, y: p.y }));
           datasets.push({
-            label: player2 ? player2.name : player2Id,
-            data: points2,
-            borderColor: '#FF4757',
-            backgroundColor: '#FF4757',
+            label: player ? player.name : pid,
+            data: chartPoints,
+            borderColor: colors[i % colors.length],
+            backgroundColor: colors[i % colors.length],
             tension: 0.15
           });
         }
 
         if (ratingHistoryChart) ratingHistoryChart.destroy();
         const ctx = document.getElementById('rating-history-canvas').getContext('2d');
+        const xScale = xAxisMode === 'sequence'
+          ? { type: 'linear', title: { display: true, text: 'Match #' }, ticks: { color: '#888', precision: 0 } }
+          : { type: 'time', time: { unit: 'day' }, ticks: { color: '#888' } };
+
         ratingHistoryChart = new Chart(ctx, {
           type: 'line',
           data: { datasets },
           options: {
             scales: {
-              x: { type: 'time', time: { unit: 'day' }, ticks: { color: '#888' } },
+              x: xScale,
               y: { ticks: { color: '#888' } }
             },
             plugins: { legend: { labels: { color: getComputedStyle(document.body).color } } }
@@ -1223,6 +1290,130 @@
         .filter(m => m.ratings_after && m.ratings_after[playerId] !== undefined)
         .map(m => ({ x: m.date, y: Number(m.ratings_after[playerId]) }));
     }
+
+    document.getElementById('load-network-btn').addEventListener('click', async () => {
+      const groupId = document.getElementById('network_group_filter').value;
+      const viewMode = document.getElementById('network_view_mode').value;
+      const svg = document.getElementById('network-svg');
+      svg.innerHTML = '<text x="10" y="20" fill="var(--text-secondary)">Loading...</text>';
+
+      try {
+        const params = new URLSearchParams({ network: 'true' });
+        if (groupId) params.set('group_id', groupId);
+        const res = await fetch(`${API_BASE_URL}/matches?${params.toString()}`);
+        const data = await res.json();
+        if (!res.ok) { svg.innerHTML = `<text x="10" y="20" fill="var(--smash)">Error: ${data.error}</text>`; return; }
+        if (!data.nodes.length) { svg.innerHTML = '<text x="10" y="20" fill="var(--text-secondary)">No doubles matches recorded yet.</text>'; return; }
+
+        if (viewMode === 'chord') renderChordNetwork(data);
+        else renderForceNetwork(data);
+      } catch (err) {
+        svg.innerHTML = `<text x="10" y="20" fill="var(--smash)">Request failed: ${err.message}</text>`;
+      }
+    });
+
+    function renderChordNetwork(data) {
+      const svg = document.getElementById('network-svg');
+      const size = 600, center = size / 2, radius = size / 2 - 60;
+      const n = data.nodes.length;
+      const positions = {};
+      data.nodes.forEach((node, i) => {
+        const angle = (2 * Math.PI * i) / n - Math.PI / 2;
+        positions[node.player_id] = {
+          x: center + radius * Math.cos(angle),
+          y: center + radius * Math.sin(angle)
+        };
+      });
+
+      const maxWeight = Math.max(...data.edges.map(e => e.matches_together), 1);
+      let svgContent = '';
+      data.edges.forEach(edge => {
+        const p1 = positions[edge.player_a], p2 = positions[edge.player_b];
+        if (!p1 || !p2) return;
+        const strokeWidth = 1 + (edge.matches_together / maxWeight) * 6;
+        svgContent += `<line x1="${p1.x}" y1="${p1.y}" x2="${p2.x}" y2="${p2.y}" stroke="var(--court)" stroke-width="${strokeWidth}" stroke-opacity="0.6" />`;
+      });
+      data.nodes.forEach(node => {
+        const p = positions[node.player_id];
+        svgContent += `<circle cx="${p.x}" cy="${p.y}" r="6" fill="var(--shuttle)" stroke="var(--court)" stroke-width="1.5" />`;
+        const labelX = center + (radius + 18) * Math.cos(Math.atan2(p.y - center, p.x - center));
+        const labelY = center + (radius + 18) * Math.sin(Math.atan2(p.y - center, p.x - center));
+        svgContent += `<text x="${labelX}" y="${labelY}" font-size="12" fill="var(--text)" text-anchor="middle">${node.name}</text>`;
+      });
+      svg.innerHTML = svgContent;
+    }
+
+    function renderForceNetwork(data) {
+      const svg = document.getElementById('network-svg');
+      const size = 600;
+      const nodes = data.nodes.map(n => ({ ...n, id: n.player_id }));
+      const links = data.edges.map(e => ({ source: e.player_a, target: e.player_b, weight: e.matches_together }));
+
+      const simulation = d3.forceSimulation(nodes)
+        .force('link', d3.forceLink(links).id(d => d.id).distance(90).strength(0.3))
+        .force('charge', d3.forceManyBody().strength(-220))
+        .force('center', d3.forceCenter(size / 2, size / 2))
+        .force('collide', d3.forceCollide(30))
+        .stop();
+
+      for (let i = 0; i < 300; i++) simulation.tick();
+
+      const maxWeight = Math.max(...links.map(l => l.weight), 1);
+      let svgContent = '';
+      links.forEach(link => {
+        const strokeWidth = 1 + (link.weight / maxWeight) * 6;
+        svgContent += `<line x1="${link.source.x}" y1="${link.source.y}" x2="${link.target.x}" y2="${link.target.y}" stroke="var(--court)" stroke-width="${strokeWidth}" stroke-opacity="0.6" />`;
+      });
+      nodes.forEach(node => {
+        svgContent += `<circle cx="${node.x}" cy="${node.y}" r="7" fill="var(--shuttle)" stroke="var(--court)" stroke-width="1.5" />`;
+        svgContent += `<text x="${node.x}" y="${node.y - 12}" font-size="12" fill="var(--text)" text-anchor="middle">${node.name}</text>`;
+      });
+      svg.innerHTML = svgContent;
+    }
+
+    document.getElementById('load-hof-btn').addEventListener('click', async () => {
+      const groupId = document.getElementById('hof_group_filter').value;
+      const resultEl = document.getElementById('hof-result');
+      resultEl.textContent = 'Loading...';
+
+      try {
+        const params = new URLSearchParams({ hall_of_fame: 'true' });
+        if (groupId) params.set('group_id', groupId);
+        const res = await fetch(`${API_BASE_URL}/matches?${params.toString()}`);
+        const data = await res.json();
+        if (!res.ok) { resultEl.textContent = `Error: ${data.error}`; return; }
+
+        let html = '';
+        if (data.longest_win_streak) {
+          html += `<p><strong>Longest win streak:</strong> ${data.longest_win_streak.name} - ${data.longest_win_streak.streak} in a row</p>`;
+        }
+        if (data.biggest_blowout) {
+          const b = data.biggest_blowout;
+          html += `<p><strong>Biggest blowout:</strong> ${b.team_a_names.join(' & ')} ${b.score_a}-${b.score_b} ${b.team_b_names.join(' & ')} (margin ${b.margin})</p>`;
+        }
+        if (data.peak_ratings && data.peak_ratings.length) {
+          html += '<h4>Peak ratings ever</h4><table><tr><th>Player</th><th>Peak</th></tr>';
+          data.peak_ratings.forEach(p => { html += `<tr><td>${p.name}</td><td class="rating">${p.rating}</td></tr>`; });
+          html += '</table>';
+        }
+        if (data.giant_killer_top5 && data.giant_killer_top5.length) {
+          html += '<h4>Giant-killer upsets</h4><table><tr><th>Winner</th><th>Beat</th><th>Score</th><th>Rating gap</th></tr>';
+          data.giant_killer_top5.forEach(g => {
+            html += `<tr><td>${g.winner_names.join(' & ')}</td><td>${g.loser_names.join(' & ')}</td><td>${g.score}</td><td>${g.upset_gap}</td></tr>`;
+          });
+          html += '</table>';
+        }
+        if (data.comeback_top5 && data.comeback_top5.length) {
+          html += '<h4>Best comebacks</h4><p class="card-sub">Only available for matches recorded with live scoring.</p><table><tr><th>Winner</th><th>Deficit overcome</th></tr>';
+          data.comeback_top5.forEach(c => { html += `<tr><td>${c.winner_names.join(' & ')}</td><td>${c.deficit_overcome}</td></tr>`; });
+          html += '</table>';
+        }
+        if (!html) html = '<p style="font-size:13px;color:var(--text-secondary);">Not enough match history yet.</p>';
+        resultEl.innerHTML = html;
+      } catch (err) {
+        resultEl.textContent = `Request failed: ${err.message}`;
+      }
+    });
 
     document.getElementById('load-attendance-btn').addEventListener('click', async () => {
       const groupId = document.getElementById('attendance_group_filter').value;

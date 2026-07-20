@@ -209,6 +209,8 @@ def list_matches(event):
     date_to = params.get('date_to')      # 'YYYY-MM-DD'
     partnerships_for = params.get('partnerships_for')
     attendance = params.get('attendance')
+    network = params.get('network')
+    hall_of_fame = params.get('hall_of_fame')
 
     items = matches_table.scan().get('Items', [])
 
@@ -216,6 +218,10 @@ def list_matches(event):
         return _response(200, compute_partnerships(partnerships_for, items))
     if attendance:
         return _response(200, compute_attendance(items, group_id))
+    if network:
+        return _response(200, compute_network(items, group_id))
+    if hall_of_fame:
+        return _response(200, compute_hall_of_fame(items, group_id))
 
     if group_id:
         items = [i for i in items if i.get('group_id') == group_id]
@@ -320,6 +326,137 @@ def compute_attendance(items, group_id_filter=None):
 
     result.sort(key=lambda r: -r['sessions_attended'])
     return {'attendance': result}
+
+
+def compute_network(items, group_id_filter=None):
+    """Partnership graph data: one node per player who's appeared in a
+    doubles match, one edge per pair who've been teammates, weighted by
+    how many times. Same data feeds both a force-directed view and a
+    circular/chord view on the frontend - only the drawing differs."""
+    if group_id_filter:
+        items = [i for i in items if i.get('group_id') == group_id_filter]
+
+    node_names = {}
+    edge_counts = {}
+
+    for m in items:
+        if m.get('match_type') != 'doubles':
+            continue
+        for team, names in ((m.get('team_a') or [], m.get('team_a_names') or []),
+                             (m.get('team_b') or [], m.get('team_b_names') or [])):
+            if len(team) != 2:
+                continue
+            for pid, name in zip(team, names):
+                node_names[pid] = name
+            pair_key = tuple(sorted(team))
+            edge_counts[pair_key] = edge_counts.get(pair_key, 0) + 1
+
+    nodes = [{'player_id': pid, 'name': name} for pid, name in node_names.items()]
+    edges = [{'player_a': pair[0], 'player_b': pair[1], 'matches_together': count}
+              for pair, count in edge_counts.items()]
+
+    return {'nodes': nodes, 'edges': edges}
+
+
+def compute_hall_of_fame(items, group_id_filter=None):
+    """Highlight stats computed from full chronological match history:
+    longest win streak, biggest blowout, peak rating ever per player,
+    biggest upsets (giant-killer), and best comebacks (only available for
+    matches recorded via the live point-by-point counter, since that's the
+    only source of momentum data)."""
+    if group_id_filter:
+        items = [i for i in items if i.get('group_id') == group_id_filter]
+
+    matches = sorted(items, key=lambda m: m.get('date', ''))
+
+    rolling_ratings = {}
+    current_streak = {}
+    best_streak = {'player_id': None, 'name': None, 'streak': 0}
+    peak_rating = {}
+    biggest_blowout = None
+    giant_killer_candidates = []
+    comeback_candidates = []
+
+    def team_avg(team_ids):
+        return sum(rolling_ratings.get(pid, 1000.0) for pid in team_ids) / len(team_ids) if team_ids else 1000.0
+
+    for m in matches:
+        team_a = m.get('team_a') or []
+        team_b = m.get('team_b') or []
+        team_a_names = m.get('team_a_names') or []
+        team_b_names = m.get('team_b_names') or []
+        score_a = m.get('score_a')
+        score_b = m.get('score_b')
+        winner = m.get('winner')
+        if not team_a or not team_b or score_a is None or score_b is None:
+            continue
+        score_a, score_b = float(score_a), float(score_b)
+
+        pre_a = team_avg(team_a)
+        pre_b = team_avg(team_b)
+
+        if winner in ('A', 'B'):
+            winners = team_a if winner == 'A' else team_b
+            losers = team_b if winner == 'A' else team_a
+            winner_names = team_a_names if winner == 'A' else team_b_names
+            loser_names = team_b_names if winner == 'A' else team_a_names
+            pre_winner = pre_a if winner == 'A' else pre_b
+            pre_loser = pre_b if winner == 'A' else pre_a
+
+            for pid in winners:
+                current_streak[pid] = current_streak.get(pid, 0) + 1
+                if current_streak[pid] > best_streak['streak']:
+                    name = next((n for p, n in zip(winners, winner_names) if p == pid), pid)
+                    best_streak.update({'player_id': pid, 'name': name, 'streak': current_streak[pid]})
+            for pid in losers:
+                current_streak[pid] = 0
+
+            upset_gap = pre_loser - pre_winner
+            if upset_gap > 0:
+                giant_killer_candidates.append({
+                    'winner_names': winner_names, 'loser_names': loser_names,
+                    'upset_gap': round(upset_gap, 1), 'date': m.get('date'),
+                    'score': f"{int(score_a)}-{int(score_b)}" if winner == 'A' else f"{int(score_b)}-{int(score_a)}"
+                })
+
+        margin = abs(score_a - score_b)
+        if biggest_blowout is None or margin > biggest_blowout['margin']:
+            biggest_blowout = {
+                'team_a_names': team_a_names, 'team_b_names': team_b_names,
+                'score_a': int(score_a), 'score_b': int(score_b),
+                'margin': int(margin), 'date': m.get('date')
+            }
+
+        momentum = m.get('momentum')
+        if momentum and momentum.get('winner_overcame_deficit', 0) > 0:
+            winner_names = team_a_names if winner == 'A' else team_b_names
+            comeback_candidates.append({
+                'winner_names': winner_names, 'deficit_overcome': int(momentum['winner_overcame_deficit']),
+                'date': m.get('date')
+            })
+
+        ratings_after = m.get('ratings_after') or {}
+        for pid, rating in ratings_after.items():
+            rating = float(rating)
+            rolling_ratings[pid] = rating
+            if pid not in peak_rating or rating > peak_rating[pid]['rating']:
+                name = None
+                for ids, names in ((team_a, team_a_names), (team_b, team_b_names)):
+                    if pid in ids:
+                        name = names[ids.index(pid)]
+                        break
+                peak_rating[pid] = {'player_id': pid, 'name': name or pid, 'rating': int(round(rating))}
+
+    giant_killer_candidates.sort(key=lambda g: -g['upset_gap'])
+    comeback_candidates.sort(key=lambda c: -c['deficit_overcome'])
+
+    return {
+        'longest_win_streak': best_streak if best_streak['player_id'] else None,
+        'biggest_blowout': biggest_blowout,
+        'peak_ratings': sorted(peak_rating.values(), key=lambda p: -p['rating'])[:10],
+        'giant_killer_top5': giant_killer_candidates[:5],
+        'comeback_top5': comeback_candidates[:5]
+    }
 
 
 def _response(status_code, body_dict):
