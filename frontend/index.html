@@ -121,7 +121,7 @@
   .card-sub { color: var(--text-secondary); font-size: 13px; margin: 0 0 14px; }
 
   label { display: block; margin-top: 12px; font-size: 13px; font-weight: 500; color: var(--text-secondary); }
-  input, select {
+  input, select, textarea {
     width: 100%; padding: 10px; margin-top: 4px; box-sizing: border-box;
     background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius);
     color: var(--text); font-family: 'Inter', sans-serif; font-size: 14px;
@@ -187,6 +187,7 @@
     <button class="tab-btn" data-tab="matches">Matches</button>
     <button class="tab-btn" data-tab="tournaments">Tournaments</button>
     <button class="tab-btn" data-tab="stats">Stats</button>
+    <button class="tab-btn" data-tab="profile">Profile</button>
   </nav>
 
   <div class="app-shell">
@@ -208,6 +209,23 @@
           <button type="submit">Register</button>
         </form>
         <div id="result" class="result"></div>
+      </div>
+
+      <div class="card">
+        <h2>Bulk register players</h2>
+        <p class="card-sub">Paste names, one per line - useful for adding a whole new group at once.</p>
+        <label>Names
+          <textarea id="bulk_register_names" rows="5"></textarea>
+        </label>
+        <label>Skill level (applied to all)
+          <select id="bulk_register_skill">
+            <option value="beginner">Beginner</option>
+            <option value="intermediate" selected>Intermediate</option>
+            <option value="advanced">Advanced</option>
+          </select>
+        </label>
+        <button type="button" id="bulk-register-btn">Register all</button>
+        <div id="bulk-register-result" class="result"></div>
       </div>
 
       <div class="card">
@@ -265,6 +283,57 @@
           <button id="add-selected-players-btn" type="button" class="secondary" style="margin-top:8px;">Add selected to group</button>
         </div>
         <div id="group-action-result" class="result"></div>
+      </div>
+
+      <div class="card">
+        <h2>Tournament defaults for this group</h2>
+        <p class="card-sub">Pre-fills the tournament creation form whenever this group is selected.</p>
+        <div class="row">
+          <div>
+            <label>Format
+              <select id="group_default_format">
+                <option value="knockout">Random knockout bracket</option>
+                <option value="groups_then_knockout">Groups, then knockout</option>
+              </select>
+            </label>
+          </div>
+          <div>
+            <label>Match type
+              <select id="group_default_match_type">
+                <option value="doubles">Doubles</option>
+                <option value="singles">Singles</option>
+              </select>
+            </label>
+          </div>
+        </div>
+        <div class="row">
+          <div>
+            <label>Points to win
+              <select id="group_default_points_to_win">
+                <option value="21">21</option>
+                <option value="15">15</option>
+                <option value="11">11</option>
+              </select>
+            </label>
+          </div>
+          <div>
+            <label>Best of
+              <select id="group_default_best_of">
+                <option value="1">Single game</option>
+                <option value="3">Best of 3</option>
+              </select>
+            </label>
+          </div>
+        </div>
+        <label>Pairing
+          <select id="group_default_pairing_mode">
+            <option value="random">Random</option>
+            <option value="seeded">Rating/experience-aware random</option>
+            <option value="manual">Manual (I'll pick the teams)</option>
+          </select>
+        </label>
+        <button id="save-group-defaults-btn" type="button" class="secondary">Save as default for this group</button>
+        <div id="group-defaults-result" class="result"></div>
       </div>
     </div>
 
@@ -378,6 +447,13 @@
 
     <div class="tab-panel" id="tab-stats">
       <div class="card">
+        <h2>Export data</h2>
+        <p class="card-sub">Download a CSV for your own backup or analysis outside the app.</p>
+        <button id="export-players-csv-btn" type="button" class="secondary">Export players CSV</button>
+        <button id="export-matches-csv-btn" type="button" class="secondary">Export matches CSV</button>
+      </div>
+
+      <div class="card">
         <h2>Rankings</h2>
         <p class="card-sub">Sorted by current rating.</p>
         <label>Scope
@@ -472,6 +548,16 @@
       </div>
 
       <div class="card">
+        <h2>Partner diversity</h2>
+        <p class="card-sub">How concentrated each player's doubles partnerships are - a high "top partner %" means their rating leans heavily on one fixed pairing rather than a mix of opponents.</p>
+        <label>Filter by group (optional)
+          <select id="diversity_group_filter"><option value="">All groups</option></select>
+        </label>
+        <button id="load-diversity-btn" type="button" class="secondary">Load diversity</button>
+        <div id="diversity-result" style="margin-top:12px;"></div>
+      </div>
+
+      <div class="card">
         <h2>Hall of fame</h2>
         <p class="card-sub">Highlights pulled from full match history.</p>
         <div class="row">
@@ -493,6 +579,32 @@
         </label>
         <button id="load-attendance-btn" type="button" class="secondary">View attendance</button>
         <div id="attendance-result"></div>
+      </div>
+    </div>
+
+    <div class="tab-panel" id="tab-profile">
+      <div class="card">
+        <h2>Player profile</h2>
+        <p class="card-sub">A single player's rating history, partnerships, and mix, all in one place.</p>
+        <label>Player
+          <select id="profile_player_select"></select>
+        </label>
+      </div>
+
+      <div class="card">
+        <h2>Rating history</h2>
+        <canvas id="profile-rating-canvas" height="200"></canvas>
+      </div>
+
+      <div class="card">
+        <h2>Attendance</h2>
+        <div id="profile-attendance-result"></div>
+      </div>
+
+      <div class="card">
+        <h2>Partnerships</h2>
+        <div id="profile-partnerships-result"></div>
+        <svg id="profile-radar-svg" viewBox="0 0 600 600" style="width:100%; max-width:600px; height:auto; display:block; margin:12px auto 0;"></svg>
       </div>
     </div>
 
@@ -671,6 +783,7 @@
       populateSelect(document.getElementById('edit_player_select'), labeled, 'player_id', 'label', null);
       populateSelect(document.getElementById('log_player_filter'), labeled, 'player_id', 'label', 'All players');
       populateSelect(document.getElementById('partnerships_player_select'), labeled, 'player_id', 'label', null);
+      populateSelect(document.getElementById('profile_player_select'), labeled, 'player_id', 'label', null);
       populateSelect(document.getElementById('rating_history_player1_select'), labeled, 'player_id', 'label', null);
       populateSelect(document.getElementById('rating_history_player2_select'), labeled, 'player_id', 'label', 'None');
       populateSelect(document.getElementById('rating_history_player3_select'), labeled, 'player_id', 'label', 'None');
@@ -689,6 +802,7 @@
       populateSelect(document.getElementById('rankings_scope_select'), allGroups, 'group_id', 'group_name', 'All players');
       populateSelect(document.getElementById('partnerships_scope_group'), allGroups, 'group_id', 'group_name', 'All plays');
       populateSelect(document.getElementById('hof_group_filter'), allGroups, 'group_id', 'group_name', 'All groups');
+      populateSelect(document.getElementById('diversity_group_filter'), allGroups, 'group_id', 'group_name', 'All groups');
       if (allGroups.length) {
         loadGroupMembers(document.getElementById('group_select').value);
       }
@@ -705,6 +819,7 @@
 
       currentGroupMemberIds = new Set((data.members || []).map(m => m.player_id));
       renderAddPlayersChecklist();
+      applyGroupDefaultsToForm('group_default_', data.default_tournament_settings);
 
       if (!data.members.length) {
         membersEl.innerHTML = '<p style="font-size:13px;color:#555;">No members yet.</p>';
@@ -713,6 +828,19 @@
       membersEl.innerHTML = '<strong>Members:</strong>' + data.members.map(m =>
         `<div class="member-row"><span>${m.name} (${m.rating})</span><button onclick="removePlayerFromGroup('${groupId}','${m.player_id}')">Remove</button></div>`
       ).join('');
+    }
+
+    function applyGroupDefaultsToForm(prefix, settings) {
+      if (!settings) return;
+      const setIfPresent = (suffix, value) => {
+        const el = document.getElementById(`${prefix}${suffix}`);
+        if (el && value !== undefined && value !== null) el.value = value;
+      };
+      setIfPresent('format', settings.format);
+      setIfPresent('match_type', settings.match_type);
+      setIfPresent('points_to_win', settings.points_to_win);
+      setIfPresent('best_of', settings.best_of);
+      setIfPresent('pairing_mode', settings.pairing_mode);
     }
 
     function renderAddPlayersChecklist() {
@@ -929,6 +1057,37 @@
       }
     });
 
+    document.getElementById('bulk-register-btn').addEventListener('click', async () => {
+      const namesRaw = document.getElementById('bulk_register_names').value;
+      const skill_level = document.getElementById('bulk_register_skill').value;
+      const resultEl = document.getElementById('bulk-register-result');
+      const names = namesRaw.split('\n').map(n => n.trim()).filter(Boolean);
+      if (!names.length) { resultEl.textContent = 'Paste at least one name.'; return; }
+
+      resultEl.textContent = `Registering ${names.length} player(s)...`;
+      const registered = [];
+      const failed = [];
+      for (const name of names) {
+        try {
+          const res = await fetch(`${API_BASE_URL}/register`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name, skill_level })
+          });
+          const data = await res.json();
+          if (res.ok) registered.push(name);
+          else failed.push(`${name} (${data.error})`);
+        } catch (err) {
+          failed.push(`${name} (request failed)`);
+        }
+      }
+      let msg = `Registered ${registered.length} of ${names.length}.`;
+      if (failed.length) msg += ` Not added: ${failed.join('; ')}`;
+      resultEl.textContent = msg;
+      document.getElementById('bulk_register_names').value = '';
+      loadPlayers();
+    });
+
     // ---------- delete player ----------
 
     document.getElementById('delete-form').addEventListener('submit', async (e) => {
@@ -1073,6 +1232,37 @@
           resultEl.textContent = `Added ${data.added.length} player(s) to group.`;
           loadGroupMembers(groupId);
           loadGroups();
+        } else {
+          resultEl.textContent = `Error: ${data.error}`;
+        }
+      } catch (err) {
+        resultEl.textContent = `Request failed: ${err.message}`;
+      }
+    });
+
+    document.getElementById('save-group-defaults-btn').addEventListener('click', async () => {
+      const groupId = document.getElementById('group_select').value;
+      const resultEl = document.getElementById('group-defaults-result');
+      if (!groupId) { resultEl.textContent = 'Select a group first.'; return; }
+
+      const settings = {
+        format: document.getElementById('group_default_format').value,
+        match_type: document.getElementById('group_default_match_type').value,
+        points_to_win: document.getElementById('group_default_points_to_win').value,
+        best_of: document.getElementById('group_default_best_of').value,
+        pairing_mode: document.getElementById('group_default_pairing_mode').value
+      };
+
+      resultEl.textContent = 'Saving...';
+      try {
+        const res = await fetch(`${API_BASE_URL}/groups/${groupId}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ default_tournament_settings: settings })
+        });
+        const data = await res.json();
+        if (res.ok) {
+          resultEl.textContent = 'Saved as default for this group.';
         } else {
           resultEl.textContent = `Error: ${data.error}`;
         }
@@ -1265,6 +1455,40 @@
       document.getElementById(id).addEventListener('change', loadPartnershipsSection);
     });
 
+    function downloadCSV(filename, rows) {
+      const csv = rows.map(row => row.map(cell => `"${String(cell ?? '').replace(/"/g, '""')}"`).join(',')).join('\n');
+      const blob = new Blob([csv], { type: 'text/csv' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }
+
+    document.getElementById('export-players-csv-btn').addEventListener('click', () => {
+      const rows = [['Player ID', 'Name', 'Skill Level', 'Rating']];
+      allPlayers.forEach(p => rows.push([p.player_id, p.name, p.skill_level, p.rating]));
+      downloadCSV('networth-players.csv', rows);
+    });
+
+    document.getElementById('export-matches-csv-btn').addEventListener('click', async () => {
+      try {
+        const res = await fetch(`${API_BASE_URL}/matches`);
+        const data = await res.json();
+        const rows = [['Date', 'Match Type', 'Team A', 'Team B', 'Score A', 'Score B', 'Winner', 'Group ID', 'Tournament ID', 'Stage']];
+        (data.matches || []).forEach(m => rows.push([
+          m.date, m.match_type, (m.team_a_names || []).join(' & '), (m.team_b_names || []).join(' & '),
+          m.score_a, m.score_b, m.winner, m.group_id || '', m.tournament_id || '', m.stage || ''
+        ]));
+        downloadCSV('networth-matches.csv', rows);
+      } catch (err) {
+        alert(`Export failed: ${err.message}`);
+      }
+    });
+
     async function loadRankings() {
       const scope = document.getElementById('rankings_scope_select').value;
       const resultEl = document.getElementById('rankings-result');
@@ -1366,8 +1590,88 @@
         .map(m => ({ x: m.date, y: Number(m.ratings_after[playerId]) }));
     }
 
-    function renderPartnerRadar(data, highlightTournament) {
-      const svg = document.getElementById('radar-svg');
+    let profileRatingChart = null;
+
+    async function loadProfile() {
+      const playerId = document.getElementById('profile_player_select').value;
+      if (!playerId) return;
+
+      try {
+        const points = await fetchRatingHistory(playerId);
+        const player = allPlayers.find(p => p.player_id === playerId);
+        if (profileRatingChart) profileRatingChart.destroy();
+        const ctx = document.getElementById('profile-rating-canvas').getContext('2d');
+        profileRatingChart = new Chart(ctx, {
+          type: 'line',
+          data: {
+            datasets: [{
+              label: player ? player.name : playerId,
+              data: points,
+              borderColor: '#1F7A4D',
+              backgroundColor: '#1F7A4D',
+              tension: 0.15
+            }]
+          },
+          options: {
+            scales: {
+              x: { type: 'time', time: { unit: 'day' }, ticks: { color: '#888' } },
+              y: { ticks: { color: '#888' } }
+            },
+            plugins: { legend: { labels: { color: getComputedStyle(document.body).color } } }
+          }
+        });
+      } catch (err) {
+        console.error(err);
+      }
+
+      try {
+        const res = await fetch(`${API_BASE_URL}/matches?attendance=true`);
+        const data = await res.json();
+        const row = (data.attendance || []).find(a => a.player_id === playerId);
+        const el = document.getElementById('profile-attendance-result');
+        if (row) {
+          el.innerHTML = `<p>Sessions: ${row.sessions_attended} &middot; Total matches: ${row.total_matches} &middot; Last 30d: ${row.matches_last_30_days} &middot; Last 90d: ${row.matches_last_90_days} &middot; Longest week streak: ${row.longest_week_streak}</p>`;
+        } else {
+          el.innerHTML = '<p style="font-size:13px;color:var(--text-secondary);">No matches recorded yet.</p>';
+        }
+      } catch (err) {
+        document.getElementById('profile-attendance-result').textContent = `Request failed: ${err.message}`;
+      }
+
+      try {
+        const res = await fetch(`${API_BASE_URL}/matches?partnerships_for=${playerId}`);
+        const data = await res.json();
+        const el = document.getElementById('profile-partnerships-result');
+        if (!data.partnerships.length) {
+          el.innerHTML = '<p style="font-size:13px;color:var(--text-secondary);">No doubles matches recorded yet.</p>';
+        } else {
+          let html = '<table><tr><th>Partner</th><th>Matches</th><th>W</th><th>L</th><th>Win %</th></tr>';
+          data.partnerships.forEach(p => {
+            html += `<tr><td>${p.partner_name}</td><td>${p.matches}</td><td>${p.wins}</td><td>${p.losses}</td><td>${p.win_rate}%</td></tr>`;
+          });
+          html += '</table>';
+          el.innerHTML = html;
+        }
+      } catch (err) {
+        document.getElementById('profile-partnerships-result').textContent = `Request failed: ${err.message}`;
+      }
+
+      try {
+        const res = await fetch(`${API_BASE_URL}/matches?radar_for=${playerId}&top_n=10`);
+        const data = await res.json();
+        if (data.partners && data.partners.length) {
+          renderPartnerRadar(data, false, 'profile-radar-svg');
+        } else {
+          document.getElementById('profile-radar-svg').innerHTML = '';
+        }
+      } catch (err) {
+        console.error(err);
+      }
+    }
+    document.getElementById('profile_player_select').addEventListener('change', loadProfile);
+
+    function renderPartnerRadar(data, highlightTournament, svgId = 'radar-svg') {
+      const svg = document.getElementById(svgId);
       const size = 600, center = size / 2, maxRadius = size / 2 - 90;
       const n = data.partners.length;
 
@@ -1419,6 +1723,32 @@
 
       svg.innerHTML = svgContent;
     }
+
+    async function loadDiversity() {
+      const groupId = document.getElementById('diversity_group_filter').value;
+      const resultEl = document.getElementById('diversity-result');
+      resultEl.textContent = 'Loading...';
+
+      try {
+        const params = new URLSearchParams({ diversity: 'true' });
+        if (groupId) params.set('group_id', groupId);
+        const res = await fetch(`${API_BASE_URL}/matches?${params.toString()}`);
+        const data = await res.json();
+        if (!res.ok) { resultEl.textContent = `Error: ${data.error}`; return; }
+        if (!data.players.length) { resultEl.innerHTML = '<p style="font-size:13px;color:var(--text-secondary);">No doubles matches in this scope yet.</p>'; return; }
+
+        let html = '<table><tr><th>Player</th><th>Matches</th><th>Distinct partners</th><th>Top partner</th><th>Top partner %</th></tr>';
+        data.players.forEach(p => {
+          html += `<tr><td>${p.name}</td><td>${p.total_matches}</td><td>${p.distinct_partners}</td><td>${p.top_partner_name}</td><td>${p.top_partner_pct}%</td></tr>`;
+        });
+        html += '</table>';
+        resultEl.innerHTML = html;
+      } catch (err) {
+        resultEl.textContent = `Request failed: ${err.message}`;
+      }
+    }
+    document.getElementById('load-diversity-btn').addEventListener('click', loadDiversity);
+    document.getElementById('diversity_group_filter').addEventListener('change', loadDiversity);
 
     async function loadHallOfFame() {
       const groupId = document.getElementById('hof_group_filter').value;
@@ -1500,9 +1830,9 @@
         if (!res.ok) { resultEl.textContent = `Error: ${data.error}`; return; }
         if (!data.attendance.length) { resultEl.innerHTML = '<p style="font-size:13px;color:#555;">No matches recorded yet.</p>'; return; }
 
-        let html = '<table><tr><th>Player</th><th>Sessions</th><th>Total Matches</th><th>Last 30d</th><th>Last 90d</th></tr>';
+        let html = '<table><tr><th>Player</th><th>Sessions</th><th>Total Matches</th><th>Last 30d</th><th>Last 90d</th><th>Longest week streak</th></tr>';
         data.attendance.forEach(a => {
-          html += `<tr><td>${a.name}</td><td>${a.sessions_attended}</td><td>${a.total_matches}</td><td>${a.matches_last_30_days}</td><td>${a.matches_last_90_days}</td></tr>`;
+          html += `<tr><td>${a.name}</td><td>${a.sessions_attended}</td><td>${a.total_matches}</td><td>${a.matches_last_30_days}</td><td>${a.matches_last_90_days}</td><td>${a.longest_week_streak}</td></tr>`;
         });
         html += '</table>';
         resultEl.innerHTML = html;
@@ -1523,8 +1853,10 @@
       loadRankings();
       loadRatingHistory();
       loadPartnershipsSection();
+      loadDiversity();
       loadHallOfFame();
       loadAttendance();
+      loadProfile();
     })();
 
     // ---------- tournaments ----------
@@ -1619,7 +1951,12 @@
       container.innerHTML = 'Loading...';
       const res = await fetch(`${API_BASE_URL}/groups/${groupId}`);
       const data = await res.json();
-      if (!res.ok || !data.members || !data.members.length) {
+      if (!res.ok) {
+        container.innerHTML = '<p style="font-size:13px;color:#555;margin:0;">Could not load this group.</p>';
+        return;
+      }
+      applyGroupDefaultsToForm('tournament_', data.default_tournament_settings);
+      if (!data.members || !data.members.length) {
         container.innerHTML = '<p style="font-size:13px;color:#555;margin:0;">No members in this group yet.</p>';
         return;
       }
@@ -2092,10 +2429,42 @@
           const finalMatch = t.knockout.rounds[t.knockout.rounds.length - 1][0];
           const championName = finalMatch.player_a.player_id === finalMatch.winner_id ? finalMatch.player_a.name : finalMatch.player_b.name;
           html += `<p><strong>Champion: ${championName}</strong></p>`;
+          html += `<button type="button" class="secondary" onclick="copyTournamentRecap()">Copy WhatsApp recap</button>`;
         }
       }
 
       el.innerHTML = html;
+    }
+
+    function generateTournamentRecap(t) {
+      if (!t.knockout || t.status !== 'completed') return null;
+      const finalMatch = t.knockout.rounds[t.knockout.rounds.length - 1][0];
+      const isChampionA = finalMatch.player_a.player_id === finalMatch.winner_id;
+      const championName = isChampionA ? finalMatch.player_a.name : finalMatch.player_b.name;
+      const runnerUpName = isChampionA ? finalMatch.player_b.name : finalMatch.player_a.name;
+
+      let recap = `🏆 ${t.name} - Results\n\n`;
+      recap += `Champion: ${championName}\n`;
+      recap += `Runner-up: ${runnerUpName}\n`;
+      recap += `Final score: ${finalMatch.score_a}-${finalMatch.score_b}\n`;
+
+      if (item_has_third_place(t) && t.knockout.third_place_match.winner_id) {
+        const tp = t.knockout.third_place_match;
+        const tpWinnerName = tp.player_a.player_id === tp.winner_id ? tp.player_a.name : tp.player_b.name;
+        recap += `3rd place: ${tpWinnerName}\n`;
+      }
+      return recap;
+    }
+
+    function copyTournamentRecap() {
+      if (!currentTournamentData) return;
+      const recap = generateTournamentRecap(currentTournamentData);
+      if (!recap) { alert('This tournament is not completed yet.'); return; }
+      navigator.clipboard.writeText(recap).then(() => {
+        alert('Recap copied - paste it into WhatsApp.');
+      }).catch(() => {
+        prompt('Copy this text manually:', recap);
+      });
     }
 
     function item_has_third_place(t) {

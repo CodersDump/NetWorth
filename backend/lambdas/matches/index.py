@@ -35,7 +35,7 @@ import json
 import os
 import uuid
 import boto3
-from datetime import datetime, timezone
+from datetime import datetime, timezone, date
 
 dynamodb = boto3.resource('dynamodb')
 matches_table = dynamodb.Table(os.environ['MATCHES_TABLE'])
@@ -311,6 +311,8 @@ def list_matches(event):
         return _response(200, compute_attendance(items, group_id))
     if hall_of_fame:
         return _response(200, compute_hall_of_fame(items, group_id))
+    if params.get('diversity'):
+        return _response(200, compute_diversity(items, group_id))
 
     if group_id:
         items = [i for i in items if i.get('group_id') == group_id]
@@ -371,8 +373,9 @@ def compute_partnerships(player_id, items):
 
 def compute_attendance(items, group_id_filter=None):
     """Per-player attendance/consistency: total matches, distinct calendar
-    dates played (a proxy for 'sessions attended'), and recent activity
-    windows. Optionally scoped to one group."""
+    dates played (a proxy for 'sessions attended'), recent activity
+    windows, and their longest run of consecutive weeks with at least one
+    match. Optionally scoped to one group."""
     if group_id_filter:
         items = [i for i in items if i.get('group_id') == group_id_filter]
 
@@ -388,14 +391,19 @@ def compute_attendance(items, group_id_filter=None):
             continue
         days_ago = (now - match_date).days
         day_key = date_str[:10]
+        # A stable, sortable week index where consecutive calendar weeks
+        # differ by exactly 1, avoiding manual year-boundary handling.
+        iso_year, iso_week, _ = match_date.isocalendar()
+        week_index = date.fromisocalendar(iso_year, iso_week, 1).toordinal() // 7
 
         for pid in (m.get('team_a') or []) + (m.get('team_b') or []):
             if pid not in player_stats:
                 player_stats[pid] = {'player_id': pid, 'total_matches': 0, 'session_dates': set(),
-                                      'last_30_days': 0, 'last_90_days': 0}
+                                      'last_30_days': 0, 'last_90_days': 0, 'week_indices': set()}
             s = player_stats[pid]
             s['total_matches'] += 1
             s['session_dates'].add(day_key)
+            s['week_indices'].add(week_index)
             if days_ago <= 30:
                 s['last_30_days'] += 1
             if days_ago <= 90:
@@ -404,6 +412,15 @@ def compute_attendance(items, group_id_filter=None):
     result = []
     for pid, s in player_stats.items():
         p = players_table.get_item(Key={'player_id': pid}).get('Item')
+        weeks_sorted = sorted(s['week_indices'])
+        best_streak = 1 if weeks_sorted else 0
+        current_run = 1
+        for i in range(1, len(weeks_sorted)):
+            if weeks_sorted[i] == weeks_sorted[i - 1] + 1:
+                current_run += 1
+                best_streak = max(best_streak, current_run)
+            else:
+                current_run = 1
         result.append({
             'player_id': pid,
             'name': p['name'] if p else pid,
@@ -411,6 +428,7 @@ def compute_attendance(items, group_id_filter=None):
             'sessions_attended': len(s['session_dates']),
             'matches_last_30_days': s['last_30_days'],
             'matches_last_90_days': s['last_90_days'],
+            'longest_week_streak': best_streak,
         })
 
     result.sort(key=lambda r: -r['sessions_attended'])
@@ -597,6 +615,47 @@ def compute_hall_of_fame(items, group_id_filter=None):
         'format_specialists': format_rows[:5],
         'deep_run_rates': deep_run_rows[:10]
     }
+
+
+def compute_diversity(items, group_id_filter=None):
+    """For every player: how concentrated their doubles partnerships are.
+    'top_partner_pct' is the share of their matches played with their single
+    most frequent partner - a simple, intuitive stand-in for 'how entangled
+    is this rating with one fixed pairing'. Sorted with the most
+    concentrated (least-mixed) players first."""
+    if group_id_filter:
+        items = [i for i in items if i.get('group_id') == group_id_filter]
+
+    partner_counts = {}  # player_id -> {partner_id: count}
+    for m in items:
+        if m.get('match_type') != 'doubles':
+            continue
+        for team in (m.get('team_a') or [], m.get('team_b') or []):
+            if len(team) != 2:
+                continue
+            p1, p2 = team
+            partner_counts.setdefault(p1, {}).setdefault(p2, 0)
+            partner_counts[p1][p2] += 1
+            partner_counts.setdefault(p2, {}).setdefault(p1, 0)
+            partner_counts[p2][p1] += 1
+
+    result = []
+    for pid, counts in partner_counts.items():
+        p = players_table.get_item(Key={'player_id': pid}).get('Item')
+        total = sum(counts.values())
+        top_partner_id, top_count = max(counts.items(), key=lambda kv: kv[1])
+        top_partner = players_table.get_item(Key={'player_id': top_partner_id}).get('Item')
+        result.append({
+            'player_id': pid,
+            'name': p['name'] if p else pid,
+            'total_matches': total,
+            'distinct_partners': len(counts),
+            'top_partner_name': top_partner['name'] if top_partner else top_partner_id,
+            'top_partner_pct': round(top_count / total * 100, 1) if total else 0
+        })
+
+    result.sort(key=lambda r: -r['top_partner_pct'])
+    return {'players': result}
 
 
 def compute_partner_distribution(player_id, items, top_n=10):

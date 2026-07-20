@@ -43,6 +43,8 @@ def handler(event, context):
                 return get_group(parts[0])
             elif method == 'DELETE':
                 return delete_group(parts[0], event)
+            elif method == 'PUT':
+                return update_group_defaults(parts[0], event)
         elif len(parts) == 2 and parts[1] == 'players':
             if method == 'POST':
                 return add_player(parts[0], event)
@@ -84,7 +86,31 @@ def get_group(group_id):
         p = players_table.get_item(Key={'player_id': pid}).get('Item')
         if p:
             members.append({'player_id': p['player_id'], 'name': p['name'], 'rating': p.get('rating', 1000)})
-    return _response(200, {'group_id': item['group_id'], 'group_name': item['group_name'], 'members': members})
+    return _response(200, {
+        'group_id': item['group_id'], 'group_name': item['group_name'], 'members': members,
+        'default_tournament_settings': item.get('default_tournament_settings')
+    })
+
+
+def update_group_defaults(group_id, event):
+    """Save a group's default tournament creation settings (format, points,
+    best_of, pairing_mode), so creating a new tournament for this group can
+    pre-fill sensible values instead of re-picking every time."""
+    body = json.loads(event.get('body') or '{}')
+    settings = body.get('default_tournament_settings')
+    if not settings:
+        return _response(400, {'error': 'default_tournament_settings is required'})
+
+    existing = groups_table.get_item(Key={'group_id': group_id}).get('Item')
+    if not existing:
+        return _response(404, {'error': 'group not found'})
+
+    groups_table.update_item(
+        Key={'group_id': group_id},
+        UpdateExpression='SET default_tournament_settings = :s',
+        ExpressionAttributeValues={':s': settings}
+    )
+    return _response(200, {'group_id': group_id, 'default_tournament_settings': settings})
 
 
 def delete_group(group_id, event):
