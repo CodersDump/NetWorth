@@ -160,9 +160,11 @@ def recompute_all_ratings():
     ratings at that exact moment, which depend on everything before it.
     After correcting a match, the only fully correct fix is to reset
     everyone to 1000 and replay every match in chronological order,
-    recomputing from scratch."""
+    recomputing from scratch - including replaying each pairing's K-factor
+    exactly as it would have been at that point in time."""
     players = players_table.scan().get('Items', [])
     current_ratings = {p['player_id']: 1000.0 for p in players}
+    pairing_counts = {}  # frozenset({p1,p2}) -> matches played together so far
 
     matches = matches_table.scan().get('Items', [])
     matches.sort(key=lambda m: m.get('date', ''))
@@ -183,8 +185,21 @@ def recompute_all_ratings():
         actual_b = 1.0 - actual_a
         expected_a = 1 / (1 + 10 ** ((rating_b_avg - rating_a_avg) / 400))
         expected_b = 1 - expected_a
-        delta_a = K_FACTOR * (actual_a - expected_a)
-        delta_b = K_FACTOR * (actual_b - expected_b)
+
+        if m.get('match_type') == 'doubles':
+            k_a = compute_adaptive_k(pairing_counts.get(frozenset(team_a), 0)) if len(team_a) == 2 else K_FACTOR
+            k_b = compute_adaptive_k(pairing_counts.get(frozenset(team_b), 0)) if len(team_b) == 2 else K_FACTOR
+            if len(team_a) == 2:
+                key_a = frozenset(team_a)
+                pairing_counts[key_a] = pairing_counts.get(key_a, 0) + 1
+            if len(team_b) == 2:
+                key_b = frozenset(team_b)
+                pairing_counts[key_b] = pairing_counts.get(key_b, 0) + 1
+        else:
+            k_a = k_b = K_FACTOR
+
+        delta_a = k_a * (actual_a - expected_a)
+        delta_b = k_b * (actual_b - expected_b)
 
         for pid in team_a:
             current_ratings[pid] = current_ratings.get(pid, 1000.0) + delta_a
@@ -225,6 +240,42 @@ def compute_momentum_stats(point_log, winner):
     }
 
 
+def compute_adaptive_k(pairing_count):
+    """Higher K for a fresh/novel doubles pairing (each match together is
+    high-information, since we don't yet know how these two specific
+    players perform as a unit). Lower K once a pairing is well-established
+    (each additional match together adds little new information, and this
+    is what keeps a fixed partnership's ratings from swinging wildly in
+    lockstep every single time they play). Singles has no pairing concept,
+    so it always uses the flat K_FACTOR."""
+    if pairing_count == 0:
+        return 40
+    elif pairing_count < 5:
+        return K_FACTOR
+    else:
+        return 20
+
+
+def get_pairing_count(team_ids, exclude_match_id=None):
+    """How many prior doubles matches has this exact 2-player team played
+    together, based on matches already recorded (regardless of opponent)."""
+    if len(team_ids) != 2:
+        return 0
+    pair_key = frozenset(team_ids)
+    count = 0
+    items = matches_table.scan().get('Items', [])
+    for m in items:
+        if exclude_match_id and m.get('match_id') == exclude_match_id:
+            continue
+        if m.get('match_type') != 'doubles':
+            continue
+        for team in (m.get('team_a') or [], m.get('team_b') or []):
+            if len(team) == 2 and frozenset(team) == pair_key:
+                count += 1
+                break
+    return count
+
+
 def _play_and_log(match_type, team_a_ids, team_b_ids, score_a, score_b, group_id, tournament_id, stage,
                    point_log=None, points_to_win=21):
     team_a_players = [players_table.get_item(Key={'player_id': pid}).get('Item') for pid in team_a_ids]
@@ -241,8 +292,14 @@ def _play_and_log(match_type, team_a_ids, team_b_ids, score_a, score_b, group_id
     expected_a = 1 / (1 + 10 ** ((rating_b_avg - rating_a_avg) / 400))
     expected_b = 1 - expected_a
 
-    delta_a = K_FACTOR * (actual_a - expected_a)
-    delta_b = K_FACTOR * (actual_b - expected_b)
+    if match_type == 'doubles':
+        k_a = compute_adaptive_k(get_pairing_count(team_a_ids))
+        k_b = compute_adaptive_k(get_pairing_count(team_b_ids))
+    else:
+        k_a = k_b = K_FACTOR
+
+    delta_a = k_a * (actual_a - expected_a)
+    delta_b = k_b * (actual_b - expected_b)
 
     new_ratings = {}
     for p in team_a_players:
