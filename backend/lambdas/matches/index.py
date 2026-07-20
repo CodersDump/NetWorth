@@ -211,6 +211,8 @@ def list_matches(event):
     attendance = params.get('attendance')
     network = params.get('network')
     hall_of_fame = params.get('hall_of_fame')
+    radar_for = params.get('radar_for')
+    top_n = int(params.get('top_n', 10))
 
     items = matches_table.scan().get('Items', [])
 
@@ -222,6 +224,11 @@ def list_matches(event):
         return _response(200, compute_network(items, group_id))
     if hall_of_fame:
         return _response(200, compute_hall_of_fame(items, group_id))
+    if radar_for:
+        scoped_items = items
+        if group_id:
+            scoped_items = [i for i in scoped_items if i.get('group_id') == group_id]
+        return _response(200, compute_partner_distribution(radar_for, scoped_items, top_n))
 
     if group_id:
         items = [i for i in items if i.get('group_id') == group_id]
@@ -457,6 +464,44 @@ def compute_hall_of_fame(items, group_id_filter=None):
         'giant_killer_top5': giant_killer_candidates[:5],
         'comeback_top5': comeback_candidates[:5]
     }
+
+
+def compute_partner_distribution(player_id, items, top_n=10):
+    """For the radar/spider chart: one player's doubles partners, sorted by
+    how often they've played together, capped at top_n so the chart stays
+    readable. Percentages are based on the total within whatever scope was
+    already applied to `items` (a specific group, or every match)."""
+    partner_counts = {}
+    total = 0
+    for m in items:
+        if m.get('match_type') != 'doubles':
+            continue
+        team_a = m.get('team_a') or []
+        team_b = m.get('team_b') or []
+        if player_id in team_a and len(team_a) == 2:
+            team = team_a
+        elif player_id in team_b and len(team_b) == 2:
+            team = team_b
+        else:
+            continue
+        partner_id = next((pid for pid in team if pid != player_id), None)
+        if not partner_id:
+            continue
+        partner_counts[partner_id] = partner_counts.get(partner_id, 0) + 1
+        total += 1
+
+    result = []
+    for pid, count in partner_counts.items():
+        p = players_table.get_item(Key={'player_id': pid}).get('Item')
+        result.append({
+            'partner_id': pid,
+            'name': p['name'] if p else pid,
+            'matches': count,
+            'percentage': round(count / total * 100, 1) if total else 0
+        })
+
+    result.sort(key=lambda r: -r['matches'])
+    return {'player_id': player_id, 'total_matches': total, 'partners': result[:top_n]}
 
 
 def _response(status_code, body_dict):

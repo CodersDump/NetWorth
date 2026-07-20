@@ -458,7 +458,34 @@
         </div>
         <button id="load-network-btn" type="button" class="secondary">Load network</button>
         <div id="network-result" style="margin-top:12px; overflow-x:auto;">
-          <svg id="network-svg" width="600" height="600" style="max-width:100%;"></svg>
+          <svg id="network-svg" width="600" height="600" style="max-width:100%; height:auto;"></svg>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Partner distribution</h2>
+        <p class="card-sub">One player's partner mix as a radar - each spoke is a partner, the shape shows who they lean toward.</p>
+        <div class="row">
+          <div>
+            <label>Player
+              <select id="radar_player_select"></select>
+            </label>
+          </div>
+          <div>
+            <label>Scope
+              <select id="radar_scope_group"><option value="">All plays</option></select>
+            </label>
+          </div>
+        </div>
+        <label>Show top
+          <select id="radar_top_n">
+            <option value="10" selected>10 partners</option>
+            <option value="15">15 partners</option>
+          </select>
+        </label>
+        <button id="load-radar-btn" type="button" class="secondary">Load distribution</button>
+        <div id="radar-result" style="margin-top:12px; overflow-x:auto;">
+          <svg id="radar-svg" width="600" height="600" style="max-width:100%; height:auto;"></svg>
         </div>
       </div>
 
@@ -666,6 +693,7 @@
       populateSelect(document.getElementById('rating_history_player2_select'), labeled, 'player_id', 'label', 'None');
       populateSelect(document.getElementById('rating_history_player3_select'), labeled, 'player_id', 'label', 'None');
       populateSelect(document.getElementById('rating_history_player4_select'), labeled, 'player_id', 'label', 'None');
+      populateSelect(document.getElementById('radar_player_select'), labeled, 'player_id', 'label', null);
       populateTeamSelects();
     }
 
@@ -679,6 +707,7 @@
       populateSelect(document.getElementById('attendance_group_filter'), allGroups, 'group_id', 'group_name', 'All groups');
       populateSelect(document.getElementById('rankings_scope_select'), allGroups, 'group_id', 'group_name', 'All players');
       populateSelect(document.getElementById('network_group_filter'), allGroups, 'group_id', 'group_name', 'All groups');
+      populateSelect(document.getElementById('radar_scope_group'), allGroups, 'group_id', 'group_name', 'All plays');
       populateSelect(document.getElementById('hof_group_filter'), allGroups, 'group_id', 'group_name', 'All groups');
       if (allGroups.length) {
         loadGroupMembers(document.getElementById('group_select').value);
@@ -1368,6 +1397,63 @@
         svgContent += `<circle cx="${node.x}" cy="${node.y}" r="7" fill="var(--shuttle)" stroke="var(--court)" stroke-width="1.5" />`;
         svgContent += `<text x="${node.x}" y="${node.y - 12}" font-size="12" fill="var(--text)" text-anchor="middle">${node.name}</text>`;
       });
+      svg.innerHTML = svgContent;
+    }
+
+    document.getElementById('load-radar-btn').addEventListener('click', async () => {
+      const playerId = document.getElementById('radar_player_select').value;
+      const groupId = document.getElementById('radar_scope_group').value;
+      const topN = document.getElementById('radar_top_n').value;
+      const svg = document.getElementById('radar-svg');
+      if (!playerId) { svg.innerHTML = '<text x="10" y="20" fill="var(--text-secondary)">Select a player first.</text>'; return; }
+      svg.innerHTML = '<text x="10" y="20" fill="var(--text-secondary)">Loading...</text>';
+
+      try {
+        const params = new URLSearchParams({ radar_for: playerId, top_n: topN });
+        if (groupId) params.set('group_id', groupId);
+        const res = await fetch(`${API_BASE_URL}/matches?${params.toString()}`);
+        const data = await res.json();
+        if (!res.ok) { svg.innerHTML = `<text x="10" y="20" fill="var(--smash)">Error: ${data.error}</text>`; return; }
+        if (!data.partners.length) { svg.innerHTML = '<text x="10" y="20" fill="var(--text-secondary)">No doubles matches recorded in this scope.</text>'; return; }
+        renderPartnerRadar(data);
+      } catch (err) {
+        svg.innerHTML = `<text x="10" y="20" fill="var(--smash)">Request failed: ${err.message}</text>`;
+      }
+    });
+
+    function renderPartnerRadar(data) {
+      const svg = document.getElementById('radar-svg');
+      const size = 600, center = size / 2, maxRadius = size / 2 - 90;
+      const n = data.partners.length;
+
+      const spokeAngles = data.partners.map((p, i) => (2 * Math.PI * i) / n - Math.PI / 2);
+
+      let svgContent = '';
+      spokeAngles.forEach(angle => {
+        const x = center + maxRadius * Math.cos(angle);
+        const y = center + maxRadius * Math.sin(angle);
+        svgContent += `<line x1="${center}" y1="${center}" x2="${x}" y2="${y}" stroke="var(--border)" stroke-width="1" />`;
+      });
+
+      const points = data.partners.map((p, i) => {
+        const angle = spokeAngles[i];
+        const r = (p.percentage / 100) * maxRadius;
+        return { x: center + r * Math.cos(angle), y: center + r * Math.sin(angle) };
+      });
+      const polygonPoints = points.map(pt => `${pt.x},${pt.y}`).join(' ');
+      svgContent += `<polygon points="${polygonPoints}" fill="var(--court)" fill-opacity="0.3" stroke="var(--court)" stroke-width="1.5" />`;
+
+      data.partners.forEach((p, i) => {
+        const angle = spokeAngles[i];
+        const labelX = center + (maxRadius + 30) * Math.cos(angle);
+        const labelY = center + (maxRadius + 30) * Math.sin(angle);
+        svgContent += `<text x="${labelX}" y="${labelY - 6}" font-size="13" fill="var(--text)" text-anchor="middle">${p.name}</text>`;
+        svgContent += `<text x="${labelX}" y="${labelY + 10}" font-size="11" fill="var(--text-secondary)" text-anchor="middle">${p.percentage}%</text>`;
+      });
+
+      svgContent += `<circle cx="${center}" cy="${center}" r="3" fill="var(--text)" />`;
+      svgContent += `<text x="${center}" y="${center - 10}" font-size="11" fill="var(--text-secondary)" text-anchor="middle">${data.total_matches} matches</text>`;
+
       svg.innerHTML = svgContent;
     }
 
