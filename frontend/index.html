@@ -467,7 +467,7 @@
         <div id="partnerships-result" style="margin-top:12px;"></div>
 
         <div id="radar-result" style="margin-top:12px; overflow-x:auto;">
-          <svg id="radar-svg" width="600" height="600" style="max-width:100%; height:auto;"></svg>
+          <svg id="radar-svg" viewBox="0 0 600 600" style="width:100%; max-width:600px; height:auto; display:block; margin:0 auto;"></svg>
         </div>
       </div>
 
@@ -1145,7 +1145,7 @@
 
     // ---------- game log ----------
 
-    document.getElementById('load-log-btn').addEventListener('click', async () => {
+    async function loadGameLog() {
       const groupId = document.getElementById('log_group_filter').value;
       const playerId = document.getElementById('log_player_filter').value;
       const dateFrom = document.getElementById('log_date_from').value;
@@ -1165,7 +1165,7 @@
         if (!res.ok) { logEl.textContent = `Error: ${data.error}`; return; }
         if (!data.matches.length) { logEl.innerHTML = '<p style="font-size:13px;color:#555;">No matches yet.</p>'; return; }
 
-        let html = '<table><tr><th>Date</th><th>Team A</th><th>Team B</th><th>Score</th><th>Notes</th></tr>';
+        let html = '<table><tr><th>Date</th><th>Team A</th><th>Team B</th><th>Score</th><th>Notes</th><th></th></tr>';
         data.matches.forEach(m => {
           const date = new Date(m.date).toLocaleString();
           const teamA = (m.team_a_names || []).join(' & ');
@@ -1174,14 +1174,43 @@
           if (m.momentum && m.momentum.winner_overcame_deficit > 0) {
             notes = `Comeback: overcame a ${m.momentum.winner_overcame_deficit}-point deficit`;
           }
-          html += `<tr><td>${date}</td><td>${teamA}</td><td>${teamB}</td><td>${m.score_a} - ${m.score_b}</td><td>${notes}</td></tr>`;
+          html += `<tr><td>${date}</td><td>${teamA}</td><td>${teamB}</td><td>${m.score_a} - ${m.score_b}</td><td>${notes}</td><td><button class="secondary" style="margin-top:0;padding:4px 8px;font-size:11px;" onclick="editMatchScore('${m.match_id}', ${m.score_a}, ${m.score_b})">Edit</button></td></tr>`;
         });
         html += '</table>';
         logEl.innerHTML = html;
       } catch (err) {
         logEl.textContent = `Request failed: ${err.message}`;
       }
-    });
+    }
+    document.getElementById('load-log-btn').addEventListener('click', loadGameLog);
+
+    async function editMatchScore(matchId, currentScoreA, currentScoreB) {
+      const newScoreA = prompt(`Current score: ${currentScoreA} - ${currentScoreB}\nEnter corrected Team A score:`, currentScoreA);
+      if (newScoreA === null) return;
+      const newScoreB = prompt('Enter corrected Team B score:', currentScoreB);
+      if (newScoreB === null) return;
+
+      const confirmText = prompt('Enter the confirmation code to save this correction. Note: this will recompute every player\'s rating from the corrected history.');
+      if (!confirmText) return;
+
+      try {
+        const res = await fetch(`${API_BASE_URL}/matches/${matchId}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ score_a: parseInt(newScoreA, 10), score_b: parseInt(newScoreB, 10), confirm: confirmText })
+        });
+        const data = await res.json();
+        if (res.ok) {
+          alert('Score corrected. All ratings have been recomputed.');
+          loadGameLog();
+          loadPlayers();
+        } else {
+          alert(`Error: ${data.error}`);
+        }
+      } catch (err) {
+        alert(`Request failed: ${err.message}`);
+      }
+    }
 
     async function loadPartnershipsSection() {
       const playerId = document.getElementById('partnerships_player_select').value;

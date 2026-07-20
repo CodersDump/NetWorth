@@ -42,6 +42,7 @@ matches_table = dynamodb.Table(os.environ['MATCHES_TABLE'])
 players_table = dynamodb.Table(os.environ['PLAYERS_TABLE'])
 
 K_FACTOR = 32
+CONFIRMATION_CODE = 'Matchpoint-Falcon-77'  # private - never shown in the UI; change this if it's ever exposed
 
 
 def _is_valid_completed_game(score_a, score_b, target):
@@ -64,10 +65,13 @@ def _is_valid_completed_game(score_a, score_b, target):
 def handler(event, context):
     try:
         method = event.get('httpMethod')
+        match_id = (event.get('pathParameters') or {}).get('match_id')
         if method == 'POST':
             return record_match(event)
         elif method == 'GET':
             return list_matches(event)
+        elif method == 'PUT' and match_id:
+            return update_match(match_id, event)
         return _response(404, {'error': 'not found'})
     except Exception as e:
         return _response(500, {'error': str(e)})
@@ -112,6 +116,84 @@ def record_match(event):
     if item is None:
         return _response(404, {'error': 'one or more players not found'})
     return _response(200, item)
+
+
+def update_match(match_id, event):
+    """Fix a mis-entered score on an already-recorded standalone match.
+    Requires the confirmation code, same as deletions and renames. Since
+    Elo is path-dependent, changing a score doesn't just affect this one
+    match's own rating delta - it can shift everyone who played after it
+    too - so every edit triggers a full recompute of every player's rating
+    from scratch, replaying the corrected history in order."""
+    body = json.loads(event.get('body') or '{}')
+    if body.get('confirm') != CONFIRMATION_CODE:
+        return _response(400, {'error': 'confirmation code is missing or incorrect'})
+
+    existing = matches_table.get_item(Key={'match_id': match_id}).get('Item')
+    if not existing:
+        return _response(404, {'error': 'match not found'})
+
+    new_score_a = body.get('score_a')
+    new_score_b = body.get('score_b')
+    if new_score_a is None or new_score_b is None:
+        return _response(400, {'error': 'score_a and score_b are required'})
+    new_score_a, new_score_b = int(new_score_a), int(new_score_b)
+    if new_score_a == new_score_b:
+        return _response(400, {'error': 'scores cannot be tied'})
+
+    new_winner = 'A' if new_score_a > new_score_b else 'B'
+
+    matches_table.update_item(
+        Key={'match_id': match_id},
+        UpdateExpression='SET score_a = :sa, score_b = :sb, winner = :w',
+        ExpressionAttributeValues={':sa': new_score_a, ':sb': new_score_b, ':w': new_winner}
+    )
+
+    recompute_all_ratings()
+
+    updated = matches_table.get_item(Key={'match_id': match_id}).get('Item')
+    return _response(200, {'match': updated, 'note': 'All player ratings were recomputed from the corrected match history.'})
+
+
+def recompute_all_ratings():
+    """Elo is path-dependent - each match's rating change depends on the
+    ratings at that exact moment, which depend on everything before it.
+    After correcting a match, the only fully correct fix is to reset
+    everyone to 1000 and replay every match in chronological order,
+    recomputing from scratch."""
+    players = players_table.scan().get('Items', [])
+    current_ratings = {p['player_id']: 1000.0 for p in players}
+
+    matches = matches_table.scan().get('Items', [])
+    matches.sort(key=lambda m: m.get('date', ''))
+
+    for m in matches:
+        team_a = m.get('team_a') or []
+        team_b = m.get('team_b') or []
+        score_a = m.get('score_a')
+        score_b = m.get('score_b')
+        if not team_a or not team_b or score_a is None or score_b is None:
+            continue
+
+        score_a, score_b = float(score_a), float(score_b)
+        rating_a_avg = sum(current_ratings.get(pid, 1000.0) for pid in team_a) / len(team_a)
+        rating_b_avg = sum(current_ratings.get(pid, 1000.0) for pid in team_b) / len(team_b)
+
+        actual_a = 1.0 if score_a > score_b else (0.0 if score_a < score_b else 0.5)
+        actual_b = 1.0 - actual_a
+        expected_a = 1 / (1 + 10 ** ((rating_b_avg - rating_a_avg) / 400))
+        expected_b = 1 - expected_a
+        delta_a = K_FACTOR * (actual_a - expected_a)
+        delta_b = K_FACTOR * (actual_b - expected_b)
+
+        for pid in team_a:
+            current_ratings[pid] = current_ratings.get(pid, 1000.0) + delta_a
+        for pid in team_b:
+            current_ratings[pid] = current_ratings.get(pid, 1000.0) + delta_b
+
+    for pid, rating in current_ratings.items():
+        players_table.update_item(Key={'player_id': pid}, UpdateExpression='SET rating = :r',
+                                   ExpressionAttributeValues={':r': int(round(rating))})
 
 
 def compute_momentum_stats(point_log, winner):
