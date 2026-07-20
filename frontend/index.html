@@ -713,6 +713,15 @@
 
         <div id="team-composition-preview" style="margin-top:12px;"></div>
 
+        <div style="margin-top:12px;">
+          <label style="display:inline-block;">View:
+            <select id="tournament_view_mode" style="width:auto; display:inline-block; margin-top:0;">
+              <option value="table" selected>Table</option>
+              <option value="bracket">Bracket</option>
+            </select>
+          </label>
+        </div>
+        <svg id="bracket-svg" style="display:none; width:100%; margin-top:12px;"></svg>
         <div id="tournament-detail" style="margin-top: 16px;"></div>
 
         <div id="substitution-section" style="display:none; margin-top:16px; border-top:1px solid var(--border); padding-top:16px;">
@@ -2311,10 +2320,111 @@
       return games.map(g => `${g.score_a}-${g.score_b}`).join(', ');
     }
 
+    document.getElementById('tournament_view_mode').addEventListener('change', applyTournamentViewMode);
+
+    function applyTournamentViewMode() {
+      const mode = document.getElementById('tournament_view_mode').value;
+      document.getElementById('tournament-detail').style.display = mode === 'table' ? 'block' : 'none';
+      document.getElementById('bracket-svg').style.display = mode === 'bracket' ? 'block' : 'none';
+    }
+
+    function matchTotals(match) {
+      const games = match.games || [];
+      return {
+        a: games.reduce((sum, g) => sum + Number(g.score_a), 0),
+        b: games.reduce((sum, g) => sum + Number(g.score_b), 0)
+      };
+    }
+
+    function renderBracketView(t) {
+      const svg = document.getElementById('bracket-svg');
+      if (!t.knockout || !t.knockout.rounds || !t.knockout.rounds.length) {
+        svg.innerHTML = '<text x="10" y="20" font-size="13" fill="var(--text-secondary)">No knockout bracket for this tournament yet.</text>';
+        svg.setAttribute('viewBox', '0 0 400 40');
+        return;
+      }
+
+      const rounds = t.knockout.rounds;
+      const colWidth = 240;
+      const boxWidth = 200;
+      const boxHeight = 56;
+      const baseSpacing = 90;
+
+      const positions = [];
+      positions[0] = rounds[0].map((_, i) => i * baseSpacing + baseSpacing / 2);
+      for (let r = 1; r < rounds.length; r++) {
+        positions[r] = rounds[r].map((_, i) => {
+          const y1 = positions[r - 1][i * 2];
+          const y2 = positions[r - 1][i * 2 + 1];
+          if (y1 !== undefined && y2 !== undefined) return (y1 + y2) / 2;
+          return y1 !== undefined ? y1 : baseSpacing / 2;
+        });
+      }
+
+      const totalHeight = Math.max(...positions[0]) + baseSpacing / 2 + 30;
+      const totalWidth = rounds.length * colWidth + boxWidth + 40;
+
+      let content = '';
+
+      for (let r = 1; r < rounds.length; r++) {
+        for (let i = 0; i < rounds[r].length; i++) {
+          const x1 = 20 + (r - 1) * colWidth + boxWidth;
+          const x2 = 20 + r * colWidth;
+          const xMid = x1 + (x2 - x1) / 2;
+          const yThis = positions[r][i];
+          const yFeed1 = positions[r - 1][i * 2];
+          const yFeed2 = positions[r - 1][i * 2 + 1];
+          if (yFeed1 !== undefined) content += `<path d="M${x1},${yFeed1} H${xMid} V${yThis} H${x2}" fill="none" stroke="var(--border)" stroke-width="2"/>`;
+          if (yFeed2 !== undefined) content += `<path d="M${x1},${yFeed2} H${xMid} V${yThis} H${x2}" fill="none" stroke="var(--border)" stroke-width="2"/>`;
+        }
+      }
+
+      rounds.forEach((round, r) => {
+        const x = 20 + r * colWidth;
+        content += `<text x="${x}" y="16" font-size="12" fill="var(--text-secondary)">${r === rounds.length - 1 ? 'Final' : (r === rounds.length - 2 ? 'Semifinal' : `Round ${r + 1}`)}</text>`;
+        round.forEach((match, i) => {
+          const y = positions[r][i] - boxHeight / 2 + 24;
+          const nameA = match.player_a ? match.player_a.name : 'TBD';
+          const nameB = match.bye ? 'BYE' : (match.player_b ? match.player_b.name : 'TBD');
+          const totals = matchTotals(match);
+          const aWon = match.winner_id && match.player_a && match.winner_id === match.player_a.player_id;
+          const bWon = match.winner_id && match.player_b && match.winner_id === match.player_b.player_id;
+
+          content += `<rect x="${x}" y="${y}" width="${boxWidth}" height="${boxHeight}" fill="var(--surface)" stroke="var(--border)" rx="6"/>`;
+          content += `<line x1="${x}" y1="${y + boxHeight / 2}" x2="${x + boxWidth}" y2="${y + boxHeight / 2}" stroke="var(--border)"/>`;
+          content += `<text x="${x + 8}" y="${y + 20}" font-size="13" font-weight="${aWon ? 'bold' : 'normal'}" fill="${aWon ? 'var(--court)' : 'var(--text)'}">${nameA}</text>`;
+          content += `<text x="${x + boxWidth - 8}" y="${y + 20}" font-size="13" text-anchor="end" fill="var(--text-secondary)">${match.played && !match.bye ? totals.a : ''}</text>`;
+          content += `<text x="${x + 8}" y="${y + boxHeight - 8}" font-size="13" font-weight="${bWon ? 'bold' : 'normal'}" fill="${bWon ? 'var(--court)' : 'var(--text)'}">${nameB}</text>`;
+          content += `<text x="${x + boxWidth - 8}" y="${y + boxHeight - 8}" font-size="13" text-anchor="end" fill="var(--text-secondary)">${match.played && !match.bye ? totals.b : ''}</text>`;
+        });
+      });
+
+      if (item_has_third_place(t) && t.knockout.third_place_match) {
+        const tp = t.knockout.third_place_match;
+        const x = 20 + (rounds.length - 1) * colWidth;
+        const y = totalHeight - boxHeight - 10;
+        const totals = matchTotals(tp);
+        const aWon = tp.winner_id && tp.player_a && tp.winner_id === tp.player_a.player_id;
+        const bWon = tp.winner_id && tp.player_b && tp.winner_id === tp.player_b.player_id;
+        content += `<text x="${x}" y="${y - 8}" font-size="12" fill="var(--text-secondary)">3rd place</text>`;
+        content += `<rect x="${x}" y="${y}" width="${boxWidth}" height="${boxHeight}" fill="var(--surface)" stroke="var(--border)" rx="6"/>`;
+        content += `<line x1="${x}" y1="${y + boxHeight / 2}" x2="${x + boxWidth}" y2="${y + boxHeight / 2}" stroke="var(--border)"/>`;
+        content += `<text x="${x + 8}" y="${y + 20}" font-size="13" font-weight="${aWon ? 'bold' : 'normal'}" fill="${aWon ? 'var(--court)' : 'var(--text)'}">${tp.player_a ? tp.player_a.name : 'TBD'}</text>`;
+        content += `<text x="${x + boxWidth - 8}" y="${y + 20}" font-size="13" text-anchor="end" fill="var(--text-secondary)">${tp.played ? totals.a : ''}</text>`;
+        content += `<text x="${x + 8}" y="${y + boxHeight - 8}" font-size="13" font-weight="${bWon ? 'bold' : 'normal'}" fill="${bWon ? 'var(--court)' : 'var(--text)'}">${tp.player_b ? tp.player_b.name : 'TBD'}</text>`;
+        content += `<text x="${x + boxWidth - 8}" y="${y + boxHeight - 8}" font-size="13" text-anchor="end" fill="var(--text-secondary)">${tp.played ? totals.b : ''}</text>`;
+      }
+
+      svg.setAttribute('viewBox', `0 0 ${totalWidth} ${totalHeight}`);
+      svg.innerHTML = content;
+    }
+
     function renderTournament(t) {
       currentTournamentData = t;
       populateSubstitutionSection(t);
       renderTeamCompositionBars(t, 'team-composition-preview');
+      renderBracketView(t);
+      applyTournamentViewMode();
       const el = document.getElementById('tournament-detail');
       const bestOf = t.best_of || 1;
       const liveMode = document.getElementById('tournament_live_toggle').checked;
