@@ -2344,11 +2344,35 @@
         return;
       }
 
-      const rounds = t.knockout.rounds;
+      const dataRounds = t.knockout.rounds;
       const colWidth = 240;
       const boxWidth = 200;
       const boxHeight = 56;
       const baseSpacing = 90;
+
+      // Round 1's match count is fixed from the moment the bracket is
+      // created and always a power of 2 - so the TRUE total number of
+      // rounds (through the real Final) is computable up front, even
+      // before later rounds exist in the data. Using dataRounds.length
+      // instead would mislabel "Round 1" as "Final" whenever it's the
+      // only round computed so far.
+      const totalRounds = Math.round(Math.log2(dataRounds[0].length)) + 1;
+
+      // Build a full virtual bracket through totalRounds, filling in any
+      // not-yet-computed future rounds with TBD placeholder matches, so
+      // the complete bracket shape is visible from round 1 onward.
+      const rounds = [];
+      for (let r = 0; r < totalRounds; r++) {
+        if (dataRounds[r]) {
+          rounds[r] = dataRounds[r];
+        } else {
+          const prevCount = rounds[r - 1] ? rounds[r - 1].length : dataRounds[0].length;
+          const count = Math.max(1, Math.ceil(prevCount / 2));
+          rounds[r] = Array.from({ length: count }, () => ({
+            player_a: null, player_b: null, games: [], played: false, winner_id: null
+          }));
+        }
+      }
 
       const positions = [];
       positions[0] = rounds[0].map((_, i) => i * baseSpacing + baseSpacing / 2);
@@ -2361,7 +2385,14 @@
         });
       }
 
-      const totalHeight = Math.max(...positions[0]) + baseSpacing / 2 + 30;
+      const finalBoxTop = positions[rounds.length - 1][0] - boxHeight / 2 + 24;
+      const finalBoxBottom = finalBoxTop + boxHeight;
+      const hasThirdPlace = item_has_third_place(t) && t.knockout.third_place_match;
+      const thirdPlaceGap = 40;
+      const totalHeight = Math.max(
+        Math.max(...positions[0]) + baseSpacing / 2 + 30,
+        hasThirdPlace ? finalBoxBottom + thirdPlaceGap + boxHeight + 20 : 0
+      );
       const totalWidth = rounds.length * colWidth + boxWidth + 40;
 
       let content = '';
@@ -2381,7 +2412,8 @@
 
       rounds.forEach((round, r) => {
         const x = 20 + r * colWidth;
-        content += `<text x="${x}" y="16" font-size="12" fill="var(--text-secondary)">${r === rounds.length - 1 ? 'Final' : (r === rounds.length - 2 ? 'Semifinal' : `Round ${r + 1}`)}</text>`;
+        const label = r === totalRounds - 1 ? 'Final' : (r === totalRounds - 2 ? 'Semifinal' : `Round ${r + 1}`);
+        content += `<text x="${x}" y="16" font-size="12" fill="var(--text-secondary)">${label}</text>`;
         round.forEach((match, i) => {
           const y = positions[r][i] - boxHeight / 2 + 24;
           const nameA = match.player_a ? match.player_a.name : 'TBD';
@@ -2389,20 +2421,21 @@
           const totals = matchTotals(match);
           const aWon = match.winner_id && match.player_a && match.winner_id === match.player_a.player_id;
           const bWon = match.winner_id && match.player_b && match.winner_id === match.player_b.player_id;
+          const isPlaceholder = !match.player_a && !match.player_b;
 
-          content += `<rect x="${x}" y="${y}" width="${boxWidth}" height="${boxHeight}" fill="var(--surface)" stroke="var(--border)" rx="6"/>`;
+          content += `<rect x="${x}" y="${y}" width="${boxWidth}" height="${boxHeight}" fill="var(--surface)" stroke="var(--border)" rx="6" ${isPlaceholder ? 'stroke-dasharray="4 3"' : ''}/>`;
           content += `<line x1="${x}" y1="${y + boxHeight / 2}" x2="${x + boxWidth}" y2="${y + boxHeight / 2}" stroke="var(--border)"/>`;
-          content += `<text x="${x + 8}" y="${y + 20}" font-size="13" font-weight="${aWon ? 'bold' : 'normal'}" fill="${aWon ? 'var(--court)' : 'var(--text)'}">${nameA}</text>`;
+          content += `<text x="${x + 8}" y="${y + 20}" font-size="13" font-weight="${aWon ? 'bold' : 'normal'}" fill="${aWon ? 'var(--court)' : 'var(--text-secondary)'}">${nameA}</text>`;
           content += `<text x="${x + boxWidth - 8}" y="${y + 20}" font-size="13" text-anchor="end" fill="var(--text-secondary)">${match.played && !match.bye ? totals.a : ''}</text>`;
-          content += `<text x="${x + 8}" y="${y + boxHeight - 8}" font-size="13" font-weight="${bWon ? 'bold' : 'normal'}" fill="${bWon ? 'var(--court)' : 'var(--text)'}">${nameB}</text>`;
+          content += `<text x="${x + 8}" y="${y + boxHeight - 8}" font-size="13" font-weight="${bWon ? 'bold' : 'normal'}" fill="${bWon ? 'var(--court)' : 'var(--text-secondary)'}">${nameB}</text>`;
           content += `<text x="${x + boxWidth - 8}" y="${y + boxHeight - 8}" font-size="13" text-anchor="end" fill="var(--text-secondary)">${match.played && !match.bye ? totals.b : ''}</text>`;
         });
       });
 
-      if (item_has_third_place(t) && t.knockout.third_place_match) {
+      if (hasThirdPlace) {
         const tp = t.knockout.third_place_match;
         const x = 20 + (rounds.length - 1) * colWidth;
-        const y = totalHeight - boxHeight - 10;
+        const y = finalBoxBottom + thirdPlaceGap;
         const totals = matchTotals(tp);
         const aWon = tp.winner_id && tp.player_a && tp.winner_id === tp.player_a.player_id;
         const bWon = tp.winner_id && tp.player_b && tp.winner_id === tp.player_b.player_id;
