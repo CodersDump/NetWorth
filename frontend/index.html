@@ -759,6 +759,22 @@
 
   </div>
 
+  <div id="split-screen-overlay" style="display:none; position:fixed; inset:0; z-index:1000; background:var(--bg); flex-direction:column;">
+    <div id="split-zone-a" style="flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; background:var(--court); color:#fff; cursor:pointer;">
+      <div id="split-name-a" style="font-family:'Rajdhani',sans-serif; font-weight:700; font-size:22px; margin-bottom:8px;">Team A</div>
+      <div id="split-score-a" style="font-family:'JetBrains Mono',monospace; font-size:72px; font-weight:bold;">0</div>
+    </div>
+    <div style="flex:0 0 auto; display:flex; align-items:center; justify-content:center; gap:10px; padding:10px; background:var(--surface); border-top:1px solid var(--border); border-bottom:1px solid var(--border);">
+      <button type="button" id="split-undo-btn" class="secondary" style="margin-top:0;">Undo</button>
+      <button type="button" id="split-submit-btn" style="margin-top:0;">Submit</button>
+      <button type="button" id="split-reset-btn" class="secondary" style="margin-top:0;">Reset</button>
+    </div>
+    <div id="split-zone-b" style="flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; background:var(--court-dark); color:#fff; cursor:pointer;">
+      <div id="split-name-b" style="font-family:'Rajdhani',sans-serif; font-weight:700; font-size:22px; margin-bottom:8px;">Team B</div>
+      <div id="split-score-b" style="font-family:'JetBrains Mono',monospace; font-size:72px; font-weight:bold;">0</div>
+    </div>
+  </div>
+
   <script>
     // Replace with your deployed API Gateway URL (see CloudFormation output: ApiUrl)
     const API_BASE_URL = 'https://REPLACE_ME.execute-api.REGION.amazonaws.com/prod';
@@ -2884,21 +2900,6 @@
       applyTheme(saved || (prefersDark ? 'dark' : 'light'));
     })();
   </script>
-  <div id="split-screen-overlay" style="display:none; position:fixed; inset:0; z-index:1000; background:var(--bg); flex-direction:column;">
-    <div id="split-zone-a" style="flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; background:var(--court); color:#fff; cursor:pointer;">
-      <div id="split-name-a" style="font-family:'Rajdhani',sans-serif; font-weight:700; font-size:22px; margin-bottom:8px;">Team A</div>
-      <div id="split-score-a" style="font-family:'JetBrains Mono',monospace; font-size:72px; font-weight:bold;">0</div>
-    </div>
-    <div style="flex:0 0 auto; display:flex; align-items:center; justify-content:center; gap:10px; padding:10px; background:var(--surface); border-top:1px solid var(--border); border-bottom:1px solid var(--border);">
-      <button type="button" id="split-undo-btn" class="secondary" style="margin-top:0;">Undo</button>
-      <button type="button" id="split-submit-btn" style="margin-top:0;">Submit</button>
-      <button type="button" id="split-reset-btn" class="secondary" style="margin-top:0;">Reset</button>
-    </div>
-    <div id="split-zone-b" style="flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; background:var(--court-dark); color:#fff; cursor:pointer;">
-      <div id="split-name-b" style="font-family:'Rajdhani',sans-serif; font-weight:700; font-size:22px; margin-bottom:8px;">Team B</div>
-      <div id="split-score-b" style="font-family:'JetBrains Mono',monospace; font-size:72px; font-weight:bold;">0</div>
-    </div>
-  </div>
 
 </body>
 </html>
