@@ -1236,7 +1236,7 @@
       document.getElementById(id).addEventListener('change', loadPartnershipsSection);
     });
 
-    document.getElementById('load-rankings-btn').addEventListener('click', async () => {
+    async function loadRankings() {
       const scope = document.getElementById('rankings_scope_select').value;
       const resultEl = document.getElementById('rankings-result');
       resultEl.textContent = 'Loading...';
@@ -1264,11 +1264,13 @@
       } catch (err) {
         resultEl.textContent = `Request failed: ${err.message}`;
       }
-    });
+    }
+    document.getElementById('load-rankings-btn').addEventListener('click', loadRankings);
+    document.getElementById('rankings_scope_select').addEventListener('change', loadRankings);
 
     let ratingHistoryChart = null;
 
-    document.getElementById('load-rating-history-btn').addEventListener('click', async () => {
+    async function loadRatingHistory() {
       const playerIds = [
         document.getElementById('rating_history_player1_select').value,
         document.getElementById('rating_history_player2_select').value,
@@ -1319,6 +1321,11 @@
       } catch (err) {
         resultEl.insertAdjacentHTML('afterbegin', `<p style="color:var(--smash);font-size:13px;">Request failed: ${err.message}</p>`);
       }
+    }
+    document.getElementById('load-rating-history-btn').addEventListener('click', loadRatingHistory);
+    ['rating_history_player1_select', 'rating_history_player2_select', 'rating_history_player3_select',
+     'rating_history_player4_select', 'rating_history_xaxis_mode'].forEach(id => {
+      document.getElementById(id).addEventListener('change', loadRatingHistory);
     });
 
     async function fetchRatingHistory(playerId) {
@@ -1384,7 +1391,7 @@
       svg.innerHTML = svgContent;
     }
 
-    document.getElementById('load-hof-btn').addEventListener('click', async () => {
+    async function loadHallOfFame() {
       const groupId = document.getElementById('hof_group_filter').value;
       const resultEl = document.getElementById('hof-result');
       resultEl.textContent = 'Loading...';
@@ -1426,9 +1433,11 @@
       } catch (err) {
         resultEl.textContent = `Request failed: ${err.message}`;
       }
-    });
+    }
+    document.getElementById('load-hof-btn').addEventListener('click', loadHallOfFame);
+    document.getElementById('hof_group_filter').addEventListener('change', loadHallOfFame);
 
-    document.getElementById('load-attendance-btn').addEventListener('click', async () => {
+    async function loadAttendance() {
       const groupId = document.getElementById('attendance_group_filter').value;
       const resultEl = document.getElementById('attendance-result');
       resultEl.textContent = 'Loading...';
@@ -1451,7 +1460,9 @@
       } catch (err) {
         resultEl.textContent = `Request failed: ${err.message}`;
       }
-    });
+    }
+    document.getElementById('load-attendance-btn').addEventListener('click', loadAttendance);
+    document.getElementById('attendance_group_filter').addEventListener('change', loadAttendance);
 
     // ---------- init ----------
 
@@ -1460,6 +1471,11 @@
       await loadGroups();
       loadTournamentGroupOptions();
       loadTournamentsList();
+      loadRankings();
+      loadRatingHistory();
+      loadPartnershipsSection();
+      loadHallOfFame();
+      loadAttendance();
     })();
 
     // ---------- tournaments ----------
