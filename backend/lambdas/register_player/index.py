@@ -27,6 +27,10 @@ def handler(event, context):
         if not name:
             return _response(400, {'error': 'name is required'})
 
+        existing_players = table.scan().get('Items', [])
+        if any(p.get('name', '').strip().lower() == name.lower() for p in existing_players):
+            return _response(400, {'error': f'a player named "{name}" already exists - names must be unique'})
+
         player_id = str(uuid.uuid4())
         table.put_item(Item={
             'player_id': player_id,

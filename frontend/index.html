@@ -848,12 +848,16 @@
       const newName = document.getElementById('edit_player_name').value.trim();
       const resultEl = document.getElementById('edit-player-result');
       if (!playerId || !newName) { resultEl.textContent = 'Select a player and enter a new name.'; return; }
+
+      const confirmText = prompt('Enter the confirmation code to rename this player:');
+      if (!confirmText) { resultEl.textContent = 'Cancelled.'; return; }
+
       resultEl.textContent = 'Saving...';
       try {
         const res = await fetch(`${API_BASE_URL}/players/${playerId}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name: newName })
+          body: JSON.stringify({ name: newName, confirm: confirmText })
         });
         const data = await res.json();
         if (res.ok) {

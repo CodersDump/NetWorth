@@ -15,6 +15,7 @@ Env vars:
 import json
 import os
 import boto3
+from datetime import datetime, timezone
 
 dynamodb = boto3.resource('dynamodb')
 table = dynamodb.Table(os.environ['PLAYERS_TABLE'])
@@ -53,16 +54,26 @@ def list_players():
 
 
 def update_player(player_id, event):
+    body = json.loads(event.get('body') or '{}')
+    if body.get('confirm') != CONFIRMATION_CODE:
+        return _response(400, {'error': "confirmation code is missing or incorrect"})
+
     existing = table.get_item(Key={'player_id': player_id}).get('Item')
     if not existing:
         return _response(404, {'error': 'player not found'})
 
-    body = json.loads(event.get('body') or '{}')
     name = (body.get('name') or '').strip()
     skill_level = body.get('skill_level')
 
     if not name and not skill_level:
         return _response(400, {'error': 'provide name and/or skill_level to update'})
+
+    if name:
+        other_players = table.scan().get('Items', [])
+        if any(p['player_id'] != player_id and p.get('name', '').strip().lower() == name.lower() for p in other_players):
+            return _response(400, {'error': f'a player named "{name}" already exists - names must be unique'})
+        if name != existing.get('name'):
+            print(f"[AUDIT RENAME] {datetime.now(timezone.utc).isoformat()} - player_id={player_id} old_name=\"{existing.get('name')}\" new_name=\"{name}\"")
 
     update_parts = []
     names = {}
