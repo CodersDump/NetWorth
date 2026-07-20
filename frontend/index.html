@@ -407,6 +407,7 @@
               <button type="button" id="live-undo-btn" class="secondary">Undo last point</button>
               <button type="button" id="live-reset-btn" class="secondary">Reset</button>
             </div>
+            <label style="display:inline-block; margin-top:8px;"><input type="checkbox" id="split_screen_toggle"> Split-screen mode</label>
           </div>
 
           <button type="submit" id="match-submit-btn">Record match</button>
@@ -618,6 +619,7 @@
           <div id="tournament-participants-section" style="margin-top:8px;">
             <strong style="font-size:13px;">Who's playing today?</strong>
             <div id="tournament-participants-checklist" style="max-height:180px; overflow-y:auto; border:1px solid var(--border); border-radius:var(--radius); padding:8px; margin-top:4px;"></div>
+            <p id="tournament-participants-count" class="card-sub" style="margin:6px 0 0;"></p>
           </div>
 
           <div id="filler-section" style="display:none; margin-top:12px; border:1px solid var(--smash); border-radius:var(--radius); padding:10px;">
@@ -992,6 +994,7 @@
 
       document.getElementById('live-point-a-btn').disabled = over;
       document.getElementById('live-point-b-btn').disabled = over;
+      updateSplitScreenScores(a, b, over);
     }
 
     document.getElementById('points_to_win_select').addEventListener('change', () => {
@@ -1038,6 +1041,73 @@
     document.getElementById('live-reset-btn').addEventListener('click', () => {
       livePointLog = [];
       updateLiveScoreDisplay();
+    });
+
+    // ---------- split-screen live scoring ----------
+
+    function getTeamDisplayName(selectId) {
+      const el = document.getElementById(selectId);
+      const opt = el.selectedOptions[0];
+      return opt ? opt.textContent : '';
+    }
+
+    function getSplitTeamNames() {
+      const isDoubles = document.getElementById('match_type_select').value === 'doubles';
+      const a1 = getTeamDisplayName('team_a1_select');
+      const a2 = isDoubles ? getTeamDisplayName('team_a2_select') : '';
+      const b1 = getTeamDisplayName('team_b1_select');
+      const b2 = isDoubles ? getTeamDisplayName('team_b2_select') : '';
+      return {
+        a: [a1, a2].filter(Boolean).join(' & ') || 'Team A',
+        b: [b1, b2].filter(Boolean).join(' & ') || 'Team B'
+      };
+    }
+
+    function updateSplitScreenScores(a, b, over) {
+      const overlay = document.getElementById('split-screen-overlay');
+      if (overlay.style.display !== 'flex') return;
+      document.getElementById('split-score-a').textContent = a;
+      document.getElementById('split-score-b').textContent = b;
+      document.getElementById('split-zone-a').style.opacity = over ? '0.6' : '1';
+      document.getElementById('split-zone-b').style.opacity = over ? '0.6' : '1';
+    }
+
+    function openSplitScreen() {
+      const names = getSplitTeamNames();
+      document.getElementById('split-name-a').textContent = names.a;
+      document.getElementById('split-name-b').textContent = names.b;
+      document.getElementById('split-screen-overlay').style.display = 'flex';
+      updateLiveScoreDisplay();
+    }
+
+    function closeSplitScreen() {
+      document.getElementById('split-screen-overlay').style.display = 'none';
+    }
+
+    document.getElementById('split_screen_toggle').addEventListener('change', (e) => {
+      if (e.target.checked) openSplitScreen();
+      else closeSplitScreen();
+    });
+
+    document.getElementById('split-zone-a').addEventListener('click', () => {
+      document.getElementById('live-point-a-btn').click();
+    });
+    document.getElementById('split-zone-b').addEventListener('click', () => {
+      document.getElementById('live-point-b-btn').click();
+    });
+    document.getElementById('split-undo-btn').addEventListener('click', (e) => {
+      e.stopPropagation();
+      document.getElementById('live-undo-btn').click();
+    });
+    document.getElementById('split-reset-btn').addEventListener('click', (e) => {
+      e.stopPropagation();
+      document.getElementById('live-reset-btn').click();
+    });
+    document.getElementById('split-submit-btn').addEventListener('click', (e) => {
+      e.stopPropagation();
+      document.getElementById('split_screen_toggle').checked = false;
+      closeSplitScreen();
+      document.getElementById('match-form').requestSubmit();
     });
 
     // ---------- registration ----------
@@ -1382,6 +1452,9 @@
       }
     }
     document.getElementById('load-log-btn').addEventListener('click', loadGameLog);
+    ['log_group_filter', 'log_player_filter', 'log_date_from', 'log_date_to'].forEach(id => {
+      document.getElementById(id).addEventListener('change', loadGameLog);
+    });
 
     async function editMatchScore(matchId, currentScoreA, currentScoreB) {
       const newScoreA = prompt(`Current score: ${currentScoreA} - ${currentScoreB}\nEnter corrected Team A score:`, currentScoreA);
@@ -1955,23 +2028,43 @@
     async function loadTournamentParticipantsChecklist() {
       const groupId = document.getElementById('tournament_group_select').value;
       const container = document.getElementById('tournament-participants-checklist');
-      if (!groupId) { container.innerHTML = ''; return; }
+      if (!groupId) { container.innerHTML = ''; updateParticipantsCount(); return; }
 
       container.innerHTML = 'Loading...';
       const res = await fetch(`${API_BASE_URL}/groups/${groupId}`);
       const data = await res.json();
       if (!res.ok) {
         container.innerHTML = '<p style="font-size:13px;color:#555;margin:0;">Could not load this group.</p>';
+        updateParticipantsCount();
         return;
       }
       applyGroupDefaultsToForm('tournament_', data.default_tournament_settings);
       if (!data.members || !data.members.length) {
         container.innerHTML = '<p style="font-size:13px;color:#555;margin:0;">No members in this group yet.</p>';
+        updateParticipantsCount();
         return;
       }
       container.innerHTML = data.members.map(m =>
         `<label style="display:block; padding:2px 0;"><input type="checkbox" class="tournament-participant-checkbox" value="${m.player_id}" checked> ${m.name} (${m.rating})</label>`
       ).join('');
+      updateParticipantsCount();
+    }
+
+    document.getElementById('tournament-participants-checklist').addEventListener('change', (e) => {
+      if (e.target.classList.contains('tournament-participant-checkbox')) updateParticipantsCount();
+    });
+    document.getElementById('tournament_match_type').addEventListener('change', updateParticipantsCount);
+
+    function updateParticipantsCount() {
+      const countEl = document.getElementById('tournament-participants-count');
+      const count = collectTournamentParticipants().length;
+      const matchType = document.getElementById('tournament_match_type').value;
+      if (!count) { countEl.textContent = ''; return; }
+      let msg = `${count} player${count === 1 ? '' : 's'} selected`;
+      if (matchType === 'doubles' && count % 2 === 1) {
+        msg += ' - odd number, you\'ll need a filler for doubles';
+      }
+      countEl.textContent = msg;
     }
 
     function collectTournamentParticipants() {
@@ -2336,6 +2429,11 @@
       };
     }
 
+    function truncateBracketName(name, maxChars = 22) {
+      if (!name) return name;
+      return name.length > maxChars ? name.slice(0, maxChars - 1) + '…' : name;
+    }
+
     function renderBracketView(t) {
       const svg = document.getElementById('bracket-svg');
       if (!t.knockout || !t.knockout.rounds || !t.knockout.rounds.length) {
@@ -2416,8 +2514,8 @@
         content += `<text x="${x}" y="16" font-size="12" fill="var(--text-secondary)">${label}</text>`;
         round.forEach((match, i) => {
           const y = positions[r][i] - boxHeight / 2 + 24;
-          const nameA = match.player_a ? match.player_a.name : 'TBD';
-          const nameB = match.bye ? 'BYE' : (match.player_b ? match.player_b.name : 'TBD');
+          const nameA = truncateBracketName(match.player_a ? match.player_a.name : 'TBD');
+          const nameB = match.bye ? 'BYE' : truncateBracketName(match.player_b ? match.player_b.name : 'TBD');
           const totals = matchTotals(match);
           const aWon = match.winner_id && match.player_a && match.winner_id === match.player_a.player_id;
           const bWon = match.winner_id && match.player_b && match.winner_id === match.player_b.player_id;
@@ -2442,9 +2540,9 @@
         content += `<text x="${x}" y="${y - 8}" font-size="12" fill="var(--text-secondary)">3rd place</text>`;
         content += `<rect x="${x}" y="${y}" width="${boxWidth}" height="${boxHeight}" fill="var(--surface)" stroke="var(--border)" rx="6"/>`;
         content += `<line x1="${x}" y1="${y + boxHeight / 2}" x2="${x + boxWidth}" y2="${y + boxHeight / 2}" stroke="var(--border)"/>`;
-        content += `<text x="${x + 8}" y="${y + 20}" font-size="13" font-weight="${aWon ? 'bold' : 'normal'}" fill="${aWon ? 'var(--court)' : 'var(--text)'}">${tp.player_a ? tp.player_a.name : 'TBD'}</text>`;
+        content += `<text x="${x + 8}" y="${y + 20}" font-size="13" font-weight="${aWon ? 'bold' : 'normal'}" fill="${aWon ? 'var(--court)' : 'var(--text)'}">${truncateBracketName(tp.player_a ? tp.player_a.name : 'TBD')}</text>`;
         content += `<text x="${x + boxWidth - 8}" y="${y + 20}" font-size="13" text-anchor="end" fill="var(--text-secondary)">${tp.played ? totals.a : ''}</text>`;
-        content += `<text x="${x + 8}" y="${y + boxHeight - 8}" font-size="13" font-weight="${bWon ? 'bold' : 'normal'}" fill="${bWon ? 'var(--court)' : 'var(--text)'}">${tp.player_b ? tp.player_b.name : 'TBD'}</text>`;
+        content += `<text x="${x + 8}" y="${y + boxHeight - 8}" font-size="13" font-weight="${bWon ? 'bold' : 'normal'}" fill="${bWon ? 'var(--court)' : 'var(--text)'}">${truncateBracketName(tp.player_b ? tp.player_b.name : 'TBD')}</text>`;
         content += `<text x="${x + boxWidth - 8}" y="${y + boxHeight - 8}" font-size="13" text-anchor="end" fill="var(--text-secondary)">${tp.played ? totals.b : ''}</text>`;
       }
 
@@ -2786,5 +2884,21 @@
       applyTheme(saved || (prefersDark ? 'dark' : 'light'));
     })();
   </script>
+  <div id="split-screen-overlay" style="display:none; position:fixed; inset:0; z-index:1000; background:var(--bg); flex-direction:column;">
+    <div id="split-zone-a" style="flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; background:var(--court); color:#fff; cursor:pointer;">
+      <div id="split-name-a" style="font-family:'Rajdhani',sans-serif; font-weight:700; font-size:22px; margin-bottom:8px;">Team A</div>
+      <div id="split-score-a" style="font-family:'JetBrains Mono',monospace; font-size:72px; font-weight:bold;">0</div>
+    </div>
+    <div style="flex:0 0 auto; display:flex; align-items:center; justify-content:center; gap:10px; padding:10px; background:var(--surface); border-top:1px solid var(--border); border-bottom:1px solid var(--border);">
+      <button type="button" id="split-undo-btn" class="secondary" style="margin-top:0;">Undo</button>
+      <button type="button" id="split-submit-btn" style="margin-top:0;">Submit</button>
+      <button type="button" id="split-reset-btn" class="secondary" style="margin-top:0;">Reset</button>
+    </div>
+    <div id="split-zone-b" style="flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; background:var(--court-dark); color:#fff; cursor:pointer;">
+      <div id="split-name-b" style="font-family:'Rajdhani',sans-serif; font-weight:700; font-size:22px; margin-bottom:8px;">Team B</div>
+      <div id="split-score-b" style="font-family:'JetBrains Mono',monospace; font-size:72px; font-weight:bold;">0</div>
+    </div>
+  </div>
+
 </body>
 </html>
