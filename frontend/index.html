@@ -144,6 +144,12 @@
   .form-chip.win { background: var(--court); }
   .form-chip.loss { background: var(--smash); }
 
+  .h2h-row { margin-bottom: 12px; }
+  .h2h-row-header { display: flex; justify-content: space-between; font-size: 13px; margin-bottom: 4px; }
+  .h2h-bar { display: flex; height: 20px; border-radius: 5px; overflow: hidden; background: var(--surface-2); }
+  .h2h-bar-wins { background: var(--court); }
+  .h2h-bar-losses { background: var(--smash); }
+
   label { display: block; margin-top: 12px; font-size: 13px; font-weight: 500; color: var(--text-secondary); }
   input, select, textarea {
     width: 100%; padding: 10px; margin-top: 4px; box-sizing: border-box;
@@ -580,8 +586,15 @@
 
       <div class="card">
         <h2>Head-to-head</h2>
-        <p class="card-sub">Win/loss record specifically against another player as an opponent (not teammate).</p>
-        <label>Compare against
+        <p class="card-sub">Win/loss record against everyone this player has faced as an opponent (not teammate).</p>
+        <div id="profile-overall-record-result" style="margin-bottom:16px; font-size:14px;"></div>
+        <h4 style="font-size:14px;">Most-played opponents</h4>
+        <div id="profile-top-opponents-result"></div>
+
+        <hr>
+
+        <p class="card-sub" style="margin-top:0;">Looking for someone specific not in the list above?</p>
+        <label>Search for an opponent
           <select id="profile_h2h_opponent_select"></select>
         </label>
         <div id="profile-h2h-result" style="margin-top:12px;"></div>
@@ -1950,6 +1963,47 @@
         document.getElementById('profile-achievements-result').innerHTML = cards.map(c => c.html).join('');
       } catch (err) {
         document.getElementById('profile-achievements-result').textContent = `Request failed: ${err.message}`;
+      }
+
+      try {
+        const res = await fetch(`${API_BASE_URL}/matches?overall_record_for=${playerId}`);
+        const data = await res.json();
+        const el = document.getElementById('profile-overall-record-result');
+        const totalGames = data.total_wins + data.total_losses;
+        const totalRate = totalGames ? Math.round(data.total_wins / totalGames * 100) : 0;
+        el.innerHTML = `
+          <p style="margin:0 0 6px;"><strong>Overall: ${data.total_wins}-${data.total_losses}</strong> (${totalRate}% win rate)</p>
+          <p style="margin:0; color:var(--text-secondary);">Singles: ${data.singles_wins}-${data.singles_losses} &middot; Doubles: ${data.doubles_wins}-${data.doubles_losses}</p>
+        `;
+      } catch (err) {
+        document.getElementById('profile-overall-record-result').textContent = `Request failed: ${err.message}`;
+      }
+
+      try {
+        const res = await fetch(`${API_BASE_URL}/matches?top_opponents_for=${playerId}&top_n=15`);
+        const data = await res.json();
+        const el = document.getElementById('profile-top-opponents-result');
+        if (!data.opponents || !data.opponents.length) {
+          el.innerHTML = '<p style="font-size:13px;color:var(--text-secondary);">No opponents recorded yet.</p>';
+        } else {
+          el.innerHTML = data.opponents.map(o => {
+            const winPct = o.matches ? (o.wins / o.matches * 100) : 0;
+            const lossPct = 100 - winPct;
+            return `
+              <div class="h2h-row">
+                <div class="h2h-row-header">
+                  <span>${o.opponent_name}</span>
+                  <span>${o.wins}-${o.losses} (${o.matches} match${o.matches === 1 ? '' : 'es'})</span>
+                </div>
+                <div class="h2h-bar">
+                  <div class="h2h-bar-wins" style="width:${winPct}%;"></div>
+                  <div class="h2h-bar-losses" style="width:${lossPct}%;"></div>
+                </div>
+              </div>`;
+          }).join('');
+        }
+      } catch (err) {
+        document.getElementById('profile-top-opponents-result').textContent = `Request failed: ${err.message}`;
       }
 
       const opponentId = document.getElementById('profile_h2h_opponent_select').value;

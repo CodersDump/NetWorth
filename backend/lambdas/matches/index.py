@@ -399,6 +399,11 @@ def list_matches(event):
     if params.get('recent_form'):
         limit = int(params.get('limit', 10))
         return _response(200, compute_recent_form(params.get('recent_form'), items, limit))
+    if params.get('top_opponents_for'):
+        top_n = int(params.get('top_n', 15))
+        return _response(200, compute_top_opponents(params.get('top_opponents_for'), items, top_n))
+    if params.get('overall_record_for'):
+        return _response(200, compute_overall_record(params.get('overall_record_for'), items))
 
     if group_id:
         items = [i for i in items if i.get('group_id') == group_id]
@@ -777,6 +782,77 @@ def compute_achievements(player_id, matches, tournaments):
         'tournament_wins': tournament_wins,
         'personal_best_streak': best_streak,
         'current_streak': current_streak
+    }
+
+
+def compute_top_opponents(player_id, matches, top_n=15):
+    """This player's win/loss record against every opponent they've ever
+    faced (singles or doubles, as an OPPONENT - not a teammate), ranked
+    by how many times they've played each other, most-played first."""
+    records = {}  # opponent_id -> {'wins': int, 'losses': int}
+    for m in matches:
+        team_a = m.get('team_a') or []
+        team_b = m.get('team_b') or []
+        winner = m.get('winner')
+        if winner not in ('A', 'B'):
+            continue
+        player_in_a = player_id in team_a
+        player_in_b = player_id in team_b
+        if not (player_in_a or player_in_b):
+            continue
+        opponents = team_b if player_in_a else team_a
+        player_won = (winner == 'A' and player_in_a) or (winner == 'B' and player_in_b)
+        for opp_id in opponents:
+            if opp_id == player_id:
+                continue
+            rec = records.setdefault(opp_id, {'wins': 0, 'losses': 0})
+            if player_won:
+                rec['wins'] += 1
+            else:
+                rec['losses'] += 1
+
+    rows = []
+    for opp_id, rec in records.items():
+        p = players_table.get_item(Key={'player_id': opp_id}).get('Item')
+        total = rec['wins'] + rec['losses']
+        rows.append({
+            'opponent_id': opp_id,
+            'opponent_name': p['name'] if p else opp_id,
+            'matches': total,
+            'wins': rec['wins'],
+            'losses': rec['losses'],
+            'win_rate': round(rec['wins'] / total * 100, 1) if total else 0
+        })
+    rows.sort(key=lambda r: -r['matches'])
+    return {'player_id': player_id, 'opponents': rows[:top_n]}
+
+
+def compute_overall_record(player_id, matches):
+    """This player's total win/loss record, split by singles and doubles."""
+    record = {'singles_wins': 0, 'singles_losses': 0, 'doubles_wins': 0, 'doubles_losses': 0}
+    for m in matches:
+        team_a = m.get('team_a') or []
+        team_b = m.get('team_b') or []
+        winner = m.get('winner')
+        match_type = m.get('match_type')
+        if winner not in ('A', 'B') or match_type not in ('singles', 'doubles'):
+            continue
+        if player_id in team_a:
+            won = winner == 'A'
+        elif player_id in team_b:
+            won = winner == 'B'
+        else:
+            continue
+        key = 'singles' if match_type == 'singles' else 'doubles'
+        record[f'{key}_wins' if won else f'{key}_losses'] += 1
+
+    total_wins = record['singles_wins'] + record['doubles_wins']
+    total_losses = record['singles_losses'] + record['doubles_losses']
+    return {
+        'player_id': player_id,
+        'total_wins': total_wins, 'total_losses': total_losses,
+        'singles_wins': record['singles_wins'], 'singles_losses': record['singles_losses'],
+        'doubles_wins': record['doubles_wins'], 'doubles_losses': record['doubles_losses']
     }
 
 
