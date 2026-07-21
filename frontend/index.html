@@ -3079,12 +3079,11 @@
       const isChampionA = finalMatch.player_a.player_id === finalMatch.winner_id;
       const championName = isChampionA ? finalMatch.player_a.name : finalMatch.player_b.name;
       const runnerUpName = isChampionA ? finalMatch.player_b.name : finalMatch.player_a.name;
-      const finalTotals = matchTotals(finalMatch);
 
       let recap = `🏆 ${t.name} - Results\n\n`;
       recap += `Champion: ${championName}\n`;
       recap += `Runner-up: ${runnerUpName}\n`;
-      recap += `Final score: ${finalTotals.a}-${finalTotals.b}\n`;
+      recap += `Final score: ${formatGames(finalMatch.games)}\n`;
 
       if (item_has_third_place(t) && t.knockout.third_place_match.winner_id) {
         const tp = t.knockout.third_place_match;
