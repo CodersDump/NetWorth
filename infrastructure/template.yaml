@@ -162,6 +162,7 @@ Resources:
         Variables:
           MATCHES_TABLE: !Ref MatchesTable
           PLAYERS_TABLE: !Ref PlayersTable
+          TOURNAMENTS_TABLE: !Ref TournamentsTable
       Code: ../backend/lambdas/matches
 
   TournamentsFunction:

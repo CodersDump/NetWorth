@@ -120,6 +120,23 @@
   .card h4 { font-family: 'Rajdhani', sans-serif; font-weight: 700; font-size: 16px; }
   .card-sub { color: var(--text-secondary); font-size: 13px; margin: 0 0 14px; }
 
+  .achievement-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }
+  .achievement-card {
+    border-radius: 10px; padding: 14px; border: 1px solid var(--border);
+    background: var(--surface-2);
+  }
+  .achievement-card.achieved {
+    background: linear-gradient(135deg, var(--court) 0%, var(--court-dark) 100%);
+    border-color: var(--shuttle); color: #fff;
+  }
+  .achievement-card.locked { opacity: 0.55; }
+  .achievement-icon { font-size: 26px; }
+  .achievement-name { font-family: 'Rajdhani', sans-serif; font-weight: 700; font-size: 15px; margin: 4px 0 2px; }
+  .achievement-desc { font-size: 12px; opacity: 0.85; margin-bottom: 8px; }
+  .achievement-progress-track { background: rgba(128,128,128,0.3); border-radius: 6px; height: 8px; overflow: hidden; }
+  .achievement-progress-fill { background: var(--shuttle); height: 100%; }
+  .achievement-progress-text { font-size: 11px; margin-top: 4px; font-family: 'JetBrains Mono', monospace; }
+
   label { display: block; margin-top: 12px; font-size: 13px; font-weight: 500; color: var(--text-secondary); }
   input, select, textarea {
     width: 100%; padding: 10px; margin-top: 4px; box-sizing: border-box;
@@ -605,7 +622,7 @@
       <div class="card">
         <h2>Achievements</h2>
         <p class="card-sub">Records and badges this player currently holds.</p>
-        <div id="profile-achievements-result"></div>
+        <div id="profile-achievements-result" class="achievement-grid"></div>
       </div>
 
       <div class="card">
@@ -1934,63 +1951,70 @@
       }
 
       try {
-        const [hofRes, badgesRes] = await Promise.all([
+        const [hofRes, badgesRes, achievementsRes] = await Promise.all([
           fetch(`${API_BASE_URL}/matches?hall_of_fame=true`),
-          fetch(`${API_BASE_URL}/matches?progress_badges=true`)
+          fetch(`${API_BASE_URL}/matches?progress_badges=true`),
+          fetch(`${API_BASE_URL}/matches?achievements_for=${playerId}`)
         ]);
         const hof = await hofRes.json();
         const badges = await badgesRes.json();
-        const achievements = [];
+        const milestones = await achievementsRes.json();
 
-        if (hof.longest_win_streak && hof.longest_win_streak.player_id === playerId) {
-          achievements.push(`🏆 Longest win streak (${hof.longest_win_streak.streak} in a row)`);
-        }
-        if (hof.peak_ratings && hof.peak_ratings[0] && hof.peak_ratings[0].player_id === playerId) {
-          achievements.push(`📈 Highest peak rating ever (${hof.peak_ratings[0].rating})`);
-        }
-        if (hof.most_consistent && hof.most_consistent[0] && hof.most_consistent[0].player_id === playerId) {
-          achievements.push(`🎯 Most consistent player`);
-        }
-        if (hof.most_volatile && hof.most_volatile[0] && hof.most_volatile[0].player_id === playerId) {
-          achievements.push(`⚡ Streakiest player (biggest swings)`);
-        }
-        if (hof.giant_killer_top5 && hof.giant_killer_top5[0] && hof.giant_killer_top5[0].winner_ids && hof.giant_killer_top5[0].winner_ids.includes(playerId)) {
-          achievements.push(`💥 Biggest giant-killer upset on record`);
-        }
-        if (hof.comeback_top5 && hof.comeback_top5[0] && hof.comeback_top5[0].winner_ids && hof.comeback_top5[0].winner_ids.includes(playerId)) {
-          achievements.push(`🔄 Biggest comeback on record`);
-        }
-        if (hof.biggest_blowout) {
-          const bw = hof.biggest_blowout;
-          const winningIds = bw.score_a > bw.score_b ? bw.team_a_ids : bw.team_b_ids;
-          if (winningIds && winningIds.includes(playerId)) achievements.push(`💪 Biggest blowout win on record`);
-        }
-        if (hof.format_specialists && hof.format_specialists[0] && hof.format_specialists[0].player_id === playerId) {
-          achievements.push(`🎾 Biggest ${hof.format_specialists[0].stronger_format} specialist`);
-        }
-        if (hof.deep_run_rates && hof.deep_run_rates[0] && hof.deep_run_rates[0].player_id === playerId) {
-          achievements.push(`🚀 Best deep-run rate in tournaments`);
-        }
+        const cards = [];
 
-        ['week', 'month', 'year'].forEach(period => {
-          const p = badges[period];
-          if (!p) return;
-          if (p.most_improved_top5 && p.most_improved_top5[0] && p.most_improved_top5[0].player_id === playerId && p.most_improved_top5[0].delta > 0) {
-            achievements.push(`🔥 Most improved this ${period}`);
+        function renderTieredCard(icon, name, unit, tiers, currentValue) {
+          let tierIndex = -1;
+          for (let i = 0; i < tiers.length; i++) {
+            if (currentValue >= tiers[i]) tierIndex = i;
           }
-          if (p.most_active && p.most_active.player_id === playerId) {
-            achievements.push(`⚡ Most active this ${period}`);
-          }
-        });
+          const achieved = tierIndex >= 0;
+          const nextTarget = tierIndex + 1 < tiers.length ? tiers[tierIndex + 1] : null;
+          const prevTarget = tierIndex >= 0 ? tiers[tierIndex] : 0;
+          const progressPct = nextTarget ? Math.min(100, ((currentValue - prevTarget) / (nextTarget - prevTarget)) * 100) : 100;
 
-        const el = document.getElementById('profile-achievements-result');
-        if (achievements.length) {
-          el.innerHTML = achievements.map(a =>
-            `<span style="display:inline-block; background:var(--surface-2); border:1px solid var(--border); border-radius:16px; padding:6px 12px; margin:4px 6px 4px 0; font-size:13px;">${a}</span>`
-          ).join('');
-        } else {
-          el.innerHTML = '<p style="font-size:13px;color:var(--text-secondary);">No records held yet - keep playing!</p>';
+          let html = `<div class="achievement-card ${achieved ? 'achieved' : 'locked'}">`;
+          html += `<div class="achievement-icon">${icon}</div>`;
+          html += `<div class="achievement-name">${name}${achieved ? ` &middot; Tier ${tierIndex + 1}/${tiers.length}` : ''}</div>`;
+          html += `<div class="achievement-desc">${unit}</div>`;
+          if (nextTarget !== null) {
+            html += `<div class="achievement-progress-track"><div class="achievement-progress-fill" style="width:${progressPct}%;"></div></div>`;
+            html += `<div class="achievement-progress-text">${currentValue}/${nextTarget}</div>`;
+          } else {
+            html += `<div class="achievement-progress-text">Max tier reached (${currentValue})</div>`;
+          }
+          html += `</div>`;
+          cards.push({ html, sortKey: achieved ? (10 + tierIndex) : 0 });
         }
+
+        function renderBinaryCard(icon, name, desc, achieved) {
+          let html = `<div class="achievement-card ${achieved ? 'achieved' : 'locked'}">`;
+          html += `<div class="achievement-icon">${icon}</div>`;
+          html += `<div class="achievement-name">${name}</div>`;
+          html += `<div class="achievement-desc">${desc}</div>`;
+          html += `</div>`;
+          cards.push({ html, sortKey: achieved ? 5 : -1 });
+        }
+
+        renderTieredCard('🎮', 'Court Regular', 'matches played', [1, 10, 50, 100, 250, 500, 1000], milestones.total_matches || 0);
+        renderTieredCard('🏆', 'Conqueror', 'tournament wins', [1, 5, 10, 25], milestones.tournament_wins || 0);
+        renderTieredCard('🔥', 'On Fire', 'best personal win streak', [3, 5, 10, 15], milestones.personal_best_streak || 0);
+
+        renderBinaryCard('🥇', 'Longest win streak', 'Overall record holder', hof.longest_win_streak && hof.longest_win_streak.player_id === playerId);
+        renderBinaryCard('📈', 'Peak performer', 'Highest peak rating ever', hof.peak_ratings && hof.peak_ratings[0] && hof.peak_ratings[0].player_id === playerId);
+        renderBinaryCard('🎯', 'Most consistent', 'Lowest rating volatility', hof.most_consistent && hof.most_consistent[0] && hof.most_consistent[0].player_id === playerId);
+        renderBinaryCard('💥', 'Giant killer', 'Biggest upset on record', hof.giant_killer_top5 && hof.giant_killer_top5[0] && hof.giant_killer_top5[0].winner_ids && hof.giant_killer_top5[0].winner_ids.includes(playerId));
+        renderBinaryCard('🔄', 'Comeback king', 'Biggest comeback on record', hof.comeback_top5 && hof.comeback_top5[0] && hof.comeback_top5[0].winner_ids && hof.comeback_top5[0].winner_ids.includes(playerId));
+        renderBinaryCard('💪', 'Blowout winner', 'Biggest margin on record', hof.biggest_blowout ? (hof.biggest_blowout.score_a > hof.biggest_blowout.score_b ? (hof.biggest_blowout.team_a_ids || []) : (hof.biggest_blowout.team_b_ids || [])).includes(playerId) : false);
+        renderBinaryCard('🎾', 'Format specialist', 'Biggest singles/doubles gap', hof.format_specialists && hof.format_specialists[0] && hof.format_specialists[0].player_id === playerId);
+        renderBinaryCard('🚀', 'Deep run master', 'Best knockout-reach rate', hof.deep_run_rates && hof.deep_run_rates[0] && hof.deep_run_rates[0].player_id === playerId);
+
+        const improvedAnyPeriod = ['week', 'month', 'year'].some(p => badges[p] && badges[p].most_improved_top5 && badges[p].most_improved_top5[0] && badges[p].most_improved_top5[0].player_id === playerId && badges[p].most_improved_top5[0].delta > 0);
+        renderBinaryCard('🌟', 'Rising star', 'Most improved this week/month/year', improvedAnyPeriod);
+        const activeAnyPeriod = ['week', 'month', 'year'].some(p => badges[p] && badges[p].most_active && badges[p].most_active.player_id === playerId);
+        renderBinaryCard('⚡', 'Most active', 'Most matches this week/month/year', activeAnyPeriod);
+
+        cards.sort((a, b) => b.sortKey - a.sortKey);
+        document.getElementById('profile-achievements-result').innerHTML = cards.map(c => c.html).join('');
       } catch (err) {
         document.getElementById('profile-achievements-result').textContent = `Request failed: ${err.message}`;
       }

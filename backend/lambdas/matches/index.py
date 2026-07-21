@@ -40,6 +40,7 @@ from datetime import datetime, timezone, date, timedelta
 dynamodb = boto3.resource('dynamodb')
 matches_table = dynamodb.Table(os.environ['MATCHES_TABLE'])
 players_table = dynamodb.Table(os.environ['PLAYERS_TABLE'])
+tournaments_table = dynamodb.Table(os.environ['TOURNAMENTS_TABLE'])
 
 K_FACTOR = 32
 CONFIRMATION_CODE = 'Matchpoint-Falcon-77'  # private - never shown in the UI; change this if it's ever exposed
@@ -384,6 +385,9 @@ def list_matches(event):
         return _response(200, compute_diversity(items, group_id))
     if params.get('progress_badges'):
         return _response(200, compute_progress_badges(items, group_id))
+    if params.get('achievements_for'):
+        all_tournaments = tournaments_table.scan().get('Items', [])
+        return _response(200, compute_achievements(params.get('achievements_for'), items, all_tournaments))
 
     if group_id:
         items = [i for i in items if i.get('group_id') == group_id]
@@ -707,6 +711,60 @@ def compute_hall_of_fame(items, group_id_filter=None):
         'most_volatile': most_volatile,
         'format_specialists': format_rows[:5],
         'deep_run_rates': deep_run_rows[:10]
+    }
+
+
+def compute_achievements(player_id, matches, tournaments):
+    """Milestone/tiered achievement progress for one player: total matches
+    played, tournament championships won, and their own personal-best win
+    streak (distinct from the single overall record-holder tracked in
+    hall_of_fame - this is specifically about this player's own history)."""
+    total_matches = sum(
+        1 for m in matches
+        if player_id in (m.get('team_a') or []) or player_id in (m.get('team_b') or [])
+    )
+
+    tournament_wins = 0
+    for t in tournaments:
+        if t.get('status') != 'completed':
+            continue
+        knockout = t.get('knockout') or {}
+        rounds = knockout.get('rounds') or []
+        if not rounds or not rounds[-1]:
+            continue
+        final_match = rounds[-1][0]
+        winner_id = final_match.get('winner_id')
+        if not winner_id:
+            continue
+        player_a = final_match.get('player_a') or {}
+        player_b = final_match.get('player_b') or {}
+        winner_entity = player_a if winner_id == player_a.get('player_id') else player_b
+        if player_id in (winner_entity.get('members') or []):
+            tournament_wins += 1
+
+    player_matches = sorted(
+        [m for m in matches if player_id in (m.get('team_a') or []) or player_id in (m.get('team_b') or [])],
+        key=lambda m: m.get('date', '')
+    )
+    current_streak = 0
+    best_streak = 0
+    for m in player_matches:
+        winner = m.get('winner')
+        team_a = m.get('team_a') or []
+        if winner not in ('A', 'B'):
+            continue
+        won = (winner == 'A' and player_id in team_a) or (winner == 'B' and player_id not in team_a)
+        if won:
+            current_streak += 1
+            best_streak = max(best_streak, current_streak)
+        else:
+            current_streak = 0
+
+    return {
+        'player_id': player_id,
+        'total_matches': total_matches,
+        'tournament_wins': tournament_wins,
+        'personal_best_streak': best_streak
     }
 
 
