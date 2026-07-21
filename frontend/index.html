@@ -592,7 +592,7 @@
       <div class="card">
         <h2>Head-to-head</h2>
         <p class="card-sub">Win/loss record against everyone this player has faced as an opponent (not teammate).</p>
-        <div id="profile-overall-record-result" style="margin-bottom:16px; font-size:14px;"></div>
+        <div id="profile-overall-record-result" style="margin-bottom:24px; padding-bottom:20px; border-bottom:1px solid var(--border); font-size:14px;"></div>
         <h4 style="font-size:14px;">Most-played opponents</h4>
         <div id="profile-top-opponents-result"></div>
 
@@ -1979,8 +1979,8 @@
 
         const segments = [
           { label: 'Singles wins', value: data.singles_wins, color: 'var(--court)' },
-          { label: 'Singles losses', value: data.singles_losses, color: 'var(--shuttle)' },
           { label: 'Doubles wins', value: data.doubles_wins, color: 'var(--rally)' },
+          { label: 'Singles losses', value: data.singles_losses, color: 'var(--shuttle)' },
           { label: 'Doubles losses', value: data.doubles_losses, color: 'var(--smash)' }
         ];
         const total = segments.reduce((sum, s) => sum + s.value, 0);
