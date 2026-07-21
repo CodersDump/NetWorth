@@ -435,7 +435,7 @@ def list_matches(event):
             'recent_form': compute_recent_form(player_id, items, 10),
             'overall_record': compute_overall_record(player_id, items),
             'top_opponents': compute_top_opponents(player_id, items, 15),
-            'attendance': compute_attendance(items),
+            'attendance': compute_attendance(items)['attendance'],
         })
     if params.get('progress_history'):
         scope = params.get('scope', 'global')
