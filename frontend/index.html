@@ -482,90 +482,6 @@
       </div>
 
       <div class="card">
-        <h2>Rating history</h2>
-        <p class="card-sub">How a player's rating has moved over time. Compare up to 4 players.</p>
-        <div class="row">
-          <div>
-            <label>Player
-              <select id="rating_history_player1_select"></select>
-            </label>
-          </div>
-          <div>
-            <label>Compare with (optional)
-              <select id="rating_history_player2_select"><option value="">None</option></select>
-            </label>
-          </div>
-        </div>
-        <div class="row">
-          <div>
-            <label>Compare with (optional)
-              <select id="rating_history_player3_select"><option value="">None</option></select>
-            </label>
-          </div>
-          <div>
-            <label>Compare with (optional)
-              <select id="rating_history_player4_select"><option value="">None</option></select>
-            </label>
-          </div>
-        </div>
-        <label style="display:inline-block; margin-top:10px;">
-          X-axis:
-          <select id="rating_history_xaxis_mode" style="width:auto; display:inline-block; margin-top:0;">
-            <option value="time">Calendar time</option>
-            <option value="sequence">Match sequence</option>
-          </select>
-        </label>
-        <button id="load-rating-history-btn" type="button" class="secondary">View rating history</button>
-        <div id="rating-history-result" style="margin-top:12px;">
-          <canvas id="rating-history-canvas" height="220"></canvas>
-        </div>
-      </div>
-
-      <div class="card">
-        <h2>Partnerships</h2>
-        <p class="card-sub">See how a player's doubles record looks with each partner, and their overall partner mix as a shape.</p>
-        <div class="row">
-          <div>
-            <label>Player
-              <select id="partnerships_player_select"></select>
-            </label>
-          </div>
-          <div>
-            <label>Scope
-              <select id="partnerships_scope_group"><option value="">All plays</option></select>
-            </label>
-          </div>
-        </div>
-        <div class="row">
-          <div>
-            <label>Tournament matches
-              <select id="partnerships_tournament_filter">
-                <option value="include" selected>Include</option>
-                <option value="exclude">Exclude</option>
-              </select>
-            </label>
-          </div>
-          <div>
-            <label>Show top
-              <select id="partnerships_top_n">
-                <option value="10" selected>10 partners</option>
-                <option value="15">15 partners</option>
-              </select>
-            </label>
-          </div>
-        </div>
-        <label style="display:inline-block; margin-top:10px;">
-          <input type="checkbox" id="partnerships_highlight_tournament"> Highlight tournament-driven share separately
-        </label>
-
-        <div id="partnerships-result" style="margin-top:12px;"></div>
-
-        <div id="radar-result" style="margin-top:12px; overflow-x:auto;">
-          <svg id="radar-svg" viewBox="0 0 600 600" style="width:100%; max-width:600px; height:auto; display:block; margin:0 auto;"></svg>
-        </div>
-      </div>
-
-      <div class="card">
         <h2>Partner diversity</h2>
         <p class="card-sub">How concentrated each player's doubles partnerships are - a high "top partner %" means their rating leans heavily on one fixed pairing rather than a mix of opponents.</p>
         <label>Filter by group (optional)
@@ -690,7 +606,32 @@
 
       <div class="card">
         <h2>Partnerships</h2>
-        <div id="profile-partnerships-result"></div>
+        <p class="card-sub">This player's doubles record with each partner, and their overall partner mix as a shape.</p>
+        <div class="row">
+          <div>
+            <label>Scope
+              <select id="profile_partnerships_scope_group"><option value="">All plays</option></select>
+            </label>
+          </div>
+          <div>
+            <label>Tournament matches
+              <select id="profile_partnerships_tournament_filter">
+                <option value="include" selected>Include</option>
+                <option value="exclude">Exclude</option>
+              </select>
+            </label>
+          </div>
+        </div>
+        <label>Show top
+          <select id="profile_partnerships_top_n">
+            <option value="10" selected>10 partners</option>
+            <option value="15">15 partners</option>
+          </select>
+        </label>
+        <label style="display:inline-block; margin-top:10px;">
+          <input type="checkbox" id="profile_partnerships_highlight_tournament"> Highlight tournament-driven share separately
+        </label>
+        <div id="profile-partnerships-result" style="margin-top:12px;"></div>
         <svg id="profile-radar-svg" viewBox="0 0 600 600" style="width:100%; max-width:600px; height:auto; display:block; margin:12px auto 0;"></svg>
       </div>
     </div>
@@ -899,15 +840,10 @@
       populateSelect(document.getElementById('delete_player_id'), labeled, 'player_id', 'label', null);
       populateSelect(document.getElementById('edit_player_select'), labeled, 'player_id', 'label', null);
       populateSelect(document.getElementById('log_player_filter'), labeled, 'player_id', 'label', 'All players');
-      populateSelect(document.getElementById('partnerships_player_select'), labeled, 'player_id', 'label', null);
       populateSelect(document.getElementById('profile_player_select'), labeled, 'player_id', 'label', null);
       populateSelect(document.getElementById('profile_compare2_select'), labeled, 'player_id', 'label', 'None');
       populateSelect(document.getElementById('profile_compare3_select'), labeled, 'player_id', 'label', 'None');
       populateSelect(document.getElementById('profile_compare4_select'), labeled, 'player_id', 'label', 'None');
-      populateSelect(document.getElementById('rating_history_player1_select'), labeled, 'player_id', 'label', null);
-      populateSelect(document.getElementById('rating_history_player2_select'), labeled, 'player_id', 'label', 'None');
-      populateSelect(document.getElementById('rating_history_player3_select'), labeled, 'player_id', 'label', 'None');
-      populateSelect(document.getElementById('rating_history_player4_select'), labeled, 'player_id', 'label', 'None');
       populateTeamSelects();
     }
 
@@ -920,7 +856,7 @@
       populateSelect(document.getElementById('log_group_filter'), allGroups, 'group_id', 'group_name', 'All groups');
       populateSelect(document.getElementById('attendance_group_filter'), allGroups, 'group_id', 'group_name', 'All groups');
       populateSelect(document.getElementById('rankings_scope_select'), allGroups, 'group_id', 'group_name', 'All players');
-      populateSelect(document.getElementById('partnerships_scope_group'), allGroups, 'group_id', 'group_name', 'All plays');
+      populateSelect(document.getElementById('profile_partnerships_scope_group'), allGroups, 'group_id', 'group_name', 'All plays');
       populateSelect(document.getElementById('hof_group_filter'), allGroups, 'group_id', 'group_name', 'All groups');
       populateSelect(document.getElementById('diversity_group_filter'), allGroups, 'group_id', 'group_name', 'All groups');
       populateSelect(document.getElementById('badges_group_filter'), allGroups, 'group_id', 'group_name', 'All groups');
@@ -1693,59 +1629,6 @@
       }
     }
 
-    async function loadPartnershipsSection() {
-      const playerId = document.getElementById('partnerships_player_select').value;
-      const groupId = document.getElementById('partnerships_scope_group').value;
-      const tournamentFilter = document.getElementById('partnerships_tournament_filter').value;
-      const topN = document.getElementById('partnerships_top_n').value;
-      const highlightTournament = document.getElementById('partnerships_highlight_tournament').checked;
-      const tableEl = document.getElementById('partnerships-result');
-      const svg = document.getElementById('radar-svg');
-      if (!playerId) { tableEl.textContent = 'Select a player first.'; svg.innerHTML = ''; return; }
-
-      tableEl.textContent = 'Loading...';
-      svg.innerHTML = '<text x="10" y="20" fill="var(--text-secondary)">Loading...</text>';
-
-      const baseParams = new URLSearchParams();
-      if (groupId) baseParams.set('group_id', groupId);
-      baseParams.set('tournament_filter', tournamentFilter);
-
-      try {
-        const tableParams = new URLSearchParams(baseParams);
-        tableParams.set('partnerships_for', playerId);
-        const tableRes = await fetch(`${API_BASE_URL}/matches?${tableParams.toString()}`);
-        const tableData = await tableRes.json();
-        if (!tableRes.ok) { tableEl.textContent = `Error: ${tableData.error}`; }
-        else if (!tableData.partnerships.length) {
-          tableEl.innerHTML = '<p style="font-size:13px;color:var(--text-secondary);">No doubles matches in this scope yet.</p>';
-        } else {
-          let html = '<table><tr><th>Partner</th><th>Matches</th><th>W</th><th>L</th><th>Win %</th></tr>';
-          tableData.partnerships.forEach(p => {
-            html += `<tr><td>${p.partner_name}</td><td>${p.matches}</td><td>${p.wins}</td><td>${p.losses}</td><td>${p.win_rate}%</td></tr>`;
-          });
-          html += '</table>';
-          tableEl.innerHTML = html;
-        }
-
-        const radarParams = new URLSearchParams(baseParams);
-        radarParams.set('radar_for', playerId);
-        radarParams.set('top_n', topN);
-        const radarRes = await fetch(`${API_BASE_URL}/matches?${radarParams.toString()}`);
-        const radarData = await radarRes.json();
-        if (!radarRes.ok) { svg.innerHTML = `<text x="10" y="20" fill="var(--smash)">Error: ${radarData.error}</text>`; return; }
-        if (!radarData.partners.length) { svg.innerHTML = '<text x="10" y="20" fill="var(--text-secondary)">No doubles matches in this scope yet.</text>'; return; }
-        renderPartnerRadar(radarData, highlightTournament);
-      } catch (err) {
-        tableEl.textContent = `Request failed: ${err.message}`;
-        svg.innerHTML = '';
-      }
-    }
-
-    ['partnerships_player_select', 'partnerships_scope_group', 'partnerships_tournament_filter',
-     'partnerships_top_n', 'partnerships_highlight_tournament'].forEach(id => {
-      document.getElementById(id).addEventListener('change', loadPartnershipsSection);
-    });
-
     function downloadCSV(filename, rows) {
       const csv = rows.map(row => row.map(cell => `"${String(cell ?? '').replace(/"/g, '""')}"`).join(',')).join('\n');
       const blob = new Blob([csv], { type: 'text/csv' });
@@ -1811,66 +1694,6 @@
     }
     document.getElementById('load-rankings-btn').addEventListener('click', loadRankings);
     document.getElementById('rankings_scope_select').addEventListener('change', loadRankings);
-
-    let ratingHistoryChart = null;
-
-    async function loadRatingHistory() {
-      const playerIds = [
-        document.getElementById('rating_history_player1_select').value,
-        document.getElementById('rating_history_player2_select').value,
-        document.getElementById('rating_history_player3_select').value,
-        document.getElementById('rating_history_player4_select').value
-      ].filter(Boolean);
-      const xAxisMode = document.getElementById('rating_history_xaxis_mode').value;
-      const resultEl = document.getElementById('rating-history-result');
-      if (!playerIds.length) { return; }
-
-      const colors = ['#1F7A4D', '#FF4757', '#00B4D8', '#FFD23F'];
-
-      try {
-        const datasets = [];
-        for (let i = 0; i < playerIds.length; i++) {
-          const pid = playerIds[i];
-          const player = allPlayers.find(p => p.player_id === pid);
-          const points = await fetchRatingHistory(pid);
-          const chartPoints = xAxisMode === 'sequence'
-            ? points.map((p, idx) => ({ x: idx + 1, y: p.y }))
-            : points.map(p => ({ x: p.x, y: p.y }));
-          datasets.push({
-            label: player ? player.name : pid,
-            data: chartPoints,
-            borderColor: colors[i % colors.length],
-            backgroundColor: colors[i % colors.length],
-            tension: 0.15
-          });
-        }
-
-        if (ratingHistoryChart) ratingHistoryChart.destroy();
-        const ctx = document.getElementById('rating-history-canvas').getContext('2d');
-        const xScale = xAxisMode === 'sequence'
-          ? { type: 'linear', title: { display: true, text: 'Match #' }, ticks: { color: '#888', precision: 0 } }
-          : { type: 'time', time: { unit: 'day' }, ticks: { color: '#888' } };
-
-        ratingHistoryChart = new Chart(ctx, {
-          type: 'line',
-          data: { datasets },
-          options: {
-            scales: {
-              x: xScale,
-              y: { ticks: { color: '#888' } }
-            },
-            plugins: { legend: { labels: { color: getComputedStyle(document.body).color } } }
-          }
-        });
-      } catch (err) {
-        resultEl.insertAdjacentHTML('afterbegin', `<p style="color:var(--smash);font-size:13px;">Request failed: ${err.message}</p>`);
-      }
-    }
-    document.getElementById('load-rating-history-btn').addEventListener('click', loadRatingHistory);
-    ['rating_history_player1_select', 'rating_history_player2_select', 'rating_history_player3_select',
-     'rating_history_player4_select', 'rating_history_xaxis_mode'].forEach(id => {
-      document.getElementById(id).addEventListener('change', loadRatingHistory);
-    });
 
     async function fetchRatingHistory(playerId) {
       const res = await fetch(`${API_BASE_URL}/matches?player_id=${playerId}`);
@@ -1949,12 +1772,22 @@
         document.getElementById('profile-attendance-result').textContent = `Request failed: ${err.message}`;
       }
 
+      const partnershipsGroupId = document.getElementById('profile_partnerships_scope_group').value;
+      const partnershipsTournamentFilter = document.getElementById('profile_partnerships_tournament_filter').value;
+      const partnershipsTopN = document.getElementById('profile_partnerships_top_n').value;
+      const partnershipsHighlight = document.getElementById('profile_partnerships_highlight_tournament').checked;
+      const partnershipsBaseParams = new URLSearchParams();
+      if (partnershipsGroupId) partnershipsBaseParams.set('group_id', partnershipsGroupId);
+      partnershipsBaseParams.set('tournament_filter', partnershipsTournamentFilter);
+
       try {
-        const res = await fetch(`${API_BASE_URL}/matches?partnerships_for=${playerId}`);
+        const tableParams = new URLSearchParams(partnershipsBaseParams);
+        tableParams.set('partnerships_for', playerId);
+        const res = await fetch(`${API_BASE_URL}/matches?${tableParams.toString()}`);
         const data = await res.json();
         const el = document.getElementById('profile-partnerships-result');
         if (!data.partnerships.length) {
-          el.innerHTML = '<p style="font-size:13px;color:var(--text-secondary);">No doubles matches recorded yet.</p>';
+          el.innerHTML = '<p style="font-size:13px;color:var(--text-secondary);">No doubles matches in this scope yet.</p>';
         } else {
           let html = '<table><tr><th>Partner</th><th>Matches</th><th>W</th><th>L</th><th>Win %</th></tr>';
           data.partnerships.forEach(p => {
@@ -1968,10 +1801,13 @@
       }
 
       try {
-        const res = await fetch(`${API_BASE_URL}/matches?radar_for=${playerId}&top_n=10`);
+        const radarParams = new URLSearchParams(partnershipsBaseParams);
+        radarParams.set('radar_for', playerId);
+        radarParams.set('top_n', partnershipsTopN);
+        const res = await fetch(`${API_BASE_URL}/matches?${radarParams.toString()}`);
         const data = await res.json();
         if (data.partners && data.partners.length) {
-          renderPartnerRadar(data, false, 'profile-radar-svg');
+          renderPartnerRadar(data, partnershipsHighlight, 'profile-radar-svg');
         } else {
           document.getElementById('profile-radar-svg').innerHTML = '';
         }
@@ -2049,7 +1885,9 @@
       }
     }
     document.getElementById('profile_player_select').addEventListener('change', loadProfile);
-    ['profile_compare2_select', 'profile_compare3_select', 'profile_compare4_select', 'profile_xaxis_mode'].forEach(id => {
+    ['profile_compare2_select', 'profile_compare3_select', 'profile_compare4_select', 'profile_xaxis_mode',
+     'profile_partnerships_scope_group', 'profile_partnerships_tournament_filter',
+     'profile_partnerships_top_n', 'profile_partnerships_highlight_tournament'].forEach(id => {
       document.getElementById(id).addEventListener('change', loadProfile);
     });
 
@@ -2327,8 +2165,6 @@
       loadTournamentGroupOptions();
       loadTournamentsList();
       loadRankings();
-      loadRatingHistory();
-      loadPartnershipsSection();
       loadDiversity();
       loadBadges();
       loadHistory();
