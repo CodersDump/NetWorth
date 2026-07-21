@@ -967,7 +967,10 @@
       refreshTeamSelectOptions();
     });
 
-    document.getElementById('randomize-teams-btn').addEventListener('click', async () => {
+    let randomizeTeamsRequestId = 0;
+
+    async function randomizeTeams(showAlertOnFail) {
+      const requestId = ++randomizeTeamsRequestId;
       const isDoubles = document.getElementById('match_type_select').value === 'doubles';
       const needed = isDoubles ? 4 : 2;
       const groupId = document.getElementById('match_group_select').value;
@@ -983,8 +986,18 @@
         }
       }
 
+      // If another randomizeTeams call started after this one (e.g. the
+      // user switched groups again before this fetch resolved), discard
+      // this stale result rather than letting it overwrite the newer pick.
+      if (requestId !== randomizeTeamsRequestId) return;
+
       if (pool.length < needed) {
-        alert(`Need at least ${needed} players${groupId ? ' in this group' : ''} to randomize.`);
+        ['team_a1_select', 'team_a2_select', 'team_b1_select', 'team_b2_select'].forEach(id => {
+          document.getElementById(id).value = '';
+        });
+        if (showAlertOnFail) {
+          alert(`Need at least ${needed} players${groupId ? ' in this group' : ''} to randomize.`);
+        }
         return;
       }
       const shuffled = [...pool].sort(() => Math.random() - 0.5).slice(0, needed);
@@ -995,7 +1008,10 @@
         document.getElementById('team_b2_select').value = shuffled[3].player_id;
       }
       refreshTeamSelectOptions();
-    });
+    }
+
+    document.getElementById('randomize-teams-btn').addEventListener('click', () => randomizeTeams(true));
+    document.getElementById('match_group_select').addEventListener('change', () => randomizeTeams(false));
 
     // ---------- live point-by-point scoring ----------
 

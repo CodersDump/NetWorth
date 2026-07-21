@@ -408,6 +408,18 @@ def recompute_all_ratings():
         for pid in team_b:
             current_ratings[pid] = current_ratings.get(pid, 1000.0) + delta_b
 
+        # The rating history graph reads ratings_after directly off each
+        # match record - if we don't write the corrected values back here,
+        # a correction fixes everyone's current rating but leaves the
+        # historical trail permanently showing the old, wrong numbers.
+        new_ratings_after = {pid: int(round(current_ratings[pid])) for pid in team_a + team_b}
+        if m.get('ratings_after') != new_ratings_after:
+            matches_table.update_item(
+                Key={'match_id': m['match_id']},
+                UpdateExpression='SET ratings_after = :r',
+                ExpressionAttributeValues={':r': new_ratings_after}
+            )
+
     for pid, rating in current_ratings.items():
         players_table.update_item(Key={'player_id': pid}, UpdateExpression='SET rating = :r',
                                    ExpressionAttributeValues={':r': int(round(rating))})
