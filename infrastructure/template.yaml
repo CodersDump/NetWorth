@@ -70,6 +70,18 @@ Resources:
         - AttributeName: tournament_id
           KeyType: HASH
 
+  ProgressHistoryTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub '${AppName}-progress-history'
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: history_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: history_id
+          KeyType: HASH
+
   # ---------- IAM Role for Lambda ----------
 
   LambdaExecutionRole:
@@ -107,6 +119,7 @@ Resources:
                   - !GetAtt GroupsTable.Arn
                   - !GetAtt MatchesTable.Arn
                   - !GetAtt TournamentsTable.Arn
+                  - !GetAtt ProgressHistoryTable.Arn
 
   # ---------- Lambda functions (packaged from backend/lambdas/*) ----------
 
@@ -163,7 +176,44 @@ Resources:
           MATCHES_TABLE: !Ref MatchesTable
           PLAYERS_TABLE: !Ref PlayersTable
           TOURNAMENTS_TABLE: !Ref TournamentsTable
+          GROUPS_TABLE: !Ref GroupsTable
+          PROGRESS_HISTORY_TABLE: !Ref ProgressHistoryTable
       Code: ../backend/lambdas/matches
+
+  ProgressSchedulerFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${AppName}-progress-scheduler'
+      Runtime: python3.12
+      Handler: index.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: 30
+      Environment:
+        Variables:
+          MATCHES_TABLE: !Ref MatchesTable
+          PLAYERS_TABLE: !Ref PlayersTable
+          GROUPS_TABLE: !Ref GroupsTable
+          PROGRESS_HISTORY_TABLE: !Ref ProgressHistoryTable
+      Code: ../backend/lambdas/progress_scheduler
+
+  ProgressSchedulerDailyRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub '${AppName}-progress-scheduler-daily'
+      Description: Runs daily to lock in last week/month/year's progress badges once each period completes
+      ScheduleExpression: 'cron(5 0 * * ? *)'
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt ProgressSchedulerFunction.Arn
+          Id: ProgressSchedulerTarget
+
+  ProgressSchedulerEventPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref ProgressSchedulerFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt ProgressSchedulerDailyRule.Arn
 
   TournamentsFunction:
     Type: AWS::Lambda::Function

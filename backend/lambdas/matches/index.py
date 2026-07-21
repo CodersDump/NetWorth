@@ -41,6 +41,8 @@ dynamodb = boto3.resource('dynamodb')
 matches_table = dynamodb.Table(os.environ['MATCHES_TABLE'])
 players_table = dynamodb.Table(os.environ['PLAYERS_TABLE'])
 tournaments_table = dynamodb.Table(os.environ['TOURNAMENTS_TABLE'])
+groups_table = dynamodb.Table(os.environ['GROUPS_TABLE'])
+history_table = dynamodb.Table(os.environ['PROGRESS_HISTORY_TABLE'])
 
 K_FACTOR = 32
 CONFIRMATION_CODE = 'Matchpoint-Falcon-77'  # private - never shown in the UI; change this if it's ever exposed
@@ -388,6 +390,10 @@ def list_matches(event):
     if params.get('achievements_for'):
         all_tournaments = tournaments_table.scan().get('Items', [])
         return _response(200, compute_achievements(params.get('achievements_for'), items, all_tournaments))
+    if params.get('progress_history'):
+        scope = params.get('scope', 'global')
+        period = params.get('period', 'week')
+        return _response(200, compute_progress_history_summary(scope, period))
 
     if group_id:
         items = [i for i in items if i.get('group_id') == group_id]
@@ -807,6 +813,63 @@ def compute_diversity(items, group_id_filter=None):
 
     result.sort(key=lambda r: -r['top_partner_pct'])
     return {'players': result}
+
+
+def compute_progress_history_summary(scope_label, period_name):
+    """Reads the permanent, locked-in weekly/monthly/yearly winner history
+    for one scope (global or group_{id}) and one period type, computing
+    streaks (consecutive periods won in a row) and lifetime holder counts
+    for 'most improved' - the gamified badges built on top of history that
+    can never be recomputed retroactively once it's been overwritten."""
+    items = history_table.scan().get('Items', [])
+    filtered = [i for i in items if i.get('scope') == scope_label and i.get('period') == period_name]
+    filtered.sort(key=lambda i: i.get('period_start', ''))
+
+    holder_counts = {}
+    for entry in filtered:
+        pid = entry.get('most_improved_player_id')
+        if pid:
+            holder_counts[pid] = holder_counts.get(pid, 0) + 1
+
+    current_streak_pid = None
+    current_streak = 0
+    for entry in reversed(filtered):
+        pid = entry.get('most_improved_player_id')
+        if pid is None:
+            break
+        if current_streak_pid is None:
+            current_streak_pid = pid
+            current_streak = 1
+        elif pid == current_streak_pid:
+            current_streak += 1
+        else:
+            break
+
+    longest_streaks = {}
+    running_pid = None
+    running_len = 0
+    for entry in filtered:
+        pid = entry.get('most_improved_player_id')
+        if pid == running_pid and pid is not None:
+            running_len += 1
+        else:
+            running_pid = pid
+            running_len = 1 if pid else 0
+        if pid:
+            longest_streaks[pid] = max(longest_streaks.get(pid, 0), running_len)
+
+    return {
+        'history': [
+            {
+                'period_start': e.get('period_start'), 'period_end': e.get('period_end'),
+                'most_improved_name': e.get('most_improved_name'), 'most_improved_delta': e.get('most_improved_delta'),
+                'most_active_name': e.get('most_active_name'), 'most_active_matches': e.get('most_active_matches'),
+            } for e in filtered
+        ],
+        'holder_counts': [{'player_id': pid, 'count': c} for pid, c in sorted(holder_counts.items(), key=lambda kv: -kv[1])],
+        'current_streak': {'player_id': current_streak_pid, 'streak': current_streak} if current_streak_pid else None,
+        'longest_streaks': [{'player_id': pid, 'streak': s} for pid, s in sorted(longest_streaks.items(), key=lambda kv: -kv[1])]
+    }
 
 
 def compute_progress_badges(items, group_id_filter=None):

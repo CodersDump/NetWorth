@@ -586,6 +586,31 @@
       </div>
 
       <div class="card">
+        <h2>Progress history & streaks</h2>
+        <p class="card-sub">Permanent record of each completed week/month/year's winner - once locked in, it never changes. Streaks and "times held" build up here over time.</p>
+        <div class="row">
+          <div>
+            <label>Scope
+              <select id="history_scope_select">
+                <option value="global">Global (all players)</option>
+              </select>
+            </label>
+          </div>
+          <div>
+            <label>Period
+              <select id="history_period_select">
+                <option value="week">Weekly</option>
+                <option value="month">Monthly</option>
+                <option value="year">Yearly</option>
+              </select>
+            </label>
+          </div>
+        </div>
+        <button id="load-history-btn" type="button" class="secondary">Load history</button>
+        <div id="history-result" style="margin-top:12px;"></div>
+      </div>
+
+      <div class="card">
         <h2>Hall of fame</h2>
         <p class="card-sub">Highlights pulled from full match history.</p>
         <div class="row">
@@ -899,6 +924,10 @@
       populateSelect(document.getElementById('hof_group_filter'), allGroups, 'group_id', 'group_name', 'All groups');
       populateSelect(document.getElementById('diversity_group_filter'), allGroups, 'group_id', 'group_name', 'All groups');
       populateSelect(document.getElementById('badges_group_filter'), allGroups, 'group_id', 'group_name', 'All groups');
+      const historyScopeSelect = document.getElementById('history_scope_select');
+      historyScopeSelect.innerHTML = '<option value="global">Global (all players)</option>' +
+        [...allGroups].sort((a, b) => a.group_name.localeCompare(b.group_name))
+          .map(g => `<option value="group_${g.group_id}">${g.group_name}</option>`).join('');
       if (allGroups.length) {
         loadGroupMembers(document.getElementById('group_select').value);
       }
@@ -2078,6 +2107,59 @@
       svg.innerHTML = svgContent;
     }
 
+    async function loadHistory() {
+      const scope = document.getElementById('history_scope_select').value;
+      const period = document.getElementById('history_period_select').value;
+      const resultEl = document.getElementById('history-result');
+      resultEl.textContent = 'Loading...';
+
+      try {
+        const params = new URLSearchParams({ progress_history: 'true', scope, period });
+        const res = await fetch(`${API_BASE_URL}/matches?${params.toString()}`);
+        const data = await res.json();
+        if (!res.ok) { resultEl.textContent = `Error: ${data.error}`; return; }
+
+        let html = '';
+        if (data.current_streak) {
+          const streakPlayer = allPlayers.find(p => p.player_id === data.current_streak.player_id);
+          html += `<p>🔥 <strong>Current streak:</strong> ${streakPlayer ? streakPlayer.name : data.current_streak.player_id} - ${data.current_streak.streak} period${data.current_streak.streak === 1 ? '' : 's'} in a row</p>`;
+        }
+        if (data.longest_streaks && data.longest_streaks.length) {
+          html += '<h4>Longest streaks ever</h4><table><tr><th>Player</th><th>Streak</th></tr>';
+          data.longest_streaks.slice(0, 5).forEach(s => {
+            const player = allPlayers.find(p => p.player_id === s.player_id);
+            html += `<tr><td>${player ? player.name : s.player_id}</td><td>${s.streak}</td></tr>`;
+          });
+          html += '</table>';
+        }
+        if (data.holder_counts && data.holder_counts.length) {
+          html += '<h4>Times held "most improved"</h4><table><tr><th>Player</th><th>Times</th></tr>';
+          data.holder_counts.slice(0, 5).forEach(h => {
+            const player = allPlayers.find(p => p.player_id === h.player_id);
+            html += `<tr><td>${player ? player.name : h.player_id}</td><td>${h.count}</td></tr>`;
+          });
+          html += '</table>';
+        }
+        if (data.history && data.history.length) {
+          html += '<h4>Full history</h4><table><tr><th>Period start</th><th>Most improved</th><th>Most active</th></tr>';
+          [...data.history].reverse().forEach(h => {
+            const improved = h.most_improved_name ? `${h.most_improved_name} (${h.most_improved_delta >= 0 ? '+' : ''}${h.most_improved_delta})` : '-';
+            const active = h.most_active_name ? `${h.most_active_name} (${h.most_active_matches})` : '-';
+            html += `<tr><td>${h.period_start}</td><td>${improved}</td><td>${active}</td></tr>`;
+          });
+          html += '</table>';
+        } else {
+          html = '<p style="font-size:13px;color:var(--text-secondary);">No completed periods recorded yet for this scope.</p>';
+        }
+        resultEl.innerHTML = html;
+      } catch (err) {
+        resultEl.textContent = `Request failed: ${err.message}`;
+      }
+    }
+    document.getElementById('load-history-btn').addEventListener('click', loadHistory);
+    document.getElementById('history_scope_select').addEventListener('change', loadHistory);
+    document.getElementById('history_period_select').addEventListener('change', loadHistory);
+
     async function loadBadges() {
       const groupId = document.getElementById('badges_group_filter').value;
       const resultEl = document.getElementById('badges-result');
@@ -2249,6 +2331,7 @@
       loadPartnershipsSection();
       loadDiversity();
       loadBadges();
+      loadHistory();
       loadHallOfFame();
       loadAttendance();
       loadProfile();
