@@ -38,6 +38,50 @@ players_table = dynamodb.Table(os.environ['PLAYERS_TABLE'])
 matches_table = dynamodb.Table(os.environ['MATCHES_TABLE'])
 
 K_FACTOR = 32
+COMEBACK_BONUS_THRESHOLD = 5   # minimum deficit overcome to count as a genuine comeback
+COMEBACK_BONUS_PER_POINT = 0.3
+COMEBACK_BONUS_CAP = 8
+
+
+def compute_comeback_bonus(momentum):
+    """Extra rating-point bonus for the winning side, on top of the
+    standard Elo delta, when they overcame a genuine mid-game deficit.
+    Only ever non-zero for matches with a point-by-point log."""
+    if not momentum:
+        return 0
+    deficit = momentum.get('winner_overcame_deficit', 0)
+    if deficit < COMEBACK_BONUS_THRESHOLD:
+        return 0
+    return min(deficit * COMEBACK_BONUS_PER_POINT, COMEBACK_BONUS_CAP)
+
+
+def compute_momentum_stats(point_log, winner):
+    """Longest scoring streak per team, and how big a deficit the winner overcame."""
+    if not point_log:
+        return {}
+
+    longest_streak = {'A': 0, 'B': 0}
+    current_streak = {'A': 0, 'B': 0}
+    running = {'A': 0, 'B': 0}
+    worst_deficit_for_winner = 0
+
+    for point in point_log:
+        other = 'B' if point == 'A' else 'A'
+        current_streak[point] += 1
+        current_streak[other] = 0
+        longest_streak[point] = max(longest_streak[point], current_streak[point])
+        running[point] += 1
+
+        if winner in ('A', 'B'):
+            deficit = running[other] - running[winner]
+            if deficit > worst_deficit_for_winner:
+                worst_deficit_for_winner = deficit
+
+    return {
+        'longest_streak_a': longest_streak['A'],
+        'longest_streak_b': longest_streak['B'],
+        'winner_overcame_deficit': worst_deficit_for_winner if winner in ('A', 'B') else 0
+    }
 CONFIRMATION_CODE = 'Matchpoint-Falcon-77'  # private - never shown in the UI; change this if it's ever exposed
 
 
@@ -403,6 +447,15 @@ def recompute_all_ratings():
         delta_a = k_a * (actual_a - expected_a)
         delta_b = k_b * (actual_b - expected_b)
 
+        winner = m.get('winner')
+        momentum = m.get('momentum')
+        if momentum:
+            bonus = compute_comeback_bonus(momentum)
+            if winner == 'A':
+                delta_a += bonus
+            elif winner == 'B':
+                delta_b += bonus
+
         for pid in team_a:
             current_ratings[pid] = current_ratings.get(pid, 1000.0) + delta_a
         for pid in team_b:
@@ -533,6 +586,7 @@ def record_group_score(tournament_id, event):
     score_a = body.get('score_a')
     score_b = body.get('score_b')
     override = bool(body.get('override'))
+    point_log = body.get('point_log')
 
     if not subgroup or not fixture_id or score_a is None or score_b is None:
         return _response(400, {'error': 'subgroup, fixture_id, score_a, score_b are required'})
@@ -568,7 +622,7 @@ def record_group_score(tournament_id, event):
         winner = 'A' if fixture['games_won_a'] > fixture['games_won_b'] else 'B'
         update_elo_and_log(item.get('match_type', 'singles'), fixture['player_a'], fixture['player_b'],
                             total_a, total_b, item['group_id'], tournament_id, 'group',
-                            winner_override=winner, games=fixture['games'])
+                            winner_override=winner, games=fixture['games'], point_log=point_log)
 
         all_played = all(f['played'] for sg2 in item['subgroups'].values() for f in sg2['fixtures'])
         if all_played:
@@ -663,6 +717,7 @@ def record_knockout_score(tournament_id, event):
     score_a = body.get('score_a')
     score_b = body.get('score_b')
     override = bool(body.get('override'))
+    point_log = body.get('point_log')
 
     if score_a is None or score_b is None:
         return _response(400, {'error': 'score_a and score_b are required'})
@@ -698,7 +753,7 @@ def record_knockout_score(tournament_id, event):
             winner = 'A' if match['games_won_a'] > match['games_won_b'] else 'B'
             update_elo_and_log(item.get('match_type', 'singles'), match['player_a'], match['player_b'],
                                 total_a, total_b, item['group_id'], tournament_id, 'third_place',
-                                winner_override=winner, games=match['games'])
+                                winner_override=winner, games=match['games'], point_log=point_log)
 
         tournaments_table.put_item(Item=item)
         return _response(200, item)
@@ -724,7 +779,7 @@ def record_knockout_score(tournament_id, event):
         winner = 'A' if match['games_won_a'] > match['games_won_b'] else 'B'
         update_elo_and_log(item.get('match_type', 'singles'), match['player_a'], match['player_b'],
                             total_a, total_b, item['group_id'], tournament_id, 'knockout',
-                            winner_override=winner, games=match['games'])
+                            winner_override=winner, games=match['games'], point_log=point_log)
 
         current_round = rounds[round_index]
         if all(m['played'] for m in current_round):
@@ -798,7 +853,7 @@ def get_pairing_count(team_ids):
 
 
 def update_elo_and_log(match_type, entity_a, entity_b, score_a, score_b, group_id, tournament_id, stage,
-                        winner_override=None, games=None):
+                        winner_override=None, games=None, point_log=None):
     team_a_ids = entity_a.get('members', [entity_a['player_id']])
     team_b_ids = entity_b.get('members', [entity_b['player_id']])
 
@@ -830,6 +885,17 @@ def update_elo_and_log(match_type, entity_a, entity_b, score_a, score_b, group_i
     delta_a = k_a * (actual_a - expected_a)
     delta_b = k_b * (actual_b - expected_b)
 
+    winner = winner_override if winner_override else ('A' if score_a > score_b else ('B' if score_b > score_a else 'tie'))
+
+    momentum = None
+    if point_log:
+        momentum = compute_momentum_stats(point_log, winner)
+        bonus = compute_comeback_bonus(momentum)
+        if winner == 'A':
+            delta_a += bonus
+        elif winner == 'B':
+            delta_b += bonus
+
     new_ratings = {}
     for p in team_a_players:
         new_ratings[p['player_id']] = int(round(float(p.get('rating', 1000)) + delta_a))
@@ -839,8 +905,6 @@ def update_elo_and_log(match_type, entity_a, entity_b, score_a, score_b, group_i
     for pid, new_rating in new_ratings.items():
         players_table.update_item(Key={'player_id': pid}, UpdateExpression='SET rating = :r',
                                    ExpressionAttributeValues={':r': new_rating})
-
-    winner = winner_override if winner_override else ('A' if score_a > score_b else ('B' if score_b > score_a else 'tie'))
 
     log_item = {
         'match_id': str(uuid.uuid4()),
@@ -860,6 +924,9 @@ def update_elo_and_log(match_type, entity_a, entity_b, score_a, score_b, group_i
     }
     if games:
         log_item['games'] = games
+    if point_log:
+        log_item['point_log'] = point_log
+        log_item['momentum'] = momentum
     matches_table.put_item(Item=log_item)
 
 

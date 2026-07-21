@@ -45,6 +45,23 @@ groups_table = dynamodb.Table(os.environ['GROUPS_TABLE'])
 history_table = dynamodb.Table(os.environ['PROGRESS_HISTORY_TABLE'])
 
 K_FACTOR = 32
+COMEBACK_BONUS_THRESHOLD = 5   # minimum deficit overcome to count as a genuine comeback
+COMEBACK_BONUS_PER_POINT = 0.3
+COMEBACK_BONUS_CAP = 8
+
+
+def compute_comeback_bonus(momentum):
+    """Extra rating-point bonus for the winning side, on top of the
+    standard Elo delta, when they overcame a genuine mid-game deficit.
+    Only ever non-zero for matches with a point-by-point log, since only
+    that data can detect a comeback trajectory at all - a manually-entered
+    final score has no way to know if a match was ever close."""
+    if not momentum:
+        return 0
+    deficit = momentum.get('winner_overcame_deficit', 0)
+    if deficit < COMEBACK_BONUS_THRESHOLD:
+        return 0
+    return min(deficit * COMEBACK_BONUS_PER_POINT, COMEBACK_BONUS_CAP)
 CONFIRMATION_CODE = 'Matchpoint-Falcon-77'  # private - never shown in the UI; change this if it's ever exposed
 
 
@@ -204,6 +221,15 @@ def recompute_all_ratings():
         delta_a = k_a * (actual_a - expected_a)
         delta_b = k_b * (actual_b - expected_b)
 
+        winner = m.get('winner')
+        momentum = m.get('momentum')
+        if momentum:
+            bonus = compute_comeback_bonus(momentum)
+            if winner == 'A':
+                delta_a += bonus
+            elif winner == 'B':
+                delta_b += bonus
+
         for pid in team_a:
             current_ratings[pid] = current_ratings.get(pid, 1000.0) + delta_a
         for pid in team_b:
@@ -316,6 +342,17 @@ def _play_and_log(match_type, team_a_ids, team_b_ids, score_a, score_b, group_id
     delta_a = k_a * (actual_a - expected_a)
     delta_b = k_b * (actual_b - expected_b)
 
+    winner = 'A' if score_a > score_b else ('B' if score_b > score_a else 'tie')
+
+    momentum = None
+    if point_log:
+        momentum = compute_momentum_stats(point_log, winner)
+        bonus = compute_comeback_bonus(momentum)
+        if winner == 'A':
+            delta_a += bonus
+        elif winner == 'B':
+            delta_b += bonus
+
     new_ratings = {}
     for p in team_a_players:
         new_ratings[p['player_id']] = int(round(float(p.get('rating', 1000)) + delta_a))
@@ -325,8 +362,6 @@ def _play_and_log(match_type, team_a_ids, team_b_ids, score_a, score_b, group_id
     for pid, new_rating in new_ratings.items():
         players_table.update_item(Key={'player_id': pid}, UpdateExpression='SET rating = :r',
                                    ExpressionAttributeValues={':r': new_rating})
-
-    winner = 'A' if score_a > score_b else ('B' if score_b > score_a else 'tie')
 
     item = {
         'match_id': str(uuid.uuid4()),
@@ -349,7 +384,7 @@ def _play_and_log(match_type, team_a_ids, team_b_ids, score_a, score_b, group_id
         item['stage'] = stage
     if point_log:
         item['point_log'] = point_log
-        item['momentum'] = compute_momentum_stats(point_log, winner)
+        item['momentum'] = momentum
 
     matches_table.put_item(Item=item)
     return item
