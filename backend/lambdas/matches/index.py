@@ -394,6 +394,11 @@ def list_matches(event):
         scope = params.get('scope', 'global')
         period = params.get('period', 'week')
         return _response(200, compute_progress_history_summary(scope, period))
+    if params.get('head_to_head') and params.get('opponent'):
+        return _response(200, compute_head_to_head(params.get('head_to_head'), params.get('opponent'), items))
+    if params.get('recent_form'):
+        limit = int(params.get('limit', 10))
+        return _response(200, compute_recent_form(params.get('recent_form'), items, limit))
 
     if group_id:
         items = [i for i in items if i.get('group_id') == group_id]
@@ -770,8 +775,66 @@ def compute_achievements(player_id, matches, tournaments):
         'player_id': player_id,
         'total_matches': total_matches,
         'tournament_wins': tournament_wins,
-        'personal_best_streak': best_streak
+        'personal_best_streak': best_streak,
+        'current_streak': current_streak
     }
+
+
+def compute_head_to_head(player_id, opponent_id, matches):
+    """One player's win/loss record specifically as an OPPONENT of another
+    player - distinct from partnerships, which only covers doubles
+    teammates. Counts any match (singles or doubles) where the two were
+    on opposite teams."""
+    wins = 0
+    losses = 0
+    for m in matches:
+        team_a = m.get('team_a') or []
+        team_b = m.get('team_b') or []
+        winner = m.get('winner')
+        if winner not in ('A', 'B'):
+            continue
+        player_in_a = player_id in team_a
+        player_in_b = player_id in team_b
+        opponent_in_a = opponent_id in team_a
+        opponent_in_b = opponent_id in team_b
+        if not ((player_in_a and opponent_in_b) or (player_in_b and opponent_in_a)):
+            continue  # not opposing teams in this match (or one/both absent)
+        player_won = (winner == 'A' and player_in_a) or (winner == 'B' and player_in_b)
+        if player_won:
+            wins += 1
+        else:
+            losses += 1
+    total = wins + losses
+    return {
+        'player_id': player_id, 'opponent_id': opponent_id,
+        'matches': total, 'wins': wins, 'losses': losses,
+        'win_rate': round(wins / total * 100, 1) if total else 0
+    }
+
+
+def compute_recent_form(player_id, matches, limit=10):
+    """A player's last N matches, most recent first, as simple win/loss
+    results for a quick 'hot or cold' visual strip."""
+    player_matches = sorted(
+        [m for m in matches if player_id in (m.get('team_a') or []) or player_id in (m.get('team_b') or [])],
+        key=lambda m: m.get('date', '')
+    )
+    recent = player_matches[-limit:]
+    form = []
+    for m in recent:
+        winner = m.get('winner')
+        team_a = m.get('team_a') or []
+        if winner not in ('A', 'B'):
+            continue
+        won = (winner == 'A' and player_id in team_a) or (winner == 'B' and player_id not in team_a)
+        opponent_names = m.get('team_b_names') if player_id in team_a else m.get('team_a_names')
+        form.append({
+            'date': m.get('date'),
+            'result': 'W' if won else 'L',
+            'opponent_names': opponent_names or []
+        })
+    form.reverse()  # most recent first
+    return {'player_id': player_id, 'form': form}
 
 
 def compute_diversity(items, group_id_filter=None):

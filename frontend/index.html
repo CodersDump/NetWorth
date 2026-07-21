@@ -137,6 +137,13 @@
   .achievement-progress-fill { background: var(--shuttle); height: 100%; }
   .achievement-progress-text { font-size: 11px; margin-top: 4px; font-family: 'JetBrains Mono', monospace; }
 
+  .form-chip {
+    width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+    font-family: 'Rajdhani', sans-serif; font-weight: 700; font-size: 14px; color: #fff;
+  }
+  .form-chip.win { background: var(--court); }
+  .form-chip.loss { background: var(--smash); }
+
   label { display: block; margin-top: 12px; font-size: 13px; font-weight: 500; color: var(--text-secondary); }
   input, select, textarea {
     width: 100%; padding: 10px; margin-top: 4px; box-sizing: border-box;
@@ -183,6 +190,11 @@
     .row { flex-direction: column; }
     .tab-btn { padding: 12px 14px 10px; font-size: 14px; }
     .app-title h1 { font-size: 22px; }
+    .achievement-grid { grid-template-columns: repeat(2, 1fr); gap: 8px; }
+    .achievement-card { padding: 10px; }
+    .achievement-icon { font-size: 20px; }
+    .achievement-name { font-size: 13px; }
+    .achievement-desc { font-size: 11px; }
   }
 </style>
 </head>
@@ -561,9 +573,18 @@
       </div>
 
       <div class="card">
-        <h2>Achievements</h2>
-        <p class="card-sub">Records and badges this player currently holds.</p>
-        <div id="profile-achievements-result" class="achievement-grid"></div>
+        <h2>Recent form</h2>
+        <p class="card-sub">Last 10 results, most recent on the right.</p>
+        <div id="profile-form-result" style="display:flex; gap:6px; flex-wrap:wrap;"></div>
+      </div>
+
+      <div class="card">
+        <h2>Head-to-head</h2>
+        <p class="card-sub">Win/loss record specifically against another player as an opponent (not teammate).</p>
+        <label>Compare against
+          <select id="profile_h2h_opponent_select"></select>
+        </label>
+        <div id="profile-h2h-result" style="margin-top:12px;"></div>
       </div>
 
       <div class="card">
@@ -633,6 +654,13 @@
         </label>
         <div id="profile-partnerships-result" style="margin-top:12px;"></div>
         <svg id="profile-radar-svg" viewBox="0 0 600 600" style="width:100%; max-width:600px; height:auto; display:block; margin:12px auto 0;"></svg>
+      </div>
+
+      <div class="card">
+        <h2>Achievements</h2>
+        <p class="card-sub">Records and badges this player currently holds.</p>
+        <p id="profile-streak-line" style="font-size:14px; margin:0 0 12px;"></p>
+        <div id="profile-achievements-result" class="achievement-grid"></div>
       </div>
     </div>
 
@@ -841,6 +869,7 @@
       populateSelect(document.getElementById('edit_player_select'), labeled, 'player_id', 'label', null);
       populateSelect(document.getElementById('log_player_filter'), labeled, 'player_id', 'label', 'All players');
       populateSelect(document.getElementById('profile_player_select'), labeled, 'player_id', 'label', null);
+      populateSelect(document.getElementById('profile_h2h_opponent_select'), labeled, 'player_id', 'label', null);
       populateSelect(document.getElementById('profile_compare2_select'), labeled, 'player_id', 'label', 'None');
       populateSelect(document.getElementById('profile_compare3_select'), labeled, 'player_id', 'label', 'None');
       populateSelect(document.getElementById('profile_compare4_select'), labeled, 'player_id', 'label', 'None');
@@ -1711,6 +1740,21 @@
       if (!playerId) return;
 
       try {
+        const res = await fetch(`${API_BASE_URL}/matches?recent_form=${playerId}&limit=10`);
+        const data = await res.json();
+        const el = document.getElementById('profile-form-result');
+        if (!data.form || !data.form.length) {
+          el.innerHTML = '<p style="font-size:13px;color:var(--text-secondary);">No matches recorded yet.</p>';
+        } else {
+          el.innerHTML = data.form.map(f =>
+            `<div class="form-chip ${f.result === 'W' ? 'win' : 'loss'}" title="${f.result === 'W' ? 'Won' : 'Lost'} vs ${(f.opponent_names || []).join(' & ')} on ${f.date ? f.date.slice(0, 10) : ''}">${f.result}</div>`
+          ).join('');
+        }
+      } catch (err) {
+        document.getElementById('profile-form-result').textContent = `Request failed: ${err.message}`;
+      }
+
+      try {
         const playerIds = [
           playerId,
           document.getElementById('profile_compare2_select').value,
@@ -1825,6 +1869,12 @@
         const badges = await badgesRes.json();
         const milestones = await achievementsRes.json();
 
+        const streakLineEl = document.getElementById('profile-streak-line');
+        const currentStreak = milestones.current_streak || 0;
+        streakLineEl.textContent = currentStreak > 0
+          ? `Current streak: ${currentStreak} win${currentStreak === 1 ? '' : 's'} in a row`
+          : 'No active win streak right now';
+
         const cards = [];
 
         function renderTieredCard(icon, name, unit, tiers, currentValue) {
@@ -1851,11 +1901,15 @@
           cards.push({ html, sortKey: achieved ? (10 + tierIndex) : 0 });
         }
 
-        function renderBinaryCard(icon, name, desc, achieved) {
-          let html = `<div class="achievement-card ${achieved ? 'achieved' : 'locked'}">`;
+        function renderBinaryCard(icon, name, desc, achieved, detail) {
+          const titleAttr = detail ? ` title="${String(detail).replace(/"/g, '&quot;')}"` : '';
+          let html = `<div class="achievement-card ${achieved ? 'achieved' : 'locked'}"${titleAttr}>`;
           html += `<div class="achievement-icon">${icon}</div>`;
           html += `<div class="achievement-name">${name}</div>`;
           html += `<div class="achievement-desc">${desc}</div>`;
+          if (achieved && detail) {
+            html += `<div class="achievement-progress-text" style="margin-top:6px; opacity:0.9;">${detail}</div>`;
+          }
           html += `</div>`;
           cards.push({ html, sortKey: achieved ? 5 : -1 });
         }
@@ -1867,9 +1921,23 @@
         renderBinaryCard('🥇', 'Longest win streak', 'Overall record holder', hof.longest_win_streak && hof.longest_win_streak.player_id === playerId);
         renderBinaryCard('📈', 'Peak performer', 'Highest peak rating ever', hof.peak_ratings && hof.peak_ratings[0] && hof.peak_ratings[0].player_id === playerId);
         renderBinaryCard('🎯', 'Most consistent', 'Lowest rating volatility', hof.most_consistent && hof.most_consistent[0] && hof.most_consistent[0].player_id === playerId);
-        renderBinaryCard('💥', 'Giant killer', 'Biggest upset on record', hof.giant_killer_top5 && hof.giant_killer_top5[0] && hof.giant_killer_top5[0].winner_ids && hof.giant_killer_top5[0].winner_ids.includes(playerId));
-        renderBinaryCard('🔄', 'Comeback king', 'Biggest comeback on record', hof.comeback_top5 && hof.comeback_top5[0] && hof.comeback_top5[0].winner_ids && hof.comeback_top5[0].winner_ids.includes(playerId));
-        renderBinaryCard('💪', 'Blowout winner', 'Biggest margin on record', hof.biggest_blowout ? (hof.biggest_blowout.score_a > hof.biggest_blowout.score_b ? (hof.biggest_blowout.team_a_ids || []) : (hof.biggest_blowout.team_b_ids || [])).includes(playerId) : false);
+        const giantKiller = hof.giant_killer_top5 && hof.giant_killer_top5[0];
+        const giantKillerAchieved = giantKiller && giantKiller.winner_ids && giantKiller.winner_ids.includes(playerId);
+        renderBinaryCard('💥', 'Giant killer', 'Biggest upset on record', giantKillerAchieved,
+          giantKillerAchieved ? `vs ${giantKiller.loser_names.join(' & ')}, ${giantKiller.score}, ${(giantKiller.date || '').slice(0, 10)}` : null);
+
+        const comeback = hof.comeback_top5 && hof.comeback_top5[0];
+        const comebackAchieved = comeback && comeback.winner_ids && comeback.winner_ids.includes(playerId);
+        renderBinaryCard('🔄', 'Comeback king', 'Biggest comeback on record', comebackAchieved,
+          comebackAchieved ? `overcame a ${comeback.deficit_overcome}-pt deficit, ${(comeback.date || '').slice(0, 10)}` : null);
+
+        const blowout = hof.biggest_blowout;
+        const blowoutTeamAWon = blowout && blowout.score_a > blowout.score_b;
+        const blowoutWinningIds = blowout ? (blowoutTeamAWon ? (blowout.team_a_ids || []) : (blowout.team_b_ids || [])) : [];
+        const blowoutAchieved = blowout && blowoutWinningIds.includes(playerId);
+        const blowoutOpponentNames = blowout ? (blowoutTeamAWon ? blowout.team_b_names : blowout.team_a_names) : [];
+        renderBinaryCard('💪', 'Blowout winner', 'Biggest margin on record', blowoutAchieved,
+          blowoutAchieved ? `vs ${(blowoutOpponentNames || []).join(' & ')}, margin ${blowout.margin}, ${(blowout.date || '').slice(0, 10)}` : null);
         renderBinaryCard('🎾', 'Format specialist', 'Biggest singles/doubles gap', hof.format_specialists && hof.format_specialists[0] && hof.format_specialists[0].player_id === playerId);
         renderBinaryCard('🚀', 'Deep run master', 'Best knockout-reach rate', hof.deep_run_rates && hof.deep_run_rates[0] && hof.deep_run_rates[0].player_id === playerId);
 
@@ -1883,8 +1951,29 @@
       } catch (err) {
         document.getElementById('profile-achievements-result').textContent = `Request failed: ${err.message}`;
       }
+
+      const opponentId = document.getElementById('profile_h2h_opponent_select').value;
+      const h2hEl = document.getElementById('profile-h2h-result');
+      if (!opponentId) {
+        h2hEl.innerHTML = '<p style="font-size:13px;color:var(--text-secondary);">Pick someone to compare against.</p>';
+      } else if (opponentId === playerId) {
+        h2hEl.innerHTML = '<p style="font-size:13px;color:var(--text-secondary);">Pick a different player to compare against.</p>';
+      } else {
+        try {
+          const res = await fetch(`${API_BASE_URL}/matches?head_to_head=${playerId}&opponent=${opponentId}`);
+          const data = await res.json();
+          if (!data.matches) {
+            h2hEl.innerHTML = '<p style="font-size:13px;color:var(--text-secondary);">These two have never played against each other.</p>';
+          } else {
+            h2hEl.innerHTML = `<p><strong>${data.wins}-${data.losses}</strong> (${data.win_rate}% win rate) across ${data.matches} match${data.matches === 1 ? '' : 'es'}</p>`;
+          }
+        } catch (err) {
+          h2hEl.textContent = `Request failed: ${err.message}`;
+        }
+      }
     }
     document.getElementById('profile_player_select').addEventListener('change', loadProfile);
+    document.getElementById('profile_h2h_opponent_select').addEventListener('change', loadProfile);
     ['profile_compare2_select', 'profile_compare3_select', 'profile_compare4_select', 'profile_xaxis_mode',
      'profile_partnerships_scope_group', 'profile_partnerships_tournament_filter',
      'profile_partnerships_top_n', 'profile_partnerships_highlight_tournament'].forEach(id => {
