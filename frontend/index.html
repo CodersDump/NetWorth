@@ -1753,139 +1753,82 @@
 
     let profileRatingChart = null;
 
-    async function loadProfile() {
-      const playerId = document.getElementById('profile_player_select').value;
-      if (!playerId) return;
-
+    async function loadProfileBundle(playerId) {
       try {
-        const res = await fetch(`${API_BASE_URL}/matches?recent_form=${playerId}&limit=10`);
-        const data = await res.json();
-        const el = document.getElementById('profile-form-result');
-        if (!data.form || !data.form.length) {
-          el.innerHTML = '<p style="font-size:13px;color:var(--text-secondary);">No matches recorded yet.</p>';
+        const res = await fetch(`${API_BASE_URL}/matches?profile_bundle_for=${playerId}`);
+        const bundle = await res.json();
+
+        // Recent form
+        const formEl = document.getElementById('profile-form-result');
+        const form = bundle.recent_form && bundle.recent_form.form;
+        if (!form || !form.length) {
+          formEl.innerHTML = '<p style="font-size:13px;color:var(--text-secondary);">No matches recorded yet.</p>';
         } else {
-          el.innerHTML = data.form.map(f =>
+          formEl.innerHTML = form.map(f =>
             `<div class="form-chip ${f.result === 'W' ? 'win' : 'loss'}" title="${f.result === 'W' ? 'Won' : 'Lost'} vs ${(f.opponent_names || []).join(' & ')} on ${f.date ? f.date.slice(0, 10) : ''}">${f.result}</div>`
           ).join('');
         }
-      } catch (err) {
-        document.getElementById('profile-form-result').textContent = `Request failed: ${err.message}`;
-      }
 
-      try {
-        const playerIds = [
-          playerId,
-          document.getElementById('profile_compare2_select').value,
-          document.getElementById('profile_compare3_select').value,
-          document.getElementById('profile_compare4_select').value
-        ].filter(Boolean);
-        const xAxisMode = document.getElementById('profile_xaxis_mode').value;
-        const colors = ['#1F7A4D', '#FF4757', '#00B4D8', '#FFD23F'];
-
-        const datasets = [];
-        for (let i = 0; i < playerIds.length; i++) {
-          const pid = playerIds[i];
-          const player = allPlayers.find(p => p.player_id === pid);
-          const points = await fetchRatingHistory(pid);
-          const chartPoints = xAxisMode === 'sequence'
-            ? points.map((p, idx) => ({ x: idx + 1, y: p.y }))
-            : points.map(p => ({ x: p.x, y: p.y }));
-          datasets.push({
-            label: player ? player.name : pid,
-            data: chartPoints,
-            borderColor: colors[i % colors.length],
-            backgroundColor: colors[i % colors.length],
-            tension: 0.15
-          });
-        }
-
-        if (profileRatingChart) profileRatingChart.destroy();
-        const ctx = document.getElementById('profile-rating-canvas').getContext('2d');
-        const xScale = xAxisMode === 'sequence'
-          ? { type: 'linear', title: { display: true, text: 'Match #' }, ticks: { color: '#888', precision: 0 } }
-          : { type: 'time', time: { unit: 'day' }, ticks: { color: '#888' } };
-
-        profileRatingChart = new Chart(ctx, {
-          type: 'line',
-          data: { datasets },
-          options: {
-            scales: {
-              x: xScale,
-              y: { ticks: { color: '#888' } }
-            },
-            plugins: { legend: { labels: { color: getComputedStyle(document.body).color } } }
-          }
-        });
-      } catch (err) {
-        console.error(err);
-      }
-
-      try {
-        const res = await fetch(`${API_BASE_URL}/matches?attendance=true`);
-        const data = await res.json();
-        const row = (data.attendance || []).find(a => a.player_id === playerId);
-        const el = document.getElementById('profile-attendance-result');
-        if (row) {
-          el.innerHTML = `<p>Sessions: ${row.sessions_attended} &middot; Total matches: ${row.total_matches} &middot; Last 30d: ${row.matches_last_30_days} &middot; Last 90d: ${row.matches_last_90_days} &middot; Longest week streak: ${row.longest_week_streak}</p>`;
+        // Attendance
+        const attEl = document.getElementById('profile-attendance-result');
+        const attRow = (bundle.attendance || []).find(a => a.player_id === playerId);
+        if (attRow) {
+          attEl.innerHTML = `<p>Sessions: ${attRow.sessions_attended} &middot; Total matches: ${attRow.total_matches} &middot; Last 30d: ${attRow.matches_last_30_days} &middot; Last 90d: ${attRow.matches_last_90_days} &middot; Longest week streak: ${attRow.longest_week_streak}</p>`;
         } else {
-          el.innerHTML = '<p style="font-size:13px;color:var(--text-secondary);">No matches recorded yet.</p>';
+          attEl.innerHTML = '<p style="font-size:13px;color:var(--text-secondary);">No matches recorded yet.</p>';
         }
-      } catch (err) {
-        document.getElementById('profile-attendance-result').textContent = `Request failed: ${err.message}`;
-      }
 
-      const partnershipsGroupId = document.getElementById('profile_partnerships_scope_group').value;
-      const partnershipsTournamentFilter = document.getElementById('profile_partnerships_tournament_filter').value;
-      const partnershipsTopN = document.getElementById('profile_partnerships_top_n').value;
-      const partnershipsHighlight = document.getElementById('profile_partnerships_highlight_tournament').checked;
-      const partnershipsBaseParams = new URLSearchParams();
-      if (partnershipsGroupId) partnershipsBaseParams.set('group_id', partnershipsGroupId);
-      partnershipsBaseParams.set('tournament_filter', partnershipsTournamentFilter);
+        // Overall record
+        const recEl = document.getElementById('profile-overall-record-result');
+        const rec = bundle.overall_record;
+        const totalGames = rec.total_wins + rec.total_losses;
+        const totalRate = totalGames ? Math.round(rec.total_wins / totalGames * 100) : 0;
+        const segments = [
+          { label: 'Singles wins', value: rec.singles_wins, color: 'var(--court)' },
+          { label: 'Doubles wins', value: rec.doubles_wins, color: 'var(--rally)' },
+          { label: 'Singles losses', value: rec.singles_losses, color: 'var(--shuttle)' },
+          { label: 'Doubles losses', value: rec.doubles_losses, color: 'var(--smash)' }
+        ];
+        const segTotal = segments.reduce((sum, s) => sum + s.value, 0);
+        const barHtml = segTotal
+          ? segments.map(s => `<div style="width:${s.value / segTotal * 100}%; background:${s.color};"></div>`).join('')
+          : '';
+        const legendHtml = segments.map(s =>
+          `<span><span class="swatch" style="background:${s.color};"></span>${s.label}: ${s.value}</span>`
+        ).join('');
+        recEl.innerHTML = `
+          <p style="margin:0 0 6px;"><strong>Overall: ${rec.total_wins}-${rec.total_losses}</strong> (${totalRate}% win rate)</p>
+          <div class="overall-record-bar">${barHtml}</div>
+          <div class="overall-record-legend">${legendHtml}</div>
+        `;
 
-      try {
-        const tableParams = new URLSearchParams(partnershipsBaseParams);
-        tableParams.set('partnerships_for', playerId);
-        const res = await fetch(`${API_BASE_URL}/matches?${tableParams.toString()}`);
-        const data = await res.json();
-        const el = document.getElementById('profile-partnerships-result');
-        if (!data.partnerships.length) {
-          el.innerHTML = '<p style="font-size:13px;color:var(--text-secondary);">No doubles matches in this scope yet.</p>';
+        // Top opponents
+        const oppEl = document.getElementById('profile-top-opponents-result');
+        const opponents = bundle.top_opponents && bundle.top_opponents.opponents;
+        if (!opponents || !opponents.length) {
+          oppEl.innerHTML = '<p style="font-size:13px;color:var(--text-secondary);">No opponents recorded yet.</p>';
         } else {
-          let html = '<table><tr><th>Partner</th><th>Matches</th><th>W</th><th>L</th><th>Win %</th></tr>';
-          data.partnerships.forEach(p => {
-            html += `<tr><td>${p.partner_name}</td><td>${p.matches}</td><td>${p.wins}</td><td>${p.losses}</td><td>${p.win_rate}%</td></tr>`;
-          });
-          html += '</table>';
-          el.innerHTML = html;
+          oppEl.innerHTML = opponents.map(o => {
+            const winPct = o.matches ? (o.wins / o.matches * 100) : 0;
+            const lossPct = 100 - winPct;
+            return `
+              <div class="h2h-row">
+                <div class="h2h-row-header">
+                  <span>${o.opponent_name}</span>
+                  <span>${o.wins}-${o.losses} (${o.matches} match${o.matches === 1 ? '' : 'es'})</span>
+                </div>
+                <div class="h2h-bar">
+                  <div class="h2h-bar-wins" style="width:${winPct}%;"></div>
+                  <div class="h2h-bar-losses" style="width:${lossPct}%;"></div>
+                </div>
+              </div>`;
+          }).join('');
         }
-      } catch (err) {
-        document.getElementById('profile-partnerships-result').textContent = `Request failed: ${err.message}`;
-      }
 
-      try {
-        const radarParams = new URLSearchParams(partnershipsBaseParams);
-        radarParams.set('radar_for', playerId);
-        radarParams.set('top_n', partnershipsTopN);
-        const res = await fetch(`${API_BASE_URL}/matches?${radarParams.toString()}`);
-        const data = await res.json();
-        if (data.partners && data.partners.length) {
-          renderPartnerRadar(data, partnershipsHighlight, 'profile-radar-svg');
-        } else {
-          document.getElementById('profile-radar-svg').innerHTML = '';
-        }
-      } catch (err) {
-        console.error(err);
-      }
-
-      try {
-        const [hofRes, badgesRes, achievementsRes] = await Promise.all([
-          fetch(`${API_BASE_URL}/matches?hall_of_fame=true`),
-          fetch(`${API_BASE_URL}/matches?progress_badges=true`),
-          fetch(`${API_BASE_URL}/matches?achievements_for=${playerId}`)
-        ]);
-        const hof = await hofRes.json();
-        const badges = await badgesRes.json();
-        const milestones = await achievementsRes.json();
+        // Achievements (streak line + tiered/binary cards)
+        const hof = bundle.hall_of_fame;
+        const badges = bundle.progress_badges;
+        const milestones = bundle.achievements;
 
         const streakLineEl = document.getElementById('profile-streak-line');
         const currentStreak = milestones.current_streak || 0;
@@ -1967,85 +1910,148 @@
         cards.sort((a, b) => b.sortKey - a.sortKey);
         document.getElementById('profile-achievements-result').innerHTML = cards.map(c => c.html).join('');
       } catch (err) {
-        document.getElementById('profile-achievements-result').textContent = `Request failed: ${err.message}`;
+        ['profile-form-result', 'profile-attendance-result', 'profile-overall-record-result',
+         'profile-top-opponents-result', 'profile-achievements-result'].forEach(id => {
+          document.getElementById(id).textContent = `Request failed: ${err.message}`;
+        });
       }
+    }
 
+    async function loadProfileRatingChart(playerId) {
       try {
-        const res = await fetch(`${API_BASE_URL}/matches?overall_record_for=${playerId}`);
-        const data = await res.json();
-        const el = document.getElementById('profile-overall-record-result');
-        const totalGames = data.total_wins + data.total_losses;
-        const totalRate = totalGames ? Math.round(data.total_wins / totalGames * 100) : 0;
+        const playerIds = [
+          playerId,
+          document.getElementById('profile_compare2_select').value,
+          document.getElementById('profile_compare3_select').value,
+          document.getElementById('profile_compare4_select').value
+        ].filter(Boolean);
+        const xAxisMode = document.getElementById('profile_xaxis_mode').value;
+        const colors = ['#1F7A4D', '#FF4757', '#00B4D8', '#FFD23F'];
 
-        const segments = [
-          { label: 'Singles wins', value: data.singles_wins, color: 'var(--court)' },
-          { label: 'Doubles wins', value: data.doubles_wins, color: 'var(--rally)' },
-          { label: 'Singles losses', value: data.singles_losses, color: 'var(--shuttle)' },
-          { label: 'Doubles losses', value: data.doubles_losses, color: 'var(--smash)' }
-        ];
-        const total = segments.reduce((sum, s) => sum + s.value, 0);
-        const barHtml = total
-          ? segments.map(s => `<div style="width:${s.value / total * 100}%; background:${s.color};"></div>`).join('')
-          : '';
-        const legendHtml = segments.map(s =>
-          `<span><span class="swatch" style="background:${s.color};"></span>${s.label}: ${s.value}</span>`
-        ).join('');
+        const historyResults = await Promise.all(playerIds.map(pid => fetchRatingHistory(pid)));
+        const datasets = historyResults.map((points, i) => {
+          const pid = playerIds[i];
+          const player = allPlayers.find(p => p.player_id === pid);
+          const chartPoints = xAxisMode === 'sequence'
+            ? points.map((p, idx) => ({ x: idx + 1, y: p.y }))
+            : points.map(p => ({ x: p.x, y: p.y }));
+          return {
+            label: player ? player.name : pid,
+            data: chartPoints,
+            borderColor: colors[i % colors.length],
+            backgroundColor: colors[i % colors.length],
+            tension: 0.15
+          };
+        });
 
-        el.innerHTML = `
-          <p style="margin:0 0 6px;"><strong>Overall: ${data.total_wins}-${data.total_losses}</strong> (${totalRate}% win rate)</p>
-          <div class="overall-record-bar">${barHtml}</div>
-          <div class="overall-record-legend">${legendHtml}</div>
-        `;
+        if (profileRatingChart) profileRatingChart.destroy();
+        const ctx = document.getElementById('profile-rating-canvas').getContext('2d');
+        const xScale = xAxisMode === 'sequence'
+          ? { type: 'linear', title: { display: true, text: 'Match #' }, ticks: { color: '#888', precision: 0 } }
+          : { type: 'time', time: { unit: 'day' }, ticks: { color: '#888' } };
+
+        profileRatingChart = new Chart(ctx, {
+          type: 'line',
+          data: { datasets },
+          options: {
+            scales: {
+              x: xScale,
+              y: { ticks: { color: '#888' } }
+            },
+            plugins: { legend: { labels: { color: getComputedStyle(document.body).color } } }
+          }
+        });
       } catch (err) {
-        document.getElementById('profile-overall-record-result').textContent = `Request failed: ${err.message}`;
+        console.error(err);
       }
+    }
 
-      try {
-        const res = await fetch(`${API_BASE_URL}/matches?top_opponents_for=${playerId}&top_n=15`);
-        const data = await res.json();
-        const el = document.getElementById('profile-top-opponents-result');
-        if (!data.opponents || !data.opponents.length) {
-          el.innerHTML = '<p style="font-size:13px;color:var(--text-secondary);">No opponents recorded yet.</p>';
+    async function loadProfilePartnershipsAndRadar(playerId) {
+      const partnershipsGroupId = document.getElementById('profile_partnerships_scope_group').value;
+      const partnershipsTournamentFilter = document.getElementById('profile_partnerships_tournament_filter').value;
+      const partnershipsTopN = document.getElementById('profile_partnerships_top_n').value;
+      const partnershipsHighlight = document.getElementById('profile_partnerships_highlight_tournament').checked;
+      const baseParams = new URLSearchParams();
+      if (partnershipsGroupId) baseParams.set('group_id', partnershipsGroupId);
+      baseParams.set('tournament_filter', partnershipsTournamentFilter);
+
+      const tableParams = new URLSearchParams(baseParams);
+      tableParams.set('partnerships_for', playerId);
+      const radarParams = new URLSearchParams(baseParams);
+      radarParams.set('radar_for', playerId);
+      radarParams.set('top_n', partnershipsTopN);
+
+      const [tableResult, radarResult] = await Promise.allSettled([
+        fetch(`${API_BASE_URL}/matches?${tableParams.toString()}`).then(r => r.json()),
+        fetch(`${API_BASE_URL}/matches?${radarParams.toString()}`).then(r => r.json())
+      ]);
+
+      const el = document.getElementById('profile-partnerships-result');
+      if (tableResult.status === 'fulfilled') {
+        const data = tableResult.value;
+        if (!data.partnerships.length) {
+          el.innerHTML = '<p style="font-size:13px;color:var(--text-secondary);">No doubles matches in this scope yet.</p>';
         } else {
-          el.innerHTML = data.opponents.map(o => {
-            const winPct = o.matches ? (o.wins / o.matches * 100) : 0;
-            const lossPct = 100 - winPct;
-            return `
-              <div class="h2h-row">
-                <div class="h2h-row-header">
-                  <span>${o.opponent_name}</span>
-                  <span>${o.wins}-${o.losses} (${o.matches} match${o.matches === 1 ? '' : 'es'})</span>
-                </div>
-                <div class="h2h-bar">
-                  <div class="h2h-bar-wins" style="width:${winPct}%;"></div>
-                  <div class="h2h-bar-losses" style="width:${lossPct}%;"></div>
-                </div>
-              </div>`;
-          }).join('');
+          let html = '<table><tr><th>Partner</th><th>Matches</th><th>W</th><th>L</th><th>Win %</th></tr>';
+          data.partnerships.forEach(p => {
+            html += `<tr><td>${p.partner_name}</td><td>${p.matches}</td><td>${p.wins}</td><td>${p.losses}</td><td>${p.win_rate}%</td></tr>`;
+          });
+          html += '</table>';
+          el.innerHTML = html;
         }
-      } catch (err) {
-        document.getElementById('profile-top-opponents-result').textContent = `Request failed: ${err.message}`;
+      } else {
+        el.textContent = `Request failed: ${tableResult.reason.message}`;
       }
 
+      if (radarResult.status === 'fulfilled') {
+        const data = radarResult.value;
+        if (data.partners && data.partners.length) {
+          renderPartnerRadar(data, partnershipsHighlight, 'profile-radar-svg');
+        } else {
+          document.getElementById('profile-radar-svg').innerHTML = '';
+        }
+      } else {
+        console.error(radarResult.reason);
+      }
+    }
+
+    async function loadProfileHeadToHead(playerId) {
       const opponentId = document.getElementById('profile_h2h_opponent_select').value;
       const h2hEl = document.getElementById('profile-h2h-result');
       if (!opponentId) {
         h2hEl.innerHTML = '<p style="font-size:13px;color:var(--text-secondary);">Pick someone to compare against.</p>';
-      } else if (opponentId === playerId) {
-        h2hEl.innerHTML = '<p style="font-size:13px;color:var(--text-secondary);">Pick a different player to compare against.</p>';
-      } else {
-        try {
-          const res = await fetch(`${API_BASE_URL}/matches?head_to_head=${playerId}&opponent=${opponentId}`);
-          const data = await res.json();
-          if (!data.matches) {
-            h2hEl.innerHTML = '<p style="font-size:13px;color:var(--text-secondary);">These two have never played against each other.</p>';
-          } else {
-            h2hEl.innerHTML = `<p><strong>${data.wins}-${data.losses}</strong> (${data.win_rate}% win rate) across ${data.matches} match${data.matches === 1 ? '' : 'es'}</p>`;
-          }
-        } catch (err) {
-          h2hEl.textContent = `Request failed: ${err.message}`;
-        }
+        return;
       }
+      if (opponentId === playerId) {
+        h2hEl.innerHTML = '<p style="font-size:13px;color:var(--text-secondary);">Pick a different player to compare against.</p>';
+        return;
+      }
+      try {
+        const res = await fetch(`${API_BASE_URL}/matches?head_to_head=${playerId}&opponent=${opponentId}`);
+        const data = await res.json();
+        if (!data.matches) {
+          h2hEl.innerHTML = '<p style="font-size:13px;color:var(--text-secondary);">These two have never played against each other.</p>';
+        } else {
+          h2hEl.innerHTML = `<p><strong>${data.wins}-${data.losses}</strong> (${data.win_rate}% win rate) across ${data.matches} match${data.matches === 1 ? '' : 'es'}</p>`;
+        }
+      } catch (err) {
+        h2hEl.textContent = `Request failed: ${err.message}`;
+      }
+    }
+
+    async function loadProfile() {
+      const playerId = document.getElementById('profile_player_select').value;
+      if (!playerId) return;
+
+      // All four sections are independent of each other - run them
+      // concurrently instead of one-after-another, so total load time is
+      // bounded by the slowest single request rather than the sum of all.
+      await Promise.allSettled([
+        loadProfileBundle(playerId),
+        loadProfileRatingChart(playerId),
+        loadProfilePartnershipsAndRadar(playerId),
+        loadProfileHeadToHead(playerId)
+      ]);
     }
     document.getElementById('profile_player_select').addEventListener('change', loadProfile);
     document.getElementById('profile_h2h_opponent_select').addEventListener('change', loadProfile);

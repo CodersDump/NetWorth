@@ -425,6 +425,18 @@ def list_matches(event):
     if params.get('achievements_for'):
         all_tournaments = tournaments_table.scan().get('Items', [])
         return _response(200, compute_achievements(params.get('achievements_for'), items, all_tournaments))
+    if params.get('profile_bundle_for'):
+        player_id = params.get('profile_bundle_for')
+        all_tournaments = tournaments_table.scan().get('Items', [])
+        return _response(200, {
+            'hall_of_fame': compute_hall_of_fame(items),
+            'progress_badges': compute_progress_badges(items),
+            'achievements': compute_achievements(player_id, items, all_tournaments),
+            'recent_form': compute_recent_form(player_id, items, 10),
+            'overall_record': compute_overall_record(player_id, items),
+            'top_opponents': compute_top_opponents(player_id, items, 15),
+            'attendance': compute_attendance(items),
+        })
     if params.get('progress_history'):
         scope = params.get('scope', 'global')
         period = params.get('period', 'week')
