@@ -19,6 +19,7 @@ so re-running just overwrites the same entries with the same result.
 """
 import boto3
 from datetime import datetime, timezone, timedelta, date
+from decimal import Decimal
 
 K_FACTOR = 32
 
@@ -78,7 +79,7 @@ def write_history_entry(history_table, players_table, scope_label, group_id, per
         p = players_table.get_item(Key={'player_id': pid}).get('Item')
         item['most_improved_player_id'] = pid
         item['most_improved_name'] = p['name'] if p else pid
-        item['most_improved_delta'] = snapshot['most_improved']['delta']
+        item['most_improved_delta'] = Decimal(str(snapshot['most_improved']['delta']))
     if snapshot['most_active']:
         pid = snapshot['most_active']['player_id']
         p = players_table.get_item(Key={'player_id': pid}).get('Item')
@@ -91,10 +92,10 @@ def write_history_entry(history_table, players_table, scope_label, group_id, per
 
 
 def iter_weeks(earliest_date, today):
-    # find the first Monday on/after earliest_date
-    d = earliest_date
-    while d.weekday() != 0:
-        d += timedelta(days=1)
+    # go BACK to the Monday of the week containing earliest_date, not
+    # forward to the next one - otherwise a match that happened on a
+    # weekend gets excluded from its own week entirely
+    d = earliest_date - timedelta(days=earliest_date.weekday())
     while d + timedelta(days=7) <= today:
         yield d, d + timedelta(days=7)
         d += timedelta(days=7)

@@ -21,6 +21,7 @@ Env vars:
 import os
 import boto3
 from datetime import datetime, timezone, timedelta, date
+from decimal import Decimal
 
 dynamodb = boto3.resource('dynamodb')
 matches_table = dynamodb.Table(os.environ['MATCHES_TABLE'])
@@ -127,7 +128,7 @@ def write_history_entry(scope_label, group_id, period_name, period_start_iso, pe
         p = players_table.get_item(Key={'player_id': pid}).get('Item')
         item['most_improved_player_id'] = pid
         item['most_improved_name'] = p['name'] if p else pid
-        item['most_improved_delta'] = snapshot['most_improved']['delta']
+        item['most_improved_delta'] = Decimal(str(snapshot['most_improved']['delta']))
     if snapshot['most_active']:
         pid = snapshot['most_active']['player_id']
         p = players_table.get_item(Key={'player_id': pid}).get('Item')
