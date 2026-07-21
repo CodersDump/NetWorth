@@ -497,9 +497,16 @@ def compute_all_standings(item):
 
 # ---------- group stage scoring ----------
 
-def _submit_game(fixture, score_a, score_b, best_of, target=21):
-    """Append one game's score to a fixture/match. Returns True if the match is now decided."""
-    if not _is_valid_completed_game(score_a, score_b, target):
+def _submit_game(fixture, score_a, score_b, best_of, target=21, override=False):
+    """Append one game's score to a fixture/match. Returns True if the match is now decided.
+    With override=True, skips the strict win-by-2-at-target validation - for
+    real matches that ended at a different point total than the tournament's
+    configured rules (called early, house rules, etc). A tie still isn't a
+    valid result either way, since there's no way to declare a winner."""
+    if override:
+        if score_a == score_b:
+            raise ValueError('scores cannot be tied - a winner is required')
+    elif not _is_valid_completed_game(score_a, score_b, target):
         cap = target + 9
         raise ValueError(f'invalid game score: must be won by 2 at {target}+ points, or reach the hard cap of {cap}')
 
@@ -525,6 +532,7 @@ def record_group_score(tournament_id, event):
     fixture_id = body.get('fixture_id')
     score_a = body.get('score_a')
     score_b = body.get('score_b')
+    override = bool(body.get('override'))
 
     if not subgroup or not fixture_id or score_a is None or score_b is None:
         return _response(400, {'error': 'subgroup, fixture_id, score_a, score_b are required'})
@@ -550,7 +558,7 @@ def record_group_score(tournament_id, event):
     best_of = item.get('best_of', 1)
     target = item.get('points_to_win', 21)
     try:
-        decided = _submit_game(fixture, score_a, score_b, best_of, target)
+        decided = _submit_game(fixture, score_a, score_b, best_of, target, override)
     except ValueError as e:
         return _response(400, {'error': str(e)})
 
@@ -654,6 +662,7 @@ def record_knockout_score(tournament_id, event):
     third_place = bool(body.get('third_place'))
     score_a = body.get('score_a')
     score_b = body.get('score_b')
+    override = bool(body.get('override'))
 
     if score_a is None or score_b is None:
         return _response(400, {'error': 'score_a and score_b are required'})
@@ -679,7 +688,7 @@ def record_knockout_score(tournament_id, event):
             return _response(400, {'error': 'this match is already decided'})
 
         try:
-            decided = _submit_game(match, score_a, score_b, best_of, target)
+            decided = _submit_game(match, score_a, score_b, best_of, target, override)
         except ValueError as e:
             return _response(400, {'error': str(e)})
 
@@ -705,7 +714,7 @@ def record_knockout_score(tournament_id, event):
         return _response(400, {'error': 'this match is already decided'})
 
     try:
-        decided = _submit_game(match, score_a, score_b, best_of, target)
+        decided = _submit_game(match, score_a, score_b, best_of, target, override)
     except ValueError as e:
         return _response(400, {'error': str(e)})
 

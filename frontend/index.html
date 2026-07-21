@@ -2833,16 +2833,20 @@
       await submitGroupScoreDirect(tournamentId, subgroup, fixtureId, score_a, score_b);
     }
 
-    async function submitGroupScoreDirect(tournamentId, subgroup, fixtureId, score_a, score_b) {
+    async function submitGroupScoreDirect(tournamentId, subgroup, fixtureId, score_a, score_b, override) {
       const res = await fetch(`${API_BASE_URL}/tournaments/${tournamentId}/group-score`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ subgroup, fixture_id: fixtureId, score_a, score_b })
+        body: JSON.stringify({ subgroup, fixture_id: fixtureId, score_a, score_b, override: !!override })
       });
       const data = await res.json();
       if (res.ok) {
         renderTournament(data);
         loadPlayers();
+      } else if (!override && data.error && data.error.startsWith('invalid game score')) {
+        if (confirm(`${data.error}\n\nThis doesn't match the tournament's configured scoring rules. Submit ${score_a}-${score_b} anyway as the actual result?`)) {
+          await submitGroupScoreDirect(tournamentId, subgroup, fixtureId, score_a, score_b, true);
+        }
       } else {
         alert(data.error);
       }
@@ -2854,16 +2858,20 @@
       await submitKnockoutScoreDirect(tournamentId, roundIndex, matchIndex, score_a, score_b);
     }
 
-    async function submitKnockoutScoreDirect(tournamentId, roundIndex, matchIndex, score_a, score_b) {
+    async function submitKnockoutScoreDirect(tournamentId, roundIndex, matchIndex, score_a, score_b, override) {
       const res = await fetch(`${API_BASE_URL}/tournaments/${tournamentId}/knockout-score`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ round_index: roundIndex, match_index: matchIndex, score_a, score_b })
+        body: JSON.stringify({ round_index: roundIndex, match_index: matchIndex, score_a, score_b, override: !!override })
       });
       const data = await res.json();
       if (res.ok) {
         renderTournament(data);
         loadPlayers();
+      } else if (!override && data.error && data.error.startsWith('invalid game score')) {
+        if (confirm(`${data.error}\n\nThis doesn't match the tournament's configured scoring rules. Submit ${score_a}-${score_b} anyway as the actual result?`)) {
+          await submitKnockoutScoreDirect(tournamentId, roundIndex, matchIndex, score_a, score_b, true);
+        }
       } else {
         alert(data.error);
       }
@@ -2875,16 +2883,20 @@
       await submitThirdPlaceScoreDirect(tournamentId, score_a, score_b);
     }
 
-    async function submitThirdPlaceScoreDirect(tournamentId, score_a, score_b) {
+    async function submitThirdPlaceScoreDirect(tournamentId, score_a, score_b, override) {
       const res = await fetch(`${API_BASE_URL}/tournaments/${tournamentId}/knockout-score`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ third_place: true, score_a, score_b })
+        body: JSON.stringify({ third_place: true, score_a, score_b, override: !!override })
       });
       const data = await res.json();
       if (res.ok) {
         renderTournament(data);
         loadPlayers();
+      } else if (!override && data.error && data.error.startsWith('invalid game score')) {
+        if (confirm(`${data.error}\n\nThis doesn't match the tournament's configured scoring rules. Submit ${score_a}-${score_b} anyway as the actual result?`)) {
+          await submitThirdPlaceScoreDirect(tournamentId, score_a, score_b, true);
+        }
       } else {
         alert(data.error);
       }
