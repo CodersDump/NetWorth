@@ -889,8 +889,9 @@ def compute_head_to_head(player_id, opponent_id, matches):
 
 
 def compute_recent_form(player_id, matches, limit=10):
-    """A player's last N matches, most recent first, as simple win/loss
-    results for a quick 'hot or cold' visual strip."""
+    """A player's last N matches, in chronological order (oldest to
+    newest) so a left-to-right rendering naturally puts the most recent
+    result on the right."""
     player_matches = sorted(
         [m for m in matches if player_id in (m.get('team_a') or []) or player_id in (m.get('team_b') or [])],
         key=lambda m: m.get('date', '')
@@ -909,7 +910,6 @@ def compute_recent_form(player_id, matches, limit=10):
             'result': 'W' if won else 'L',
             'opponent_names': opponent_names or []
         })
-    form.reverse()  # most recent first
     return {'player_id': player_id, 'form': form}
 
 
