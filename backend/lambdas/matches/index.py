@@ -35,7 +35,7 @@ import json
 import os
 import uuid
 import boto3
-from datetime import datetime, timezone, date
+from datetime import datetime, timezone, date, timedelta
 
 dynamodb = boto3.resource('dynamodb')
 matches_table = dynamodb.Table(os.environ['MATCHES_TABLE'])
@@ -382,6 +382,8 @@ def list_matches(event):
         return _response(200, compute_hall_of_fame(items, group_id))
     if params.get('diversity'):
         return _response(200, compute_diversity(items, group_id))
+    if params.get('progress_badges'):
+        return _response(200, compute_progress_badges(items, group_id))
 
     if group_id:
         items = [i for i in items if i.get('group_id') == group_id]
@@ -510,32 +512,39 @@ def compute_hall_of_fame(items, group_id_filter=None):
     biggest upsets (giant-killer), best comebacks (only available for
     matches recorded via the live point-by-point counter), rating
     consistency/volatility, singles-vs-doubles specialization, and
-    group-stage-vs-knockout performance (deep-run rate)."""
+    group-stage-vs-knockout performance (deep-run rate).
+
+    Names are resolved from the current Players table at the very end,
+    not from the names frozen onto each match record at the time it was
+    played - a rename should show up everywhere immediately, rather than
+    only affecting matches recorded after the rename happened."""
     if group_id_filter:
         items = [i for i in items if i.get('group_id') == group_id_filter]
 
     matches = sorted(items, key=lambda m: m.get('date', ''))
 
+    name_cache = {}
+
+    def resolve_name(pid, fallback=None):
+        if pid not in name_cache:
+            p = players_table.get_item(Key={'player_id': pid}).get('Item')
+            name_cache[pid] = p['name'] if p else (fallback or pid)
+        return name_cache[pid]
+
     rolling_ratings = {}
     current_streak = {}
-    best_streak = {'player_id': None, 'name': None, 'streak': 0}
-    peak_rating = {}
-    biggest_blowout = None
-    giant_killer_candidates = []
-    comeback_candidates = []
-    player_deltas = {}       # pid -> {'name':, 'deltas': [...]}
-    format_stats = {}        # pid -> {'name':, 'singles_w','singles_l','doubles_w','doubles_l'}
-    stage_stats = {}         # pid -> {'name':, 'group_w','group_l','knockout_w','knockout_l'}
+    best_streak = {'player_id': None, 'streak': 0}
+    peak_rating = {}          # pid -> rating
+    biggest_blowout = None    # will hold team_a_ids/team_b_ids, resolved to names at the end
+    giant_killer_candidates = []  # will hold winner_ids/loser_ids
+    comeback_candidates = []      # will hold winner_ids
+    player_deltas = {}       # pid -> [deltas]
+    format_stats = {}        # pid -> {'singles_w','singles_l','doubles_w','doubles_l'}
+    stage_stats = {}         # pid -> {'group_w','group_l','knockout_w','knockout_l'}
     tournament_stage_sets = {}  # pid -> {'group_tournaments': set(), 'knockout_tournaments': set()}
 
     def team_avg(team_ids):
         return sum(rolling_ratings.get(pid, 1000.0) for pid in team_ids) / len(team_ids) if team_ids else 1000.0
-
-    def get_name(pid, ids_a, names_a, ids_b, names_b):
-        for ids, names in ((ids_a, names_a), (ids_b, names_b)):
-            if pid in ids and ids.index(pid) < len(names):
-                return names[ids.index(pid)]
-        return pid
 
     for m in matches:
         team_a = m.get('team_a') or []
@@ -559,36 +568,32 @@ def compute_hall_of_fame(items, group_id_filter=None):
         if winner in ('A', 'B'):
             winners = team_a if winner == 'A' else team_b
             losers = team_b if winner == 'A' else team_a
-            winner_names = team_a_names if winner == 'A' else team_b_names
-            loser_names = team_b_names if winner == 'A' else team_a_names
             pre_winner = pre_a if winner == 'A' else pre_b
             pre_loser = pre_b if winner == 'A' else pre_a
 
             for pid in winners:
                 current_streak[pid] = current_streak.get(pid, 0) + 1
                 if current_streak[pid] > best_streak['streak']:
-                    name = next((n for p, n in zip(winners, winner_names) if p == pid), pid)
-                    best_streak.update({'player_id': pid, 'name': name, 'streak': current_streak[pid]})
+                    best_streak.update({'player_id': pid, 'streak': current_streak[pid]})
             for pid in losers:
                 current_streak[pid] = 0
 
             upset_gap = pre_loser - pre_winner
             if upset_gap > 0:
                 giant_killer_candidates.append({
-                    'winner_names': winner_names, 'loser_names': loser_names,
+                    'winner_ids': winners, 'loser_ids': losers,
                     'upset_gap': round(upset_gap, 1), 'date': m.get('date'),
                     'score': f"{int(score_a)}-{int(score_b)}" if winner == 'A' else f"{int(score_b)}-{int(score_a)}"
                 })
 
             for pid in team_a + team_b:
-                name = get_name(pid, team_a, team_a_names, team_b, team_b_names)
                 won = pid in winners
                 if match_type in ('singles', 'doubles'):
-                    fs = format_stats.setdefault(pid, {'name': name, 'singles_w': 0, 'singles_l': 0, 'doubles_w': 0, 'doubles_l': 0})
+                    fs = format_stats.setdefault(pid, {'singles_w': 0, 'singles_l': 0, 'doubles_w': 0, 'doubles_l': 0})
                     key = 'singles' if match_type == 'singles' else 'doubles'
                     fs[f'{key}_w' if won else f'{key}_l'] += 1
                 if stage in ('group', 'knockout'):
-                    ss = stage_stats.setdefault(pid, {'name': name, 'group_w': 0, 'group_l': 0, 'knockout_w': 0, 'knockout_l': 0})
+                    ss = stage_stats.setdefault(pid, {'group_w': 0, 'group_l': 0, 'knockout_w': 0, 'knockout_l': 0})
                     ss[f'{stage}_w' if won else f'{stage}_l'] += 1
 
         if stage in ('group', 'knockout') and tournament_id:
@@ -599,43 +604,40 @@ def compute_hall_of_fame(items, group_id_filter=None):
         margin = abs(score_a - score_b)
         if biggest_blowout is None or margin > biggest_blowout['margin']:
             biggest_blowout = {
-                'team_a_names': team_a_names, 'team_b_names': team_b_names,
+                'team_a_ids': team_a, 'team_b_ids': team_b,
                 'score_a': int(score_a), 'score_b': int(score_b),
                 'margin': int(margin), 'date': m.get('date')
             }
 
         momentum = m.get('momentum')
         if momentum and momentum.get('winner_overcame_deficit', 0) > 0:
-            winner_names = team_a_names if winner == 'A' else team_b_names
+            winners = team_a if winner == 'A' else team_b
             comeback_candidates.append({
-                'winner_names': winner_names, 'deficit_overcome': int(momentum['winner_overcame_deficit']),
+                'winner_ids': winners, 'deficit_overcome': int(momentum['winner_overcame_deficit']),
                 'date': m.get('date')
             })
 
         ratings_after = m.get('ratings_after') or {}
         for pid, rating in ratings_after.items():
             rating = float(rating)
-            name = get_name(pid, team_a, team_a_names, team_b, team_b_names)
-            entry = player_deltas.setdefault(pid, {'name': name, 'deltas': []})
-            entry['deltas'].append(rating - pre_individual.get(pid, 1000.0))
+            player_deltas.setdefault(pid, []).append(rating - pre_individual.get(pid, 1000.0))
 
             rolling_ratings[pid] = rating
-            if pid not in peak_rating or rating > peak_rating[pid]['rating']:
-                peak_rating[pid] = {'player_id': pid, 'name': name, 'rating': int(round(rating))}
+            if pid not in peak_rating or rating > peak_rating[pid]:
+                peak_rating[pid] = rating
 
     giant_killer_candidates.sort(key=lambda g: -g['upset_gap'])
     comeback_candidates.sort(key=lambda c: -c['deficit_overcome'])
 
     # Consistency / volatility - population standard deviation of rating deltas, min 3 matches
     consistency_rows = []
-    for pid, entry in player_deltas.items():
-        deltas = entry['deltas']
+    for pid, deltas in player_deltas.items():
         if len(deltas) < 3:
             continue
         mean_delta = sum(deltas) / len(deltas)
         variance = sum((d - mean_delta) ** 2 for d in deltas) / len(deltas)
         stdev = round(variance ** 0.5, 1)
-        consistency_rows.append({'player_id': pid, 'name': entry['name'], 'matches': len(deltas), 'volatility': stdev})
+        consistency_rows.append({'player_id': pid, 'matches': len(deltas), 'volatility': stdev})
     consistency_rows.sort(key=lambda r: r['volatility'])
     most_consistent = consistency_rows[:5]
     most_volatile = sorted(consistency_rows, key=lambda r: -r['volatility'])[:5]
@@ -650,7 +652,7 @@ def compute_hall_of_fame(items, group_id_filter=None):
         singles_pct = round(fs['singles_w'] / singles_total * 100, 1)
         doubles_pct = round(fs['doubles_w'] / doubles_total * 100, 1)
         format_rows.append({
-            'player_id': pid, 'name': fs['name'],
+            'player_id': pid,
             'singles_win_pct': singles_pct, 'doubles_win_pct': doubles_pct,
             'gap': round(abs(singles_pct - doubles_pct), 1),
             'stronger_format': 'singles' if singles_pct > doubles_pct else 'doubles'
@@ -663,20 +665,42 @@ def compute_hall_of_fame(items, group_id_filter=None):
         all_tournaments = sets['group_tournaments'] | sets['knockout_tournaments']
         if not all_tournaments:
             continue
-        name = stage_stats.get(pid, {}).get('name') or format_stats.get(pid, {}).get('name') or pid
         rate = round(len(sets['knockout_tournaments']) / len(all_tournaments) * 100, 1)
         deep_run_rows.append({
-            'player_id': pid, 'name': name,
+            'player_id': pid,
             'tournaments_entered': len(all_tournaments),
             'reached_knockout': len(sets['knockout_tournaments']),
             'deep_run_rate': rate
         })
     deep_run_rows.sort(key=lambda r: -r['deep_run_rate'])
 
+    # Resolve every name from the current Players table, right here at the
+    # end - this is the one place names get attached to the output.
+    for row in consistency_rows:
+        row['name'] = resolve_name(row['player_id'])
+    for row in format_rows:
+        row['name'] = resolve_name(row['player_id'])
+    for row in deep_run_rows:
+        row['name'] = resolve_name(row['player_id'])
+    for g in giant_killer_candidates:
+        g['winner_names'] = [resolve_name(pid) for pid in g['winner_ids']]
+        g['loser_names'] = [resolve_name(pid) for pid in g['loser_ids']]
+    for c in comeback_candidates:
+        c['winner_names'] = [resolve_name(pid) for pid in c['winner_ids']]
+    if biggest_blowout:
+        biggest_blowout['team_a_names'] = [resolve_name(pid) for pid in biggest_blowout['team_a_ids']]
+        biggest_blowout['team_b_names'] = [resolve_name(pid) for pid in biggest_blowout['team_b_ids']]
+    if best_streak['player_id']:
+        best_streak['name'] = resolve_name(best_streak['player_id'])
+    peak_ratings_list = [
+        {'player_id': pid, 'name': resolve_name(pid), 'rating': int(round(rating))}
+        for pid, rating in peak_rating.items()
+    ]
+
     return {
         'longest_win_streak': best_streak if best_streak['player_id'] else None,
         'biggest_blowout': biggest_blowout,
-        'peak_ratings': sorted(peak_rating.values(), key=lambda p: -p['rating'])[:10],
+        'peak_ratings': sorted(peak_ratings_list, key=lambda p: -p['rating'])[:10],
         'giant_killer_top5': giant_killer_candidates[:5],
         'comeback_top5': comeback_candidates[:5],
         'most_consistent': most_consistent,
@@ -725,6 +749,76 @@ def compute_diversity(items, group_id_filter=None):
 
     result.sort(key=lambda r: -r['top_partner_pct'])
     return {'players': result}
+
+
+def compute_progress_badges(items, group_id_filter=None):
+    """For each of the last week/month/year: who improved their rating the
+    most, and who played the most matches. Names are resolved live from
+    the current Players table, same reasoning as hall_of_fame - a rename
+    should show up immediately everywhere, not just in future matches."""
+    if group_id_filter:
+        items = [i for i in items if i.get('group_id') == group_id_filter]
+
+    matches = sorted(items, key=lambda m: m.get('date', ''))
+    now = datetime.now(timezone.utc)
+    periods = {
+        'week': now - timedelta(days=7),
+        'month': now - timedelta(days=30),
+        'year': now - timedelta(days=365),
+    }
+
+    name_cache = {}
+
+    def resolve_name(pid):
+        if pid not in name_cache:
+            p = players_table.get_item(Key={'player_id': pid}).get('Item')
+            name_cache[pid] = p['name'] if p else pid
+        return name_cache[pid]
+
+    result = {}
+    for period_name, cutoff in periods.items():
+        rating_before_cutoff = {}
+        rating_current = {}
+        matches_in_period = {}
+
+        for m in matches:
+            date_str = m.get('date', '')
+            try:
+                match_date = datetime.fromisoformat(date_str)
+            except ValueError:
+                continue
+            ratings_after = m.get('ratings_after') or {}
+            for pid, rating in ratings_after.items():
+                rating = float(rating)
+                if match_date < cutoff:
+                    rating_before_cutoff[pid] = rating
+                rating_current[pid] = rating
+                if match_date >= cutoff:
+                    matches_in_period[pid] = matches_in_period.get(pid, 0) + 1
+
+        progress_rows = []
+        for pid, current in rating_current.items():
+            start = rating_before_cutoff.get(pid, 1000.0)
+            delta = round(current - start, 1)
+            progress_rows.append({
+                'player_id': pid, 'name': resolve_name(pid),
+                'delta': delta, 'current_rating': int(round(current)),
+                'matches_in_period': matches_in_period.get(pid, 0)
+            })
+        progress_rows.sort(key=lambda r: -r['delta'])
+
+        most_active = None
+        if matches_in_period:
+            active_pid = max(matches_in_period.items(), key=lambda kv: kv[1])[0]
+            most_active = {'player_id': active_pid, 'name': resolve_name(active_pid),
+                            'matches': matches_in_period[active_pid]}
+
+        result[period_name] = {
+            'most_improved_top5': [r for r in progress_rows if r['matches_in_period'] > 0][:5],
+            'most_active': most_active
+        }
+
+    return result
 
 
 def compute_partner_distribution(player_id, items, top_n=10):

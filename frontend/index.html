@@ -559,6 +559,16 @@
       </div>
 
       <div class="card">
+        <h2>Progress & badges</h2>
+        <p class="card-sub">Who's climbing fastest and playing most, over the last week, month, and year.</p>
+        <label>Filter by group (optional)
+          <select id="badges_group_filter"><option value="">All groups</option></select>
+        </label>
+        <button id="load-badges-btn" type="button" class="secondary">Load progress</button>
+        <div id="badges-result" style="margin-top:12px;"></div>
+      </div>
+
+      <div class="card">
         <h2>Hall of fame</h2>
         <p class="card-sub">Highlights pulled from full match history.</p>
         <div class="row">
@@ -593,7 +603,41 @@
       </div>
 
       <div class="card">
+        <h2>Achievements</h2>
+        <p class="card-sub">Records and badges this player currently holds.</p>
+        <div id="profile-achievements-result"></div>
+      </div>
+
+      <div class="card">
         <h2>Rating history</h2>
+        <p class="card-sub">Compare up to 4 players.</p>
+        <div class="row">
+          <div>
+            <label>Compare with (optional)
+              <select id="profile_compare2_select"><option value="">None</option></select>
+            </label>
+          </div>
+          <div>
+            <label>Compare with (optional)
+              <select id="profile_compare3_select"><option value="">None</option></select>
+            </label>
+          </div>
+        </div>
+        <div class="row">
+          <div>
+            <label>Compare with (optional)
+              <select id="profile_compare4_select"><option value="">None</option></select>
+            </label>
+          </div>
+          <div>
+            <label>X-axis
+              <select id="profile_xaxis_mode">
+                <option value="time">Calendar time</option>
+                <option value="sequence">Match sequence</option>
+              </select>
+            </label>
+          </div>
+        </div>
         <canvas id="profile-rating-canvas" height="200"></canvas>
       </div>
 
@@ -815,6 +859,9 @@
       populateSelect(document.getElementById('log_player_filter'), labeled, 'player_id', 'label', 'All players');
       populateSelect(document.getElementById('partnerships_player_select'), labeled, 'player_id', 'label', null);
       populateSelect(document.getElementById('profile_player_select'), labeled, 'player_id', 'label', null);
+      populateSelect(document.getElementById('profile_compare2_select'), labeled, 'player_id', 'label', 'None');
+      populateSelect(document.getElementById('profile_compare3_select'), labeled, 'player_id', 'label', 'None');
+      populateSelect(document.getElementById('profile_compare4_select'), labeled, 'player_id', 'label', 'None');
       populateSelect(document.getElementById('rating_history_player1_select'), labeled, 'player_id', 'label', null);
       populateSelect(document.getElementById('rating_history_player2_select'), labeled, 'player_id', 'label', 'None');
       populateSelect(document.getElementById('rating_history_player3_select'), labeled, 'player_id', 'label', 'None');
@@ -834,6 +881,7 @@
       populateSelect(document.getElementById('partnerships_scope_group'), allGroups, 'group_id', 'group_name', 'All plays');
       populateSelect(document.getElementById('hof_group_filter'), allGroups, 'group_id', 'group_name', 'All groups');
       populateSelect(document.getElementById('diversity_group_filter'), allGroups, 'group_id', 'group_name', 'All groups');
+      populateSelect(document.getElementById('badges_group_filter'), allGroups, 'group_id', 'group_name', 'All groups');
       if (allGroups.length) {
         loadGroupMembers(document.getElementById('group_select').value);
       }
@@ -1794,24 +1842,44 @@
       if (!playerId) return;
 
       try {
-        const points = await fetchRatingHistory(playerId);
-        const player = allPlayers.find(p => p.player_id === playerId);
+        const playerIds = [
+          playerId,
+          document.getElementById('profile_compare2_select').value,
+          document.getElementById('profile_compare3_select').value,
+          document.getElementById('profile_compare4_select').value
+        ].filter(Boolean);
+        const xAxisMode = document.getElementById('profile_xaxis_mode').value;
+        const colors = ['#1F7A4D', '#FF4757', '#00B4D8', '#FFD23F'];
+
+        const datasets = [];
+        for (let i = 0; i < playerIds.length; i++) {
+          const pid = playerIds[i];
+          const player = allPlayers.find(p => p.player_id === pid);
+          const points = await fetchRatingHistory(pid);
+          const chartPoints = xAxisMode === 'sequence'
+            ? points.map((p, idx) => ({ x: idx + 1, y: p.y }))
+            : points.map(p => ({ x: p.x, y: p.y }));
+          datasets.push({
+            label: player ? player.name : pid,
+            data: chartPoints,
+            borderColor: colors[i % colors.length],
+            backgroundColor: colors[i % colors.length],
+            tension: 0.15
+          });
+        }
+
         if (profileRatingChart) profileRatingChart.destroy();
         const ctx = document.getElementById('profile-rating-canvas').getContext('2d');
+        const xScale = xAxisMode === 'sequence'
+          ? { type: 'linear', title: { display: true, text: 'Match #' }, ticks: { color: '#888', precision: 0 } }
+          : { type: 'time', time: { unit: 'day' }, ticks: { color: '#888' } };
+
         profileRatingChart = new Chart(ctx, {
           type: 'line',
-          data: {
-            datasets: [{
-              label: player ? player.name : playerId,
-              data: points,
-              borderColor: '#1F7A4D',
-              backgroundColor: '#1F7A4D',
-              tension: 0.15
-            }]
-          },
+          data: { datasets },
           options: {
             scales: {
-              x: { type: 'time', time: { unit: 'day' }, ticks: { color: '#888' } },
+              x: xScale,
               y: { ticks: { color: '#888' } }
             },
             plugins: { legend: { labels: { color: getComputedStyle(document.body).color } } }
@@ -1864,8 +1932,73 @@
       } catch (err) {
         console.error(err);
       }
+
+      try {
+        const [hofRes, badgesRes] = await Promise.all([
+          fetch(`${API_BASE_URL}/matches?hall_of_fame=true`),
+          fetch(`${API_BASE_URL}/matches?progress_badges=true`)
+        ]);
+        const hof = await hofRes.json();
+        const badges = await badgesRes.json();
+        const achievements = [];
+
+        if (hof.longest_win_streak && hof.longest_win_streak.player_id === playerId) {
+          achievements.push(`🏆 Longest win streak (${hof.longest_win_streak.streak} in a row)`);
+        }
+        if (hof.peak_ratings && hof.peak_ratings[0] && hof.peak_ratings[0].player_id === playerId) {
+          achievements.push(`📈 Highest peak rating ever (${hof.peak_ratings[0].rating})`);
+        }
+        if (hof.most_consistent && hof.most_consistent[0] && hof.most_consistent[0].player_id === playerId) {
+          achievements.push(`🎯 Most consistent player`);
+        }
+        if (hof.most_volatile && hof.most_volatile[0] && hof.most_volatile[0].player_id === playerId) {
+          achievements.push(`⚡ Streakiest player (biggest swings)`);
+        }
+        if (hof.giant_killer_top5 && hof.giant_killer_top5[0] && hof.giant_killer_top5[0].winner_ids && hof.giant_killer_top5[0].winner_ids.includes(playerId)) {
+          achievements.push(`💥 Biggest giant-killer upset on record`);
+        }
+        if (hof.comeback_top5 && hof.comeback_top5[0] && hof.comeback_top5[0].winner_ids && hof.comeback_top5[0].winner_ids.includes(playerId)) {
+          achievements.push(`🔄 Biggest comeback on record`);
+        }
+        if (hof.biggest_blowout) {
+          const bw = hof.biggest_blowout;
+          const winningIds = bw.score_a > bw.score_b ? bw.team_a_ids : bw.team_b_ids;
+          if (winningIds && winningIds.includes(playerId)) achievements.push(`💪 Biggest blowout win on record`);
+        }
+        if (hof.format_specialists && hof.format_specialists[0] && hof.format_specialists[0].player_id === playerId) {
+          achievements.push(`🎾 Biggest ${hof.format_specialists[0].stronger_format} specialist`);
+        }
+        if (hof.deep_run_rates && hof.deep_run_rates[0] && hof.deep_run_rates[0].player_id === playerId) {
+          achievements.push(`🚀 Best deep-run rate in tournaments`);
+        }
+
+        ['week', 'month', 'year'].forEach(period => {
+          const p = badges[period];
+          if (!p) return;
+          if (p.most_improved_top5 && p.most_improved_top5[0] && p.most_improved_top5[0].player_id === playerId && p.most_improved_top5[0].delta > 0) {
+            achievements.push(`🔥 Most improved this ${period}`);
+          }
+          if (p.most_active && p.most_active.player_id === playerId) {
+            achievements.push(`⚡ Most active this ${period}`);
+          }
+        });
+
+        const el = document.getElementById('profile-achievements-result');
+        if (achievements.length) {
+          el.innerHTML = achievements.map(a =>
+            `<span style="display:inline-block; background:var(--surface-2); border:1px solid var(--border); border-radius:16px; padding:6px 12px; margin:4px 6px 4px 0; font-size:13px;">${a}</span>`
+          ).join('');
+        } else {
+          el.innerHTML = '<p style="font-size:13px;color:var(--text-secondary);">No records held yet - keep playing!</p>';
+        }
+      } catch (err) {
+        document.getElementById('profile-achievements-result').textContent = `Request failed: ${err.message}`;
+      }
     }
     document.getElementById('profile_player_select').addEventListener('change', loadProfile);
+    ['profile_compare2_select', 'profile_compare3_select', 'profile_compare4_select', 'profile_xaxis_mode'].forEach(id => {
+      document.getElementById(id).addEventListener('change', loadProfile);
+    });
 
     function renderPartnerRadar(data, highlightTournament, svgId = 'radar-svg') {
       const svg = document.getElementById(svgId);
@@ -1920,6 +2053,46 @@
 
       svg.innerHTML = svgContent;
     }
+
+    async function loadBadges() {
+      const groupId = document.getElementById('badges_group_filter').value;
+      const resultEl = document.getElementById('badges-result');
+      resultEl.textContent = 'Loading...';
+
+      try {
+        const params = new URLSearchParams({ progress_badges: 'true' });
+        if (groupId) params.set('group_id', groupId);
+        const res = await fetch(`${API_BASE_URL}/matches?${params.toString()}`);
+        const data = await res.json();
+        if (!res.ok) { resultEl.textContent = `Error: ${data.error}`; return; }
+
+        const periodLabels = { week: 'This week', month: 'This month', year: 'This year' };
+        let html = '';
+        ['week', 'month', 'year'].forEach(period => {
+          const p = data[period];
+          html += `<h4>${periodLabels[period]}</h4>`;
+          if (!p.most_improved_top5.length) {
+            html += '<p style="font-size:13px;color:var(--text-secondary);">No matches in this period yet.</p>';
+            return;
+          }
+          const topImprover = p.most_improved_top5[0];
+          html += `<p>🔥 <strong>Most improved:</strong> ${topImprover.name} (${topImprover.delta >= 0 ? '+' : ''}${topImprover.delta})</p>`;
+          if (p.most_active) {
+            html += `<p>⚡ <strong>Most active:</strong> ${p.most_active.name} (${p.most_active.matches} match${p.most_active.matches === 1 ? '' : 'es'})</p>`;
+          }
+          html += '<table><tr><th>Player</th><th>Change</th><th>Current rating</th><th>Matches</th></tr>';
+          p.most_improved_top5.forEach(row => {
+            html += `<tr><td>${row.name}</td><td>${row.delta >= 0 ? '+' : ''}${row.delta}</td><td class="rating">${row.current_rating}</td><td>${row.matches_in_period}</td></tr>`;
+          });
+          html += '</table>';
+        });
+        resultEl.innerHTML = html;
+      } catch (err) {
+        resultEl.textContent = `Request failed: ${err.message}`;
+      }
+    }
+    document.getElementById('load-badges-btn').addEventListener('click', loadBadges);
+    document.getElementById('badges_group_filter').addEventListener('change', loadBadges);
 
     async function loadDiversity() {
       const groupId = document.getElementById('diversity_group_filter').value;
@@ -2051,6 +2224,7 @@
       loadRatingHistory();
       loadPartnershipsSection();
       loadDiversity();
+      loadBadges();
       loadHallOfFame();
       loadAttendance();
       loadProfile();
@@ -2798,11 +2972,12 @@
       const isChampionA = finalMatch.player_a.player_id === finalMatch.winner_id;
       const championName = isChampionA ? finalMatch.player_a.name : finalMatch.player_b.name;
       const runnerUpName = isChampionA ? finalMatch.player_b.name : finalMatch.player_a.name;
+      const finalTotals = matchTotals(finalMatch);
 
       let recap = `🏆 ${t.name} - Results\n\n`;
       recap += `Champion: ${championName}\n`;
       recap += `Runner-up: ${runnerUpName}\n`;
-      recap += `Final score: ${finalMatch.score_a}-${finalMatch.score_b}\n`;
+      recap += `Final score: ${finalTotals.a}-${finalTotals.b}\n`;
 
       if (item_has_third_place(t) && t.knockout.third_place_match.winner_id) {
         const tp = t.knockout.third_place_match;
