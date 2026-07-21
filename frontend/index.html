@@ -146,7 +146,12 @@
 
   .h2h-row { margin-bottom: 12px; }
   .h2h-row-header { display: flex; justify-content: space-between; font-size: 13px; margin-bottom: 4px; }
-  .h2h-bar { display: flex; height: 20px; border-radius: 5px; overflow: hidden; background: var(--surface-2); }
+  .h2h-bar { display: flex; height: 8px; border-radius: 4px; overflow: hidden; background: var(--surface-2); }
+
+  .overall-record-bar { display: flex; height: 14px; border-radius: 5px; overflow: hidden; margin: 8px 0; }
+  .overall-record-legend { display: flex; flex-wrap: wrap; gap: 12px; font-size: 12px; color: var(--text-secondary); }
+  .overall-record-legend span { display: inline-flex; align-items: center; gap: 5px; }
+  .overall-record-legend .swatch { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
   .h2h-bar-wins { background: var(--court); }
   .h2h-bar-losses { background: var(--smash); }
 
@@ -1971,9 +1976,25 @@
         const el = document.getElementById('profile-overall-record-result');
         const totalGames = data.total_wins + data.total_losses;
         const totalRate = totalGames ? Math.round(data.total_wins / totalGames * 100) : 0;
+
+        const segments = [
+          { label: 'Singles wins', value: data.singles_wins, color: 'var(--court)' },
+          { label: 'Singles losses', value: data.singles_losses, color: 'var(--shuttle)' },
+          { label: 'Doubles wins', value: data.doubles_wins, color: 'var(--rally)' },
+          { label: 'Doubles losses', value: data.doubles_losses, color: 'var(--smash)' }
+        ];
+        const total = segments.reduce((sum, s) => sum + s.value, 0);
+        const barHtml = total
+          ? segments.map(s => `<div style="width:${s.value / total * 100}%; background:${s.color};"></div>`).join('')
+          : '';
+        const legendHtml = segments.map(s =>
+          `<span><span class="swatch" style="background:${s.color};"></span>${s.label}: ${s.value}</span>`
+        ).join('');
+
         el.innerHTML = `
           <p style="margin:0 0 6px;"><strong>Overall: ${data.total_wins}-${data.total_losses}</strong> (${totalRate}% win rate)</p>
-          <p style="margin:0; color:var(--text-secondary);">Singles: ${data.singles_wins}-${data.singles_losses} &middot; Doubles: ${data.doubles_wins}-${data.doubles_losses}</p>
+          <div class="overall-record-bar">${barHtml}</div>
+          <div class="overall-record-legend">${legendHtml}</div>
         `;
       } catch (err) {
         document.getElementById('profile-overall-record-result').textContent = `Request failed: ${err.message}`;
