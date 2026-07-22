@@ -215,6 +215,16 @@
   hr { border: none; border-top: 1px solid var(--border); margin: 20px 0; }
   .row strong { display: block; margin-bottom: 4px; font-size: 13px; }
   .row select { margin-top: 4px; }
+  .fin-mem-card { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; margin-top: 8px; }
+  .fin-mem-card-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+  .fin-mem-card-name { font-weight: 600; }
+  .fin-mem-card select { width: auto; min-width: 90px; }
+  .fin-mem-card-pay { margin-top: 6px; font-size: 13px; }
+  .fin-mem-card-actions { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+  .fin-mem-card-actions button { padding: 6px 10px; font-size: 12px; margin-top: 0; white-space: nowrap; }
+  .bulk-roster-list { max-height: 260px; overflow-y: auto; border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; margin: 8px 0; }
+  .bulk-roster-item { display: flex; align-items: center; gap: 8px; padding: 4px 0; }
+  .bulk-roster-item input { width: auto; }
 
   @media (max-width: 640px) {
     .app-shell { padding: 0 10px 48px; }
@@ -670,6 +680,22 @@
             </label></div>
           </div>
           <button id="finance-load-members-btn" type="button" class="secondary">Load memberships</button>
+          <button id="finance-copy-prev-month-btn" type="button" class="secondary">Copy last month's Yes members here (as No)</button>
+
+          <details style="margin-top:10px;">
+            <summary style="cursor:pointer; font-size:14px;">Bulk add from roster</summary>
+            <p class="card-sub">Tick everyone joining for the month/slot selected above, pick a status, add them all at once.</p>
+            <div id="bulk-roster-list" class="bulk-roster-list"></div>
+            <div class="row" style="margin-top:6px;">
+              <div><button type="button" class="secondary" id="bulk-select-all-btn">Select all</button>
+                <button type="button" class="secondary" id="bulk-select-none-btn">Select none</button></div>
+              <div><label>Status for all selected
+                <select id="bulk_status"><option>Yes</option><option selected>No</option><option>NA</option></select>
+              </label></div>
+            </div>
+            <button id="finance-bulk-add-btn" type="button">Add selected</button>
+          </details>
+
           <div class="row" style="margin-top:12px;">
             <div><label>Player (roster)
               <select id="fmem_player"><option value="">- pick from roster -</option></select>
@@ -1029,6 +1055,13 @@
     // keep the card hidden.
     const UPI_ID = 'REPLACE_ME@upi';
     const UPI_NAME = 'Matchpoint Badminton';
+    // Easiest path: export the QR straight from your UPI app (GPay/PhonePe
+    // -> your profile -> Share QR -> Save image), then add that image file
+    // to frontend/assets/upi-qr.png in the repo and leave this path as-is.
+    // If that file isn't there, a QR is generated on the fly from UPI_ID
+    // instead (needs a reachable CDN) - either works, the image is simpler
+    // and has no external dependency.
+    const UPI_QR_IMAGE = 'assets/upi-qr.png';
 
     let allPlayers = [];
     let allGroups = [];
@@ -2638,36 +2671,60 @@
 
     // ---------- UPI payment card (public) ----------
     (function initUpiCard() {
-      if (!UPI_ID || UPI_ID.includes('REPLACE_ME')) return;
+      const idSet = UPI_ID && !UPI_ID.includes('REPLACE_ME');
+      const imgSet = !!UPI_QR_IMAGE;
+      if (!idSet && !imgSet) return;
       const card = document.getElementById('upi-pay-card');
       card.style.display = 'block';
-      document.getElementById('upi-id-text').textContent = UPI_ID;
-      const payUrl = `upi://pay?pa=${encodeURIComponent(UPI_ID)}&pn=${encodeURIComponent(UPI_NAME)}&cu=INR`;
-      document.getElementById('upi-deeplink').href = payUrl;
-      document.getElementById('upi-copy-btn').addEventListener('click', () => {
-        navigator.clipboard.writeText(UPI_ID).then(() => {
-          document.getElementById('upi-copy-btn').textContent = 'Copied ✓';
-          setTimeout(() => { document.getElementById('upi-copy-btn').textContent = 'Copy'; }, 1500);
+      if (idSet) {
+        document.getElementById('upi-id-text').textContent = UPI_ID;
+        const payUrl = `upi://pay?pa=${encodeURIComponent(UPI_ID)}&pn=${encodeURIComponent(UPI_NAME)}&cu=INR`;
+        document.getElementById('upi-deeplink').href = payUrl;
+        document.getElementById('upi-copy-btn').addEventListener('click', () => {
+          navigator.clipboard.writeText(UPI_ID).then(() => {
+            document.getElementById('upi-copy-btn').textContent = 'Copied ✓';
+            setTimeout(() => { document.getElementById('upi-copy-btn').textContent = 'Copy'; }, 1500);
+          });
         });
-      });
-      // Render the QR client-side; fall back to a QR image service, and if
-      // that also fails the ID text and deep link above still work fine.
+      } else {
+        document.getElementById('upi-id-text').closest('p').style.display = 'none';
+        document.getElementById('upi-deeplink').style.display = 'none';
+      }
+      // Priority: (1) a real QR image you exported from your UPI app and
+      // committed to the repo - no CDN dependency, always renders;
+      // (2) a client-generated QR from UPI_ID via a CDN library;
+      // (3) a QR image service as a second fallback; (4) hide the box, ID
+      // text and deep link button above still work regardless.
       const qrEl = document.getElementById('upi-qr');
-      const imageFallback = () => {
+      const generateFallback = () => {
+        if (!idSet) { qrEl.style.display = 'none'; return; }
+        const payUrl = `upi://pay?pa=${encodeURIComponent(UPI_ID)}&pn=${encodeURIComponent(UPI_NAME)}&cu=INR`;
+        const imageServiceFallback = () => {
+          const img = document.createElement('img');
+          img.width = 180; img.height = 180; img.alt = 'UPI QR';
+          img.src = `https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(payUrl)}`;
+          img.onerror = () => { qrEl.style.display = 'none'; };
+          qrEl.appendChild(img);
+        };
+        const s = document.createElement('script');
+        s.src = 'https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js';
+        s.onload = () => {
+          try { new QRCode(qrEl, { text: payUrl, width: 180, height: 180 }); }
+          catch (err) { imageServiceFallback(); }
+        };
+        s.onerror = imageServiceFallback;
+        document.head.appendChild(s);
+      };
+      if (imgSet) {
         const img = document.createElement('img');
         img.width = 180; img.height = 180; img.alt = 'UPI QR';
-        img.src = `https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(payUrl)}`;
-        img.onerror = () => { qrEl.style.display = 'none'; };
+        img.style.display = 'block';
+        img.onerror = () => { qrEl.innerHTML = ''; generateFallback(); };
+        img.src = UPI_QR_IMAGE;
         qrEl.appendChild(img);
-      };
-      const s = document.createElement('script');
-      s.src = 'https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js';
-      s.onload = () => {
-        try { new QRCode(qrEl, { text: payUrl, width: 180, height: 180 }); }
-        catch (err) { imageFallback(); }
-      };
-      s.onerror = imageFallback;
-      document.head.appendChild(s);
+      } else {
+        generateFallback();
+      }
     })();
 
     // ---------- finance (view-key gated) ----------
@@ -2804,32 +2861,38 @@
       const res = await fetch(`${API_BASE_URL}/finance/memberships?${qs}`);
       const data = await res.json();
       if (!res.ok) { el.textContent = `Error: ${data.error}`; return; }
-      if (!data.memberships.length) { el.textContent = 'No membership rows for this month/slot yet.'; return; }
+      if (!data.memberships.length) { el.textContent = 'No membership rows for this month/slot yet.'; renderBulkRosterList(); return; }
+      lastMemberships = data.memberships;
       const yesCount = data.memberships.filter(m => m.status === 'Yes').length;
       const cph = data.cost_per_head;
       let html = `<p style="font-size:13px;">Enrolled (Yes): <strong>${yesCount}</strong>` +
         (cph != null ? ` · Per head: <strong>${cph}</strong> <span style="opacity:0.65;">(${data.estimated_total}÷${yesCount})</span>` : '') + `</p>`;
-      html += '<table><tr><th>Player</th><th>Status</th><th>Payment</th><th>Remark</th><th></th></tr>';
       data.memberships.forEach(m => {
-        let pay = '-';
+        let pay = '';
         if (m.status === 'Yes' && cph != null) {
           const conf = m.payment_confirmed_amount != null ? parseFloat(m.payment_confirmed_amount) : null;
           if (conf !== null && Math.abs(conf - cph) < 0.01) {
-            pay = `Paid ✓ ${conf} <button type="button" class="secondary fin-unconfirm" data-id="${m.record_id}">undo</button>`;
+            pay = `<div class="fin-mem-card-pay">Paid ✓ ${conf} <button type="button" class="secondary fin-unconfirm" data-id="${m.record_id}">undo</button></div>`;
           } else if (conf !== null) {
-            pay = `<button type="button" class="fin-confirm" data-id="${m.record_id}" data-name="${m.display_name}">Reconfirm ${cph}</button> <span style="font-size:11px;opacity:0.65;">amount changed (was ${conf})</span>`;
+            pay = `<div class="fin-mem-card-pay"><button type="button" class="fin-confirm" data-id="${m.record_id}" data-name="${m.display_name}">Reconfirm ${cph}</button> <span style="font-size:11px;opacity:0.65;">amount changed (was ${conf})</span></div>`;
           } else {
-            pay = `<button type="button" class="fin-confirm" data-id="${m.record_id}" data-name="${m.display_name}">Confirm payment</button>`;
+            pay = `<div class="fin-mem-card-pay"><button type="button" class="fin-confirm" data-id="${m.record_id}" data-name="${m.display_name}">Confirm payment</button></div>`;
           }
         }
-        html += `<tr><td>${m.display_name}${m.player_id ? '' : ' <span style="opacity:0.6;">(unlinked)</span>'}</td>` +
-          `<td><select class="fin-mem-status" data-id="${m.record_id}">` +
-          ['Yes', 'No', 'NA'].map(s => `<option${s === m.status ? ' selected' : ''}>${s}</option>`).join('') +
-          `</select></td><td>${pay}</td><td>${m.remark || ''}</td>` +
-          `<td><button type="button" class="secondary fin-refund" data-name="${m.display_name}" data-pid="${m.player_id || ''}">Refund…</button> ` +
-          `<button type="button" class="secondary fin-del" data-kind="memberships" data-id="${m.record_id}">Delete</button></td></tr>`;
+        html += `<div class="fin-mem-card">
+          <div class="fin-mem-card-top">
+            <span class="fin-mem-card-name">${m.display_name}${m.player_id ? '' : ' <span style="opacity:0.6;">(unlinked)</span>'}</span>
+            <select class="fin-mem-status" data-id="${m.record_id}">${['Yes', 'No', 'NA'].map(s => `<option${s === m.status ? ' selected' : ''}>${s}</option>`).join('')}</select>
+          </div>
+          ${m.remark ? `<div style="font-size:12px;opacity:0.7;margin-top:4px;">${m.remark}</div>` : ''}
+          ${pay}
+          <div class="fin-mem-card-actions">
+            <button type="button" class="secondary fin-refund" data-name="${m.display_name}" data-pid="${m.player_id || ''}">Refund…</button>
+            <button type="button" class="secondary fin-del" data-kind="memberships" data-id="${m.record_id}">Delete</button>
+          </div>
+        </div>`;
       });
-      el.innerHTML = html + '</table>';
+      el.innerHTML = html;
       el.querySelectorAll('.fin-confirm').forEach(btn => btn.addEventListener('click', async () => {
         if (!confirm(`Confirm that ${btn.dataset.name} paid ${cph} for ${document.getElementById('fmem_month').value} ${document.getElementById('fmem_slot').value}?`)) return;
         const { ok, data: d } = await finPost(`memberships/${btn.dataset.id}`, 'PUT', { confirm_payment: true });
@@ -2865,6 +2928,64 @@
         if (!ok) alert('Error: ' + d.error);
         loadFinanceSummary(); loadFinanceMembers();
       }));
+      renderBulkRosterList();
+    }
+
+    let lastMemberships = [];
+    const monthNamesFull = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+
+    function renderBulkRosterList() {
+      const el = document.getElementById('bulk-roster-list');
+      if (!el) return;
+      const already = new Set(lastMemberships.map(m => m.player_id).filter(Boolean));
+      if (!allPlayers.length) { el.innerHTML = '<p style="font-size:13px;">No players registered yet.</p>'; return; }
+      el.innerHTML = allPlayers.map(p => {
+        const disabled = already.has(p.player_id);
+        return `<label class="bulk-roster-item" style="${disabled ? 'opacity:0.45;' : ''}">
+          <input type="checkbox" value="${p.player_id}" data-name="${p.name}" ${disabled ? 'disabled' : ''}>
+          ${p.name}${disabled ? ' <span style="font-size:11px;">(already on this month/slot)</span>' : ''}
+        </label>`;
+      }).join('');
+    }
+
+    async function bulkAddFromRoster() {
+      const checked = [...document.querySelectorAll('#bulk-roster-list input:checked')];
+      if (!checked.length) { alert('Tick at least one player.'); return; }
+      const status = document.getElementById('bulk_status').value;
+      const items = checked.map(cb => ({
+        month: document.getElementById('fmem_month').value,
+        year: document.getElementById('fmem_year').value,
+        slot: document.getElementById('fmem_slot').value,
+        display_name: cb.dataset.name, player_id: cb.value, status,
+      }));
+      const { ok, data } = await finPost('memberships', 'POST', { items });
+      if (!ok || (data.errors && data.errors.length)) { alert('Error: ' + JSON.stringify(data.errors || data.error)); return; }
+      loadFinanceMembers(); loadFinanceSummary();
+    }
+
+    async function copyPreviousMonthMembers() {
+      const month = document.getElementById('fmem_month').value;
+      const year = parseInt(document.getElementById('fmem_year').value, 10);
+      const slot = document.getElementById('fmem_slot').value;
+      const idx = monthNamesFull.indexOf(month);
+      const prevMonth = monthNamesFull[(idx + 11) % 12];
+      const prevYear = idx === 0 ? year - 1 : year;
+      const qs = finQS({ month: prevMonth, year: prevYear, slot });
+      const res = await fetch(`${API_BASE_URL}/finance/memberships?${qs}`);
+      const data = await res.json();
+      if (!res.ok) { alert('Error: ' + data.error); return; }
+      const prevYes = (data.memberships || []).filter(m => m.status === 'Yes');
+      if (!prevYes.length) { alert(`No Yes members found for ${prevMonth} ${prevYear} ${slot}.`); return; }
+      const existingNames = new Set(lastMemberships.map(m => m.player_id || `name:${m.display_name}`));
+      const toAdd = prevYes.filter(m => !existingNames.has(m.player_id || `name:${m.display_name}`));
+      if (!toAdd.length) { alert('Everyone from last month is already on this month/slot.'); return; }
+      if (!confirm(`Add ${toAdd.length} member(s) from ${prevMonth} ${prevYear} to ${month} ${year} ${slot}, status No (pending renewal)?`)) return;
+      const items = toAdd.map(m => ({
+        month, year, slot, display_name: m.display_name, player_id: m.player_id, status: 'No'
+      }));
+      const { ok, data: d } = await finPost('memberships', 'POST', { items });
+      if (!ok || (d.errors && d.errors.length)) { alert('Error: ' + JSON.stringify(d.errors || d.error)); return; }
+      loadFinanceMembers(); loadFinanceSummary();
     }
 
     async function addFinanceMember() {
@@ -3072,6 +3193,12 @@
     document.getElementById('finance-load-expenses-btn').addEventListener('click', loadFinanceExpenses);
     document.getElementById('finance-load-members-btn').addEventListener('click', loadFinanceMembers);
     document.getElementById('finance-add-member-btn').addEventListener('click', addFinanceMember);
+    document.getElementById('finance-copy-prev-month-btn').addEventListener('click', copyPreviousMonthMembers);
+    document.getElementById('finance-bulk-add-btn').addEventListener('click', bulkAddFromRoster);
+    document.getElementById('bulk-select-all-btn').addEventListener('click', () =>
+      document.querySelectorAll('#bulk-roster-list input:not(:disabled)').forEach(cb => cb.checked = true));
+    document.getElementById('bulk-select-none-btn').addEventListener('click', () =>
+      document.querySelectorAll('#bulk-roster-list input').forEach(cb => cb.checked = false));
     (function initWalkinFilter() {
       const now = new Date();
       const monthNames = ['January','February','March','April','May','June','July','August','September','October','November','December'];
