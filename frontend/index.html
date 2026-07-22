@@ -2197,33 +2197,50 @@
         const data = await res.json();
         if (!res.ok) { resultEl.textContent = `Error: ${data.error}`; return; }
 
+        const playerName = pid => {
+          const p = allPlayers.find(pl => pl.player_id === pid);
+          return p ? p.name : pid;
+        };
         let html = '';
-        if (data.current_streak) {
-          const streakPlayer = allPlayers.find(p => p.player_id === data.current_streak.player_id);
-          html += `<p>🔥 <strong>Current streak:</strong> ${streakPlayer ? streakPlayer.name : data.current_streak.player_id} - ${data.current_streak.streak} period${data.current_streak.streak === 1 ? '' : 's'} in a row</p>`;
+        const streaks = (data.current_streaks && data.current_streaks.length)
+          ? data.current_streaks
+          : (data.current_streak ? [data.current_streak] : []);
+        if (streaks.length) {
+          // Co-winners can be on different streak lengths (A & B tie this
+          // week, but only A also won last week) - group by streak length.
+          const byLen = {};
+          streaks.forEach(s => { (byLen[s.streak] = byLen[s.streak] || []).push(playerName(s.player_id)); });
+          const parts = Object.keys(byLen).sort((a, b) => b - a)
+            .map(len => `${byLen[len].join(' & ')} - ${len} period${len === '1' ? '' : 's'} in a row`);
+          html += `<p>🔥 <strong>Current streak:</strong> ${parts.join('; ')}</p>`;
         }
         if (data.longest_streaks && data.longest_streaks.length) {
           html += '<h4>Longest streaks ever</h4><table><tr><th>Player</th><th>Streak</th></tr>';
           data.longest_streaks.slice(0, 5).forEach(s => {
-            const player = allPlayers.find(p => p.player_id === s.player_id);
-            html += `<tr><td>${player ? player.name : s.player_id}</td><td>${s.streak}</td></tr>`;
+            html += `<tr><td>${playerName(s.player_id)}</td><td>${s.streak}</td></tr>`;
           });
           html += '</table>';
         }
         if (data.holder_counts && data.holder_counts.length) {
           html += '<h4>Times held "most improved"</h4><table><tr><th>Player</th><th>Times</th></tr>';
           data.holder_counts.slice(0, 5).forEach(h => {
-            const player = allPlayers.find(p => p.player_id === h.player_id);
-            html += `<tr><td>${player ? player.name : h.player_id}</td><td>${h.count}</td></tr>`;
+            html += `<tr><td>${playerName(h.player_id)}</td><td>${h.count}</td></tr>`;
           });
           html += '</table>';
         }
         if (data.history && data.history.length) {
           html += '<h4>Full history</h4><table><tr><th>Period start</th><th>Most improved</th><th>Most active</th></tr>';
           [...data.history].reverse().forEach(h => {
-            const improved = h.most_improved_name ? `${h.most_improved_name} (${h.most_improved_delta >= 0 ? '+' : ''}${h.most_improved_delta})` : '-';
-            const active = h.most_active_name ? `${h.most_active_name} (${h.most_active_matches})` : '-';
-            html += `<tr><td>${h.period_start}</td><td>${improved}</td><td>${active}</td></tr>`;
+            // Prefer the co-winner list; fall back to the legacy singular
+            // field for rows written before ties were recorded properly.
+            const improvedName = (h.most_improved_names && h.most_improved_names.length)
+              ? h.most_improved_names.join(' & ') : h.most_improved_name;
+            const activeName = (h.most_active_names && h.most_active_names.length)
+              ? h.most_active_names.join(' & ') : h.most_active_name;
+            const improved = improvedName ? `${improvedName} (${h.most_improved_delta >= 0 ? '+' : ''}${h.most_improved_delta})` : '-';
+            const active = activeName ? `${activeName} (${h.most_active_matches})` : '-';
+            const computedTip = h.computed_at ? ` title="Locked in: ${h.computed_at.slice(0, 19).replace('T', ' ')} UTC"` : '';
+            html += `<tr${computedTip}><td>${h.period_start}</td><td>${improved}</td><td>${active}</td></tr>`;
           });
           html += '</table>';
         } else {

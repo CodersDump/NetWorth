@@ -1083,50 +1083,66 @@ def compute_progress_history_summary(scope_label, period_name):
     filtered = [i for i in items if i.get('scope') == scope_label and i.get('period') == period_name]
     filtered.sort(key=lambda i: i.get('period_start', ''))
 
+    def winner_ids(entry):
+        """Set of 'most improved' co-winners for a history row. New rows
+        store a list (ties are structural: both doubles partners always get
+        identical Elo deltas); rows written before that change only have the
+        singular field, so fall back to it."""
+        ids = entry.get('most_improved_player_ids')
+        if ids:
+            return set(ids)
+        pid = entry.get('most_improved_player_id')
+        return {pid} if pid else set()
+
+    # A "hold" and a "streak" belong to each individual co-winner: if A & B
+    # tie this week and A alone wins next week, A is on a 2-streak while B
+    # is on a 1-streak.
     holder_counts = {}
     for entry in filtered:
-        pid = entry.get('most_improved_player_id')
-        if pid:
+        for pid in winner_ids(entry):
             holder_counts[pid] = holder_counts.get(pid, 0) + 1
 
-    current_streak_pid = None
-    current_streak = 0
-    for entry in reversed(filtered):
-        pid = entry.get('most_improved_player_id')
-        if pid is None:
-            break
-        if current_streak_pid is None:
-            current_streak_pid = pid
-            current_streak = 1
-        elif pid == current_streak_pid:
-            current_streak += 1
-        else:
-            break
+    current_streaks = []
+    if filtered:
+        latest_winners = winner_ids(filtered[-1])
+        for pid in latest_winners:
+            streak = 0
+            for entry in reversed(filtered):
+                if pid in winner_ids(entry):
+                    streak += 1
+                else:
+                    break
+            current_streaks.append({'player_id': pid, 'streak': streak})
+        current_streaks.sort(key=lambda s: (-s['streak'], s['player_id']))
 
     longest_streaks = {}
-    running_pid = None
-    running_len = 0
+    running = {}  # pid -> current consecutive count
     for entry in filtered:
-        pid = entry.get('most_improved_player_id')
-        if pid == running_pid and pid is not None:
-            running_len += 1
-        else:
-            running_pid = pid
-            running_len = 1 if pid else 0
-        if pid:
-            longest_streaks[pid] = max(longest_streaks.get(pid, 0), running_len)
+        winners = winner_ids(entry)
+        for pid in winners:
+            running[pid] = running.get(pid, 0) + 1
+            longest_streaks[pid] = max(longest_streaks.get(pid, 0), running[pid])
+        for pid in list(running):
+            if pid not in winners:
+                running[pid] = 0
 
     return {
         'history': [
             {
                 'period_start': e.get('period_start'), 'period_end': e.get('period_end'),
+                'computed_at': e.get('computed_at'),
                 'most_improved_name': e.get('most_improved_name'), 'most_improved_delta': e.get('most_improved_delta'),
+                'most_improved_names': e.get('most_improved_names'),
                 'most_active_name': e.get('most_active_name'), 'most_active_matches': e.get('most_active_matches'),
+                'most_active_names': e.get('most_active_names'),
             } for e in filtered
         ],
-        'holder_counts': [{'player_id': pid, 'count': c} for pid, c in sorted(holder_counts.items(), key=lambda kv: -kv[1])],
-        'current_streak': {'player_id': current_streak_pid, 'streak': current_streak} if current_streak_pid else None,
-        'longest_streaks': [{'player_id': pid, 'streak': s} for pid, s in sorted(longest_streaks.items(), key=lambda kv: -kv[1])]
+        'holder_counts': [{'player_id': pid, 'count': c} for pid, c in sorted(holder_counts.items(), key=lambda kv: (-kv[1], kv[0]))],
+        # Legacy shape (single winner) plus the full co-winner list.
+        'current_streak': ({'player_id': current_streaks[0]['player_id'], 'streak': current_streaks[0]['streak']}
+                            if current_streaks else None),
+        'current_streaks': current_streaks,
+        'longest_streaks': [{'player_id': pid, 'streak': s} for pid, s in sorted(longest_streaks.items(), key=lambda kv: (-kv[1], kv[0]))]
     }
 
 

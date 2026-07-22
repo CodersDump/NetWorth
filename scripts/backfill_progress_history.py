@@ -21,9 +21,6 @@ import boto3
 from datetime import datetime, timezone, timedelta, date
 from decimal import Decimal
 
-K_FACTOR = 32
-
-
 def get_group_member_ids(groups_table, group_id):
     group = groups_table.get_item(Key={'group_id': group_id}).get('Item')
     return set(group.get('member_ids', [])) if group else set()
@@ -58,15 +55,25 @@ def compute_period_snapshot(matches, period_start_dt, period_end_dt, member_ids=
         start = rating_before.get(pid, 1000.0)
         delta = round(current - start, 1)
         progress_rows.append({'player_id': pid, 'delta': delta})
-    progress_rows.sort(key=lambda r: -r['delta'])
+    # Deterministic order: delta descending, then player_id - identical
+    # data always yields identical results (no dict-iteration-order luck).
+    progress_rows.sort(key=lambda r: (-r['delta'], r['player_id']))
 
-    most_improved = progress_rows[0] if progress_rows else None
+    # Ties are structural: team-average Elo gives both doubles partners the
+    # same delta, so fixed pairs move in lockstep. Record ALL co-winners.
+    most_improved = None
+    if progress_rows:
+        top_delta = progress_rows[0]['delta']
+        co_winner_ids = sorted(r['player_id'] for r in progress_rows if r['delta'] == top_delta)
+        most_improved = {'player_ids': co_winner_ids, 'delta': top_delta}
+
     most_active = None
     eligible_activity = {pid: cnt for pid, cnt in matches_in_period.items()
                           if member_ids is None or pid in member_ids}
     if eligible_activity:
-        active_pid = max(eligible_activity.items(), key=lambda kv: kv[1])[0]
-        most_active = {'player_id': active_pid, 'matches': eligible_activity[active_pid]}
+        top_count = max(eligible_activity.values())
+        co_active_ids = sorted(pid for pid, cnt in eligible_activity.items() if cnt == top_count)
+        most_active = {'player_ids': co_active_ids, 'matches': top_count}
 
     return {'most_improved': most_improved, 'most_active': most_active}
 
@@ -83,18 +90,29 @@ def write_history_entry(history_table, players_table, scope_label, group_id, per
         'period_end': period_end_iso,
         'computed_at': datetime.now(timezone.utc).isoformat(),
     }
+    def resolve_named(pids):
+        pairs = []
+        for pid in pids:
+            p = players_table.get_item(Key={'player_id': pid}).get('Item')
+            pairs.append((p['name'] if p else pid, pid))
+        pairs.sort()
+        return pairs
+
     if snapshot['most_improved']:
-        pid = snapshot['most_improved']['player_id']
-        p = players_table.get_item(Key={'player_id': pid}).get('Item')
-        item['most_improved_player_id'] = pid
-        item['most_improved_name'] = p['name'] if p else pid
+        pairs = resolve_named(snapshot['most_improved']['player_ids'])
+        item['most_improved_player_ids'] = [pid for _, pid in pairs]
+        item['most_improved_names'] = [name for name, _ in pairs]
         item['most_improved_delta'] = Decimal(str(snapshot['most_improved']['delta']))
+        # Legacy singular fields for backward compatibility.
+        item['most_improved_player_id'] = pairs[0][1]
+        item['most_improved_name'] = ' & '.join(name for name, _ in pairs)
     if snapshot['most_active']:
-        pid = snapshot['most_active']['player_id']
-        p = players_table.get_item(Key={'player_id': pid}).get('Item')
-        item['most_active_player_id'] = pid
-        item['most_active_name'] = p['name'] if p else pid
+        pairs = resolve_named(snapshot['most_active']['player_ids'])
+        item['most_active_player_ids'] = [pid for _, pid in pairs]
+        item['most_active_names'] = [name for name, _ in pairs]
         item['most_active_matches'] = snapshot['most_active']['matches']
+        item['most_active_player_id'] = pairs[0][1]
+        item['most_active_name'] = ' & '.join(name for name, _ in pairs)
 
     history_table.put_item(Item=item)
     return item

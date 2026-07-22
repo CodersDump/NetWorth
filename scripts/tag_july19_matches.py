@@ -18,6 +18,7 @@ Safe to re-run - it only sets tournament_id/stage if not already present.
 import boto3
 
 TOURNAMENT_ID = "8003a10d-6bc6-4b4d-b8c6-fd1cdd2bf87c"  # the kept "July 19" tournament
+GROUP_ID = "8805e3f4-b56e-410f-b2b0-478e4f8234c9"       # Matchpoint - same group the 12 group-stage matches carry
 
 # match_id -> stage ('group' includes the tiebreaker; 'knockout' = semifinals)
 MATCH_STAGES = {
@@ -53,6 +54,19 @@ def main():
             print(f"NOT FOUND: {match_id}")
             missing += 1
             continue
+
+        # The tiebreaker + both semis were recorded without a group_id
+        # (unlike the 12 group-stage matches), so any group-filtered match
+        # view silently drops them. Fill it in wherever it's missing, even
+        # for matches whose tournament tag is already set.
+        if not item.get('group_id'):
+            table.update_item(
+                Key={'match_id': match_id},
+                UpdateExpression='SET group_id = :g',
+                ExpressionAttributeValues={':g': GROUP_ID}
+            )
+            print(f"Set group_id on {match_id}")
+
         if item.get('tournament_id'):
             print(f"Already tagged, skipping: {match_id}")
             skipped += 1
