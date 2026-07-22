@@ -58,7 +58,7 @@ def compute_comeback_bonus(momentum):
     final score has no way to know if a match was ever close."""
     if not momentum:
         return 0
-    deficit = momentum.get('winner_overcame_deficit', 0)
+    deficit = float(momentum.get('winner_overcame_deficit', 0))
     if deficit < COMEBACK_BONUS_THRESHOLD:
         return 0
     return min(deficit * COMEBACK_BONUS_PER_POINT, COMEBACK_BONUS_CAP)
