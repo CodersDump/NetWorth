@@ -23,6 +23,22 @@ match records.
 import boto3
 
 K_FACTOR = 32
+COMEBACK_BONUS_THRESHOLD = 5
+COMEBACK_BONUS_PER_POINT = 0.3
+COMEBACK_BONUS_CAP = 8
+
+
+def compute_comeback_bonus(momentum):
+    """Kept identical to the live Lambdas: extra rating for the winner when
+    the point-by-point log shows they overcame a genuine mid-game deficit.
+    Without replaying this here, running the repair would silently strip
+    every legitimately-earned comeback bonus out of the ratings."""
+    if not momentum:
+        return 0
+    deficit = float(momentum.get('winner_overcame_deficit', 0))
+    if deficit < COMEBACK_BONUS_THRESHOLD:
+        return 0
+    return min(deficit * COMEBACK_BONUS_PER_POINT, COMEBACK_BONUS_CAP)
 
 
 def compute_adaptive_k(pairing_count):
@@ -79,6 +95,15 @@ def main():
 
         delta_a = k_a * (actual_a - expected_a)
         delta_b = k_b * (actual_b - expected_b)
+
+        winner = m.get('winner')
+        momentum = m.get('momentum')
+        if momentum:
+            bonus = compute_comeback_bonus(momentum)
+            if winner == 'A':
+                delta_a += bonus
+            elif winner == 'B':
+                delta_b += bonus
 
         for pid in team_a:
             current_ratings[pid] = current_ratings.get(pid, 1000.0) + delta_a

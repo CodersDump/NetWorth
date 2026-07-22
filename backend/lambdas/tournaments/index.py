@@ -65,8 +65,13 @@ def compute_momentum_stats(point_log, winner):
     running = {'A': 0, 'B': 0}
     worst_deficit_for_winner = 0
 
+    scoring_runs = 0
+    prev_point = None
     for point in point_log:
         other = 'B' if point == 'A' else 'A'
+        if point != prev_point:
+            scoring_runs += 1
+            prev_point = point
         current_streak[point] += 1
         current_streak[other] = 0
         longest_streak[point] = max(longest_streak[point], current_streak[point])
@@ -77,11 +82,24 @@ def compute_momentum_stats(point_log, winner):
             if deficit > worst_deficit_for_winner:
                 worst_deficit_for_winner = deficit
 
-    return {
+    # Guard against the live counter being misused to batch-enter a final
+    # score (e.g. tapping 21 points for one side, then 19 for the other).
+    # A real ~40-point badminton game changes scorer dozens of times; a
+    # batch entry produces 1-3 unbroken runs. Such a log is not a genuine
+    # point-by-point record, so it must not fabricate a "comeback" (which
+    # would both pollute the Hall of Fame and grant an undeserved Elo
+    # bonus to the winner).
+    suspected_batch_entry = len(point_log) >= 20 and scoring_runs <= 3
+
+    result = {
         'longest_streak_a': longest_streak['A'],
         'longest_streak_b': longest_streak['B'],
-        'winner_overcame_deficit': worst_deficit_for_winner if winner in ('A', 'B') else 0
+        'winner_overcame_deficit': (worst_deficit_for_winner
+                                     if winner in ('A', 'B') and not suspected_batch_entry else 0)
     }
+    if suspected_batch_entry:
+        result['suspected_batch_entry'] = True
+    return result
 CONFIRMATION_CODE = 'Matchpoint-Falcon-77'  # private - never shown in the UI; change this if it's ever exposed
 
 
