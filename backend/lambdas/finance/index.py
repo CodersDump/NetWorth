@@ -60,6 +60,7 @@ import boto3
 dynamodb = boto3.resource('dynamodb')
 finance_table = dynamodb.Table(os.environ['FINANCE_TABLE'])
 players_table = dynamodb.Table(os.environ['PLAYERS_TABLE'])
+matches_table = dynamodb.Table(os.environ['MATCHES_TABLE'])
 
 # Private - never rendered in the UI. Change both if ever exposed.
 VIEW_KEY = 'Matchpoint-Ledger-11'          # read/write access to finance data
@@ -87,6 +88,8 @@ def handler(event, context):
 
         if parts == ['summary'] and method == 'GET':
             return summary()
+        if parts == ['insights'] and method == 'GET':
+            return insights()
         if parts == ['settings']:
             if method == 'GET':
                 return get_settings()
@@ -320,6 +323,97 @@ def summary():
 
     rows.sort(key=lambda r: (r['year'], MONTHS.index(r['month']) if r['month'] in MONTHS else 99, r['slot']))
     return _response(200, {'summary': rows})
+
+
+def insights():
+    """Cross-references finance data with the match log:
+    - ghosts: members enrolled (Yes) in a month who have ZERO recorded
+      matches that month - the renewal chase-list.
+    - cost_per_match: for each settled month, each Yes-member's effective
+      price per match actually played (cost_per_head / matches).
+    - conversion: walk-in guests -> did they become monthly members?
+    Attribution is per calendar month (matches aren't tagged with a slot).
+    """
+    memberships = _scan_type('membership')
+    walkins = _scan_type('walkin')
+    expenses = _scan_type('expense')
+    matches = matches_table.scan().get('Items', [])
+
+    # matches played per (player_id, 'yyyy-mm')
+    played = {}
+    for m in matches:
+        ym = (m.get('date') or '')[:7]
+        if len(ym) != 7:
+            continue
+        for pid in (m.get('team_a') or []) + (m.get('team_b') or []):
+            played[(pid, ym)] = played.get((pid, ym), 0) + 1
+
+    # cost per head per (month, year, slot), estimated basis (what members paid)
+    cost_per_head = {}
+    est_totals, yes_counts = {}, {}
+    for e in expenses:
+        key = (str(e.get('month')), int(_num(e.get('year'))), str(e.get('slot')))
+        est_totals[key] = est_totals.get(key, 0) + _num(e.get('estimated_cost')) * _num(e.get('estimated_qty'), 1)
+    for mem in memberships:
+        if mem.get('status') == 'Yes':
+            key = (str(mem.get('month')), int(_num(mem.get('year'))), str(mem.get('slot')))
+            yes_counts[key] = yes_counts.get(key, 0) + 1
+    for key, total in est_totals.items():
+        if yes_counts.get(key):
+            cost_per_head[key] = total / yes_counts[key]
+
+    cache = {}
+    ghosts = []
+    cost_rows = []
+    for mem in memberships:
+        if mem.get('status') != 'Yes':
+            continue
+        month, year, slot = str(mem.get('month')), int(_num(mem.get('year'))), str(mem.get('slot'))
+        if month not in MONTHS:
+            continue
+        ym = f"{year:04d}-{MONTHS.index(month) + 1:02d}"
+        pid = mem.get('player_id')
+        name = _resolve_name(cache, pid) or mem.get('display_name')
+        n_played = played.get((pid, ym), 0) if pid else None
+        cph = cost_per_head.get((month, year, slot))
+        row = {'month': month, 'year': year, 'slot': slot, 'display_name': name,
+               'linked': bool(pid), 'matches_played': n_played,
+               'cost_per_head': round(cph, 2) if cph else None}
+        if pid and n_played == 0:
+            ghosts.append(row)
+        if cph:
+            row = dict(row)
+            row['cost_per_match'] = round(cph / n_played, 2) if n_played else None
+            cost_rows.append(row)
+    ghosts.sort(key=lambda r: (r['year'], MONTHS.index(r['month']), r['slot'], r['display_name']))
+    cost_rows.sort(key=lambda r: (-r['year'], -MONTHS.index(r['month']), r['slot'],
+                                   -(r['cost_per_match'] or 10 ** 9)))
+
+    # Walk-in -> membership conversion
+    member_pids = {m.get('player_id') for m in memberships if m.get('status') == 'Yes' and m.get('player_id')}
+    member_names = {m.get('display_name') for m in memberships if m.get('status') == 'Yes'}
+    guests = {}
+    for w in walkins:
+        if _num(w.get('fee')) < 0:
+            continue  # refund rows aren't guests
+        gkey = w.get('player_id') or f"name:{w.get('display_name')}"
+        g = guests.setdefault(gkey, {'display_name': _resolve_name(cache, w.get('player_id')) or w.get('display_name'),
+                                      'sessions': 0, 'fees_paid': 0.0, 'recruit_verdict': None,
+                                      'became_member': False})
+        g['sessions'] += 1
+        g['fees_paid'] = round(g['fees_paid'] + _num(w.get('fee')), 2)
+        if w.get('recruit_verdict'):
+            g['recruit_verdict'] = w.get('recruit_verdict')
+        if (w.get('player_id') and w.get('player_id') in member_pids) or w.get('display_name') in member_names:
+            g['became_member'] = True
+    guest_rows = sorted(guests.values(), key=lambda g: (-g['became_member'], -g['sessions']))
+    conversion = {
+        'total_guests': len(guest_rows),
+        'became_members': sum(1 for g in guest_rows if g['became_member']),
+        'guests': guest_rows,
+    }
+
+    return _response(200, {'ghosts': ghosts, 'cost_per_match': cost_rows, 'conversion': conversion})
 
 
 def _response(status_code, body_dict):

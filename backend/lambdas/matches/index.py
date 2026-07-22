@@ -670,6 +670,10 @@ def compute_hall_of_fame(items, group_id_filter=None):
     format_stats = {}        # pid -> {'singles_w','singles_l','doubles_w','doubles_l'}
     stage_stats = {}         # pid -> {'group_w','group_l','knockout_w','knockout_l'}
     tournament_stage_sets = {}  # pid -> {'group_tournaments': set(), 'knockout_tournaments': set()}
+    pair_stats = {}          # frozenset(pair) -> {'wins','losses','members'}
+    deuce_wins = {}          # pid -> wins by exactly 2 points past the target
+    session_record = {}      # (pid, yyyy-mm-dd) -> {'wins','losses'}
+    session_deltas = {}      # yyyy-mm-dd -> {pid: total rating delta that day}
 
     def team_avg(team_ids):
         return sum(rolling_ratings.get(pid, 1000.0) for pid in team_ids) / len(team_ids) if team_ids else 1000.0
@@ -705,6 +709,26 @@ def compute_hall_of_fame(items, group_id_filter=None):
                     personal_best_streaks[pid] = current_streak[pid]
             for pid in losers:
                 current_streak[pid] = 0
+
+            day = (m.get('date') or '')[:10]
+            for pid in winners + losers:
+                rec = session_record.setdefault((pid, day), {'wins': 0, 'losses': 0})
+                rec['wins' if pid in winners else 'losses'] += 1
+
+            # Doubles chemistry: per fixed pair, wins/losses together.
+            if match_type == 'doubles':
+                for side, side_won in ((team_a, winner == 'A'), (team_b, winner == 'B')):
+                    if len(side) == 2:
+                        key = frozenset(side)
+                        ps = pair_stats.setdefault(key, {'wins': 0, 'losses': 0, 'members': sorted(side)})
+                        ps['wins' if side_won else 'losses'] += 1
+
+            # Deuce specialist: won by exactly 2, past the normal target
+            # (i.e. the game went to deuce and they closed it out).
+            win_score, lose_score = max(score_a, score_b), min(score_a, score_b)
+            if win_score - lose_score == 2 and win_score >= 22:
+                for pid in winners:
+                    deuce_wins[pid] = deuce_wins.get(pid, 0) + 1
 
             upset_gap = pre_loser - pre_winner
             if upset_gap > 0:
@@ -747,9 +771,12 @@ def compute_hall_of_fame(items, group_id_filter=None):
             })
 
         ratings_after = m.get('ratings_after') or {}
+        day = (m.get('date') or '')[:10]
         for pid, rating in ratings_after.items():
             rating = float(rating)
-            player_deltas.setdefault(pid, []).append(rating - pre_individual.get(pid, 1000.0))
+            delta = rating - pre_individual.get(pid, 1000.0)
+            player_deltas.setdefault(pid, []).append(delta)
+            session_deltas.setdefault(day, {})[pid] = session_deltas.setdefault(day, {}).get(pid, 0) + delta
 
             rolling_ratings[pid] = rating
             if pid not in peak_rating or rating > peak_rating[pid]:
@@ -828,6 +855,53 @@ def compute_hall_of_fame(items, group_id_filter=None):
         })
     deep_run_rows.sort(key=lambda r: -r['deep_run_rate'])
 
+    # Best partnerships - doubles pairs by win rate, minimum 3 matches together
+    partnership_rows = []
+    for key, ps in pair_stats.items():
+        total = ps['wins'] + ps['losses']
+        if total < 3 or not side_in_group(ps['members']):
+            continue
+        partnership_rows.append({
+            'member_ids': ps['members'], 'matches': total, 'wins': ps['wins'],
+            'losses': ps['losses'], 'win_pct': round(ps['wins'] / total * 100, 1)
+        })
+    partnership_rows.sort(key=lambda r: (-r['win_pct'], -r['matches']))
+
+    # Deuce specialists - most wins by exactly 2 past the target
+    deuce_rows = sorted(
+        ({'player_id': pid, 'deuce_wins': n} for pid, n in deuce_wins.items() if in_group(pid)),
+        key=lambda r: -r['deuce_wins'])
+
+    # Undefeated sessions - days with 3+ matches and zero losses
+    undefeated_counts = {}
+    for (pid, day), rec in session_record.items():
+        if rec['wins'] >= 3 and rec['losses'] == 0:
+            undefeated_counts[pid] = undefeated_counts.get(pid, 0) + 1
+    undefeated_rows = sorted(
+        ({'player_id': pid, 'sessions': n} for pid, n in undefeated_counts.items() if in_group(pid)),
+        key=lambda r: -r['sessions'])
+
+    # Biggest single-match rating swing (positive) per player
+    swing_rows = sorted(
+        ({'player_id': pid, 'swing': round(max(deltas), 1)}
+         for pid, deltas in player_deltas.items() if deltas and max(deltas) > 0 and in_group(pid)),
+        key=lambda r: -r['swing'])
+
+    # Session MVP - best total rating delta on each play date (co-winners on ties)
+    session_mvp_rows = []
+    mvp_counts = {}
+    for day in sorted(session_deltas, reverse=True):
+        eligible = {pid: d for pid, d in session_deltas[day].items() if in_group(pid)}
+        if not eligible:
+            continue
+        best = max(eligible.values())
+        mvp_ids = sorted(pid for pid, d in eligible.items() if abs(d - best) < 0.01)
+        for pid in mvp_ids:
+            mvp_counts[pid] = mvp_counts.get(pid, 0) + 1
+        session_mvp_rows.append({'date': day, 'player_ids': mvp_ids, 'delta': round(best, 1)})
+    mvp_count_rows = sorted(({'player_id': pid, 'mvp_days': n} for pid, n in mvp_counts.items()),
+                             key=lambda r: -r['mvp_days'])
+
     # Resolve every name from the current Players table, right here at the
     # end - this is the one place names get attached to the output.
     for row in consistency_rows:
@@ -850,6 +924,12 @@ def compute_hall_of_fame(items, group_id_filter=None):
         {'player_id': pid, 'name': resolve_name(pid), 'rating': int(round(rating))}
         for pid, rating in peak_rating.items() if in_group(pid)
     ]
+    for row in partnership_rows:
+        row['names'] = [resolve_name(pid) for pid in row['member_ids']]
+    for row in deuce_rows + undefeated_rows + swing_rows + mvp_count_rows:
+        row['name'] = resolve_name(row['player_id'])
+    for row in session_mvp_rows:
+        row['names'] = [resolve_name(pid) for pid in row['player_ids']]
 
     return {
         'longest_win_streak': best_streak,
@@ -860,7 +940,13 @@ def compute_hall_of_fame(items, group_id_filter=None):
         'most_consistent': most_consistent,
         'most_volatile': most_volatile,
         'format_specialists': format_rows[:5],
-        'deep_run_rates': deep_run_rows[:10]
+        'deep_run_rates': deep_run_rows[:10],
+        'best_partnerships': partnership_rows[:5],
+        'deuce_specialists': deuce_rows[:5],
+        'undefeated_sessions': undefeated_rows[:5],
+        'biggest_swings': swing_rows[:5],
+        'session_mvps': session_mvp_rows[:10],
+        'mvp_counts': mvp_count_rows[:5]
     }
 
 
@@ -875,22 +961,32 @@ def compute_achievements(player_id, matches, tournaments):
     )
 
     tournament_wins = 0
+    runner_ups = 0
+    third_places = 0
     for t in tournaments:
         if t.get('status') != 'completed':
             continue
         knockout = t.get('knockout') or {}
         rounds = knockout.get('rounds') or []
-        if not rounds or not rounds[-1]:
-            continue
-        final_match = rounds[-1][0]
-        winner_id = final_match.get('winner_id')
-        if not winner_id:
-            continue
-        player_a = final_match.get('player_a') or {}
-        player_b = final_match.get('player_b') or {}
-        winner_entity = player_a if winner_id == player_a.get('player_id') else player_b
-        if player_id in (winner_entity.get('members') or []):
-            tournament_wins += 1
+        if rounds and rounds[-1]:
+            final_match = rounds[-1][0]
+            winner_id = final_match.get('winner_id')
+            if winner_id:
+                player_a = final_match.get('player_a') or {}
+                player_b = final_match.get('player_b') or {}
+                winner_entity = player_a if winner_id == player_a.get('player_id') else player_b
+                loser_entity = player_b if winner_id == player_a.get('player_id') else player_a
+                if player_id in (winner_entity.get('members') or []):
+                    tournament_wins += 1
+                elif player_id in (loser_entity.get('members') or []):
+                    runner_ups += 1
+        third = knockout.get('third_place_match')
+        if third and third.get('winner_id'):
+            ta = third.get('player_a') or {}
+            tb = third.get('player_b') or {}
+            third_winner = ta if third['winner_id'] == ta.get('player_id') else tb
+            if player_id in (third_winner.get('members') or []):
+                third_places += 1
 
     player_matches = sorted(
         [m for m in matches if player_id in (m.get('team_a') or []) or player_id in (m.get('team_b') or [])],
@@ -910,12 +1006,53 @@ def compute_achievements(player_id, matches, tournaments):
         else:
             current_streak = 0
 
+    # Deuce wins, undefeated sessions, attendance streak, and peak rating -
+    # all from this player's own match history.
+    deuce_wins = 0
+    session_record = {}   # yyyy-mm-dd -> {'wins','losses'}
+    peak = 0
+    for m in player_matches:
+        winner = m.get('winner')
+        team_a = m.get('team_a') or []
+        score_a, score_b = m.get('score_a'), m.get('score_b')
+        day = (m.get('date') or '')[:10]
+        rating = (m.get('ratings_after') or {}).get(player_id)
+        if rating is not None:
+            peak = max(peak, int(round(float(rating))))
+        if winner not in ('A', 'B') or score_a is None or score_b is None:
+            continue
+        won = (winner == 'A' and player_id in team_a) or (winner == 'B' and player_id not in team_a)
+        rec = session_record.setdefault(day, {'wins': 0, 'losses': 0})
+        rec['wins' if won else 'losses'] += 1
+        win_score, lose_score = max(float(score_a), float(score_b)), min(float(score_a), float(score_b))
+        if won and win_score - lose_score == 2 and win_score >= 22:
+            deuce_wins += 1
+
+    undefeated_sessions = sum(1 for rec in session_record.values()
+                               if rec['wins'] >= 3 and rec['losses'] == 0)
+
+    # Best attendance streak: longest run of consecutive CLUB session dates
+    # (days when anyone played) on which this player also appeared.
+    club_days = sorted({(m.get('date') or '')[:10] for m in matches if m.get('date')})
+    attended = set(session_record.keys())
+    best_attendance = run = 0
+    for day in club_days:
+        run = run + 1 if day in attended else 0
+        best_attendance = max(best_attendance, run)
+
     return {
         'player_id': player_id,
         'total_matches': total_matches,
         'tournament_wins': tournament_wins,
+        'runner_ups': runner_ups,
+        'third_places': third_places,
+        'podium_finishes': tournament_wins + runner_ups + third_places,
         'personal_best_streak': best_streak,
-        'current_streak': current_streak
+        'current_streak': current_streak,
+        'deuce_wins': deuce_wins,
+        'undefeated_sessions': undefeated_sessions,
+        'best_attendance_streak': best_attendance,
+        'peak_rating': peak
     }
 
 

@@ -188,6 +188,7 @@ Resources:
         Variables:
           FINANCE_TABLE: !Ref FinanceTable
           PLAYERS_TABLE: !Ref PlayersTable
+          MATCHES_TABLE: !Ref MatchesTable
       Code: ../backend/lambdas/finance
 
   MatchesFunction:

@@ -692,6 +692,13 @@
         </div>
 
         <div class="card">
+          <h2>Insights</h2>
+          <p class="card-sub">Finance data cross-referenced with the match log: who's paying but not playing, what each match effectively costs, and which walk-ins became members.</p>
+          <button id="finance-load-insights-btn" type="button" class="secondary">Load insights</button>
+          <div id="finance-insights-result" style="margin-top:12px;"></div>
+        </div>
+
+        <div class="card">
           <h2>Finance settings</h2>
           <p class="card-sub">When enabled, a "Walk-in guests" card appears on the Stats tab for everyone - names, dates and slots only. Fees, skill ratings and recruit verdicts are never exposed there.</p>
           <label style="display:flex; align-items:center; gap:8px;">
@@ -2050,6 +2057,11 @@
         renderTieredCard('🎮', 'Court Regular', 'matches played', [1, 10, 50, 100, 250, 500, 1000], milestones.total_matches || 0);
         renderTieredCard('🏆', 'Conqueror', 'tournament wins', [1, 5, 10, 25], milestones.tournament_wins || 0);
         renderTieredCard('🔥', 'On Fire', 'best personal win streak', [3, 5, 10, 15], milestones.personal_best_streak || 0);
+        renderTieredCard('🏅', 'Podium', 'tournament podium finishes', [1, 3, 5, 10], milestones.podium_finishes || 0);
+        renderTieredCard('🎲', 'Deuce Demon', 'wins by 2 after deuce', [1, 5, 15, 30], milestones.deuce_wins || 0);
+        renderTieredCard('🛡️', 'Iron Day', 'undefeated sessions (3+ matches)', [1, 3, 5, 10], milestones.undefeated_sessions || 0);
+        renderTieredCard('📅', 'Ever-Present', 'best attendance streak (sessions)', [3, 5, 10, 20], milestones.best_attendance_streak || 0);
+        renderTieredCard('⛰️', 'Summit', 'peak rating reached', [1050, 1100, 1150, 1200], milestones.peak_rating || 0);
 
         renderBinaryCard('🥇', 'Longest win streak', 'Overall record holder', hof.longest_win_streak && hof.longest_win_streak.player_id === playerId);
         renderBinaryCard('📈', 'Peak performer', 'Highest peak rating ever', hof.peak_ratings && hof.peak_ratings[0] && hof.peak_ratings[0].player_id === playerId);
@@ -2497,6 +2509,31 @@
           data.format_specialists.forEach(p => { html += `<tr><td>${p.name}</td><td>${p.singles_win_pct}%</td><td>${p.doubles_win_pct}%</td><td>${p.stronger_format}</td></tr>`; });
           html += '</table>';
         }
+        if (data.best_partnerships && data.best_partnerships.length) {
+          html += '<h4>Best partnerships</h4><p class="card-sub">Doubles pairs by win rate, minimum 3 matches together.</p><table><tr><th>Pair</th><th>W-L</th><th>Win %</th></tr>';
+          data.best_partnerships.forEach(p => { html += `<tr><td>${p.names.join(' & ')}</td><td>${p.wins}-${p.losses}</td><td>${p.win_pct}%</td></tr>`; });
+          html += '</table>';
+        }
+        if (data.session_mvps && data.session_mvps.length) {
+          html += '<h4>Session MVPs</h4><p class="card-sub">Best total rating gain on each play day.</p><table><tr><th>Date</th><th>MVP</th><th>Rating gained</th></tr>';
+          data.session_mvps.forEach(s => { html += `<tr><td>${s.date}</td><td>${s.names.join(' & ')}</td><td>+${s.delta}</td></tr>`; });
+          html += '</table>';
+        }
+        if (data.biggest_swings && data.biggest_swings.length) {
+          html += '<h4>Biggest single-match rating swings</h4><table><tr><th>Player</th><th>Swing</th></tr>';
+          data.biggest_swings.forEach(p => { html += `<tr><td>${p.name}</td><td>+${p.swing}</td></tr>`; });
+          html += '</table>';
+        }
+        if (data.deuce_specialists && data.deuce_specialists.length) {
+          html += '<h4>Deuce specialists</h4><p class="card-sub">Wins by exactly 2 points after deuce - the nerveless ones.</p><table><tr><th>Player</th><th>Deuce wins</th></tr>';
+          data.deuce_specialists.forEach(p => { html += `<tr><td>${p.name}</td><td>${p.deuce_wins}</td></tr>`; });
+          html += '</table>';
+        }
+        if (data.undefeated_sessions && data.undefeated_sessions.length) {
+          html += '<h4>Undefeated sessions</h4><p class="card-sub">Days with 3+ matches and zero losses.</p><table><tr><th>Player</th><th>Perfect days</th></tr>';
+          data.undefeated_sessions.forEach(p => { html += `<tr><td>${p.name}</td><td>${p.sessions}</td></tr>`; });
+          html += '</table>';
+        }
         if (data.deep_run_rates && data.deep_run_rates.length) {
           html += '<h4>Deep-run rate</h4><p class="card-sub">Of the tournaments a player has entered, how often they reached the knockout stage.</p><table><tr><th>Player</th><th>Tournaments entered</th><th>Reached knockout</th><th>Rate</th></tr>';
           data.deep_run_rates.forEach(p => { html += `<tr><td>${p.name}</td><td>${p.tournaments_entered}</td><td>${p.reached_knockout}</td><td>${p.deep_run_rate}%</td></tr>`; });
@@ -2719,6 +2756,44 @@
       loadFinanceWalkins(); loadFinanceSummary();
     }
 
+    async function loadFinanceInsights() {
+      const el = document.getElementById('finance-insights-result');
+      el.textContent = 'Loading...';
+      const res = await fetch(`${API_BASE_URL}/finance/insights?${finQS()}`);
+      const data = await res.json();
+      if (!res.ok) { el.textContent = `Error: ${data.error}`; return; }
+      let html = '';
+      if (data.ghosts && data.ghosts.length) {
+        html += '<h4>👻 Ghosts - enrolled but no matches recorded</h4><table><tr><th>Month</th><th>Slot</th><th>Member</th></tr>';
+        data.ghosts.forEach(g => { html += `<tr><td>${g.month} ${g.year}</td><td>${g.slot}</td><td>${g.display_name}</td></tr>`; });
+        html += '</table>';
+      } else {
+        html += '<p style="font-size:13px;">👻 No ghosts - every enrolled member has recorded matches. </p>';
+      }
+      if (data.cost_per_match && data.cost_per_match.length) {
+        html += '<h4>💸 Effective cost per match played</h4><table><tr><th>Month</th><th>Slot</th><th>Member</th><th>Matches</th><th>Cost/match</th></tr>';
+        data.cost_per_match.forEach(r => {
+          html += `<tr><td>${r.month} ${r.year}</td><td>${r.slot}</td><td>${r.display_name}</td>` +
+            `<td>${r.matches_played === null ? '?' : r.matches_played}</td>` +
+            `<td>${r.cost_per_match === null ? '∞ (no matches)' : r.cost_per_match}</td></tr>`;
+        });
+        html += '</table>';
+      }
+      if (data.conversion) {
+        const c = data.conversion;
+        html += `<h4>🎯 Walk-in conversion</h4><p style="font-size:13px;">${c.became_members} of ${c.total_guests} guests became monthly members.</p>`;
+        if (c.guests && c.guests.length) {
+          html += '<table><tr><th>Guest</th><th>Sessions</th><th>Fees paid</th><th>Verdict</th><th>Member now?</th></tr>';
+          c.guests.forEach(g => {
+            html += `<tr><td>${g.display_name}</td><td>${g.sessions}</td><td>${g.fees_paid}</td>` +
+              `<td>${g.recruit_verdict || ''}</td><td>${g.became_member ? '✓' : ''}</td></tr>`;
+          });
+          html += '</table>';
+        }
+      }
+      el.innerHTML = html;
+    }
+
     async function saveFinanceSettings() {
       const statusEl = document.getElementById('finance-settings-status');
       const { ok, data } = await finPost('settings', 'PUT', {
@@ -2759,6 +2834,7 @@
     document.getElementById('finance-add-member-btn').addEventListener('click', addFinanceMember);
     document.getElementById('finance-add-walkin-btn').addEventListener('click', addFinanceWalkin);
     document.getElementById('finance-load-walkins-btn').addEventListener('click', loadFinanceWalkins);
+    document.getElementById('finance-load-insights-btn').addEventListener('click', loadFinanceInsights);
     document.getElementById('finance-save-settings-btn').addEventListener('click', saveFinanceSettings);
     document.getElementById('load-public-walkins-btn').addEventListener('click', loadPublicWalkins);
     ['fmem_month', 'fmem_year', 'fmem_slot'].forEach(id =>
