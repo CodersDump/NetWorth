@@ -1977,13 +1977,32 @@
           <div class="overall-record-legend">${legendHtml}</div>
         `;
 
-        // Top opponents
+        // Top opponents (with an auto-computed rivalry callout on top)
         const oppEl = document.getElementById('profile-top-opponents-result');
         const opponents = bundle.top_opponents && bundle.top_opponents.opponents;
         if (!opponents || !opponents.length) {
           oppEl.innerHTML = '<p style="font-size:13px;color:var(--text-secondary);">No opponents recorded yet.</p>';
         } else {
-          oppEl.innerHTML = opponents.map(o => {
+          // Nemesis = worst win rate against, favourite = best, both min 3
+          // meetings so a single loss doesn't crown anyone. Ties broken by
+          // more meetings (a 1-5 rivalry stings more than 0-3).
+          const qualified = opponents.filter(o => o.matches >= 3)
+            .map(o => ({ ...o, pct: o.wins / o.matches }));
+          let callout = '';
+          if (qualified.length) {
+            const nemesis = [...qualified].sort((a, b) => a.pct - b.pct || b.matches - a.matches)[0];
+            const favourite = [...qualified].sort((a, b) => b.pct - a.pct || b.matches - a.matches)[0];
+            if (nemesis.pct < 0.5) {
+              callout += `<p style="font-size:13px;">😤 <strong>Nemesis:</strong> ${nemesis.opponent_name} - you're ${nemesis.wins}-${nemesis.losses} against them</p>`;
+            }
+            if (favourite.pct > 0.5 && favourite.opponent_id !== nemesis.opponent_id) {
+              callout += `<p style="font-size:13px;">😎 <strong>Favourite opponent:</strong> ${favourite.opponent_name} - ${favourite.wins}-${favourite.losses} in your favour</p>`;
+            }
+            if (!callout) {
+              callout = '<p style="font-size:13px;">⚖️ No clear nemesis or favourite yet - your rivalries are all evenly matched.</p>';
+            }
+          }
+          oppEl.innerHTML = callout + opponents.map(o => {
             const winPct = o.matches ? (o.wins / o.matches * 100) : 0;
             const lossPct = 100 - winPct;
             return `
