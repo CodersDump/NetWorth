@@ -24,7 +24,7 @@ dynamodb = boto3.resource('dynamodb')
 groups_table = dynamodb.Table(os.environ['GROUPS_TABLE'])
 players_table = dynamodb.Table(os.environ['PLAYERS_TABLE'])
 
-CONFIRMATION_CODE = 'Matchpoint-Falcon-77'  # private - never shown in the UI; change this if it's ever exposed
+CONFIRMATION_CODE = os.environ['CONFIRMATION_CODE']  # supplied at deploy time via GitHub Secrets -> CFN parameter, never stored in the repo
 
 
 def handler(event, context):

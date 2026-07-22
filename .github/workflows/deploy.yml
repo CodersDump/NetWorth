@@ -44,7 +44,10 @@ jobs:
             --template-file packaged-template.yaml \
             --stack-name networth-app \
             --capabilities CAPABILITY_NAMED_IAM \
-            --parameter-overrides DeploymentTimestamp=$(date +%s)
+            --parameter-overrides \
+              DeploymentTimestamp=$(date +%s) \
+              ConfirmationCode="${{ secrets.CONFIRMATION_CODE }}" \
+              FinanceViewKey="${{ secrets.FINANCE_VIEW_KEY }}"
 
       - name: Force fresh API Gateway deployment
         run: |

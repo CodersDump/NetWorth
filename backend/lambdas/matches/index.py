@@ -62,7 +62,7 @@ def compute_comeback_bonus(momentum):
     if deficit < COMEBACK_BONUS_THRESHOLD:
         return 0
     return min(deficit * COMEBACK_BONUS_PER_POINT, COMEBACK_BONUS_CAP)
-CONFIRMATION_CODE = 'Matchpoint-Falcon-77'  # private - never shown in the UI; change this if it's ever exposed
+CONFIRMATION_CODE = os.environ['CONFIRMATION_CODE']  # supplied at deploy time via GitHub Secrets -> CFN parameter, never stored in the repo
 
 
 def _is_valid_completed_game(score_a, score_b, target):

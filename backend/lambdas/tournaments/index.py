@@ -100,7 +100,7 @@ def compute_momentum_stats(point_log, winner):
     if suspected_batch_entry:
         result['suspected_batch_entry'] = True
     return result
-CONFIRMATION_CODE = 'Matchpoint-Falcon-77'  # private - never shown in the UI; change this if it's ever exposed
+CONFIRMATION_CODE = os.environ['CONFIRMATION_CODE']  # supplied at deploy time via GitHub Secrets -> CFN parameter, never stored in the repo
 
 
 def _is_valid_completed_game(score_a, score_b, target):

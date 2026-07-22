@@ -10,6 +10,14 @@ Parameters:
   AppName:
     Type: String
     Default: networth
+  ConfirmationCode:
+    Type: String
+    NoEcho: true
+    Description: Secret required for destructive operations (deletes). Set in GitHub repo secrets, never committed.
+  FinanceViewKey:
+    Type: String
+    NoEcho: true
+    Description: Secret required to read/write finance data. Set in GitHub repo secrets, never committed.
   DeploymentTimestamp:
     Type: String
     Default: 'initial'
@@ -160,6 +168,7 @@ Resources:
       Environment:
         Variables:
           PLAYERS_TABLE: !Ref PlayersTable
+          CONFIRMATION_CODE: !Ref ConfirmationCode
       Code: ../backend/lambdas/players
 
   GroupsFunction:
@@ -174,6 +183,7 @@ Resources:
         Variables:
           GROUPS_TABLE: !Ref GroupsTable
           PLAYERS_TABLE: !Ref PlayersTable
+          CONFIRMATION_CODE: !Ref ConfirmationCode
       Code: ../backend/lambdas/groups
 
   FinanceFunction:
@@ -189,6 +199,8 @@ Resources:
           FINANCE_TABLE: !Ref FinanceTable
           PLAYERS_TABLE: !Ref PlayersTable
           MATCHES_TABLE: !Ref MatchesTable
+          CONFIRMATION_CODE: !Ref ConfirmationCode
+          FINANCE_VIEW_KEY: !Ref FinanceViewKey
       Code: ../backend/lambdas/finance
 
   MatchesFunction:
@@ -206,6 +218,7 @@ Resources:
           TOURNAMENTS_TABLE: !Ref TournamentsTable
           GROUPS_TABLE: !Ref GroupsTable
           PROGRESS_HISTORY_TABLE: !Ref ProgressHistoryTable
+          CONFIRMATION_CODE: !Ref ConfirmationCode
       Code: ../backend/lambdas/matches
 
   ProgressSchedulerFunction:
@@ -257,6 +270,7 @@ Resources:
           GROUPS_TABLE: !Ref GroupsTable
           PLAYERS_TABLE: !Ref PlayersTable
           MATCHES_TABLE: !Ref MatchesTable
+          CONFIRMATION_CODE: !Ref ConfirmationCode
       Code: ../backend/lambdas/tournaments
 
   # ---------- API Gateway ----------

@@ -62,9 +62,11 @@ finance_table = dynamodb.Table(os.environ['FINANCE_TABLE'])
 players_table = dynamodb.Table(os.environ['PLAYERS_TABLE'])
 matches_table = dynamodb.Table(os.environ['MATCHES_TABLE'])
 
-# Private - never rendered in the UI. Change both if ever exposed.
-VIEW_KEY = 'Matchpoint-Ledger-11'          # read/write access to finance data
-CONFIRMATION_CODE = 'Matchpoint-Falcon-77'  # required on top of VIEW_KEY for deletes
+# Both secrets arrive as environment variables set by CloudFormation
+# parameters (NoEcho), which CI passes in from GitHub repository secrets.
+# Rotating either = change the GitHub secret and re-run the deploy.
+VIEW_KEY = os.environ['FINANCE_VIEW_KEY']  # supplied at deploy time, same mechanism
+CONFIRMATION_CODE = os.environ['CONFIRMATION_CODE']  # supplied at deploy time via GitHub Secrets -> CFN parameter, never stored in the repo
 
 MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July',
           'August', 'September', 'October', 'November', 'December']
