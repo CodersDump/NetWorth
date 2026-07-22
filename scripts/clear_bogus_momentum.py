@@ -163,9 +163,9 @@ def main():
     matches_table = dynamodb.Table('networth-matches')
     players_table = dynamodb.Table('networth-players')
 
-    matches = matches_table.scan().get('Items', [])
+    matches = matches_table.scan(ConsistentRead=True).get('Items', [])
     matches.sort(key=lambda m: m.get('date', ''))
-    players = players_table.scan().get('Items', [])
+    players = players_table.scan(ConsistentRead=True).get('Items', [])
     names = {p['player_id']: p.get('name', p['player_id']) for p in players}
 
     def teams_str(m):
@@ -202,8 +202,11 @@ def main():
     momentum = target.get('momentum')
     point_log = target.get('point_log')
     if not momentum and not point_log:
-        print("This match has no momentum/point_log data - nothing to clear.")
-        return
+        if not args.apply:
+            print("This match has no momentum/point_log data - nothing to clear.")
+            return
+        print("Momentum already cleared - re-running the rating replay to make sure "
+              "ratings/ratings_after are consistent with it.")
     print(f"momentum: {momentum}")
     if point_log:
         runs = count_scoring_runs(point_log)
@@ -229,8 +232,12 @@ def main():
     # Full authoritative replay (the target now genuinely has no momentum),
     # rebuilding each match's ratings_after snapshot and every player's
     # current rating - same as the live Lambda does after an edit/deletion.
-    matches = matches_table.scan().get('Items', [])
+    matches = matches_table.scan(ConsistentRead=True).get('Items', [])
     matches.sort(key=lambda m: m.get('date', ''))
+    for m in matches:
+        if m['match_id'] == args.match_id:
+            m.pop('momentum', None)
+            m.pop('point_log', None)
 
     ratings = {}
     pairing_counts = {}
