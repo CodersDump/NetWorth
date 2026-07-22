@@ -195,6 +195,10 @@
   .row { display: flex; gap: 12px; flex-wrap: wrap; }
   .row > div { flex: 1; min-width: 140px; }
   table { width: 100%; border-collapse: collapse; margin-top: 12px; font-size: 13px; }
+  /* Wide tables (settlement, expenses, walk-ins, HoF) scroll sideways inside
+     their card on narrow screens instead of bleeding past the edge. */
+  [id$="-result"] { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  [id$="-result"] table th { white-space: nowrap; }
   th, td { text-align: left; padding: 8px; border-bottom: 1px solid var(--border); }
   th { font-family: 'Rajdhani', sans-serif; font-weight: 700; color: var(--text-secondary); font-size: 12px; text-transform: uppercase; letter-spacing: 0.4px; }
   td { font-variant-numeric: tabular-nums; }
@@ -594,6 +598,16 @@
     </div>
 
     <div class="tab-panel" id="tab-finance">
+      <div class="card" id="upi-pay-card" style="display:none;">
+        <h2>Pay the club 💳</h2>
+        <p class="card-sub">Walk-in fee, monthly membership, or anything else - scan the QR or tap the button to open your UPI app. Never approve unexpected "collect" requests claiming to be us; paying via this QR never asks you to receive money.</p>
+        <div id="upi-qr" style="background:#fff; padding:12px; border-radius:8px; width:fit-content;"></div>
+        <p style="font-size:14px; margin-top:10px;">UPI ID: <strong id="upi-id-text"></strong>
+          <button type="button" class="secondary" id="upi-copy-btn" style="margin-left:8px;">Copy</button>
+        </p>
+        <a id="upi-deeplink" style="display:inline-block; margin-top:4px;"><button type="button">Open UPI app to pay</button></a>
+      </div>
+
       <div class="card" id="finance-lock-card">
         <h2>Finance</h2>
         <p class="card-sub">Court costs, monthly memberships, walk-in fees and settlement. Access requires the finance view key - this data is checked server-side, so nothing loads without it.</p>
@@ -2594,6 +2608,34 @@
     document.getElementById('load-attendance-btn').addEventListener('click', loadAttendance);
     document.getElementById('attendance_group_filter').addEventListener('change', loadAttendance);
 
+
+    // ---------- UPI payment card (public) ----------
+    // Set your UPI ID here (a secondary/dedicated VPA is recommended since
+    // this page and repo are public). Card stays hidden until it's set.
+    const UPI_ID = 'REPLACE_ME@upi';
+    const UPI_NAME = 'Matchpoint Badminton';
+
+    (function initUpiCard() {
+      if (!UPI_ID || UPI_ID.includes('REPLACE_ME')) return;
+      const card = document.getElementById('upi-pay-card');
+      card.style.display = 'block';
+      document.getElementById('upi-id-text').textContent = UPI_ID;
+      const payUrl = `upi://pay?pa=${encodeURIComponent(UPI_ID)}&pn=${encodeURIComponent(UPI_NAME)}&cu=INR`;
+      document.getElementById('upi-deeplink').href = payUrl;
+      document.getElementById('upi-copy-btn').addEventListener('click', () => {
+        navigator.clipboard.writeText(UPI_ID).then(() => {
+          document.getElementById('upi-copy-btn').textContent = 'Copied ✓';
+          setTimeout(() => { document.getElementById('upi-copy-btn').textContent = 'Copy'; }, 1500);
+        });
+      });
+      // Render the QR client-side; if the CDN is unreachable the ID text
+      // and deep link above still work fine.
+      const s = document.createElement('script');
+      s.src = 'https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js';
+      s.onload = () => new QRCode(document.getElementById('upi-qr'), { text: payUrl, width: 180, height: 180 });
+      s.onerror = () => { document.getElementById('upi-qr').style.display = 'none'; };
+      document.head.appendChild(s);
+    })();
 
     // ---------- finance (view-key gated) ----------
 
