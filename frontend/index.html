@@ -1893,8 +1893,12 @@
           }
           const achieved = tierIndex >= 0;
           const nextTarget = tierIndex + 1 < tiers.length ? tiers[tierIndex + 1] : null;
-          const prevTarget = tierIndex >= 0 ? tiers[tierIndex] : 0;
-          const progressPct = nextTarget ? Math.min(100, ((currentValue - prevTarget) / (nextTarget - prevTarget)) * 100) : 100;
+          // Bar and label must speak the same language: the label reads
+          // "currentValue/nextTarget" (absolute), so the bar fills to the
+          // same fraction. Previously it measured progress only within the
+          // prev->next segment, so completing a tier reset the bar to 0%
+          // while the label still implied partial progress (e.g. "3/5").
+          const progressPct = nextTarget ? Math.min(100, (currentValue / nextTarget) * 100) : 100;
 
           let html = `<div class="achievement-card ${achieved ? 'achieved' : 'locked'}">`;
           html += `<div class="achievement-icon">${icon}</div>`;
