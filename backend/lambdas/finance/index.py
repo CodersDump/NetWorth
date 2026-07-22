@@ -91,6 +91,7 @@ def handler(event, context):
         if parts == ['summary'] and method == 'GET':
             return summary()
         if parts == ['insights'] and method == 'GET':
+            insights._params = params
             return insights()
         if parts == ['settings']:
             if method == 'GET':
@@ -170,9 +171,20 @@ def _resolve_name(pid_cache, player_id):
 
 def list_records(record_type, params):
     items = _scan_type(record_type)
-    for f in ('month', 'year', 'slot'):
-        if params.get(f):
-            items = [i for i in items if str(i.get(f)) == str(params[f])]
+    if record_type == 'walkin':
+        # Walk-ins carry an ISO date rather than month/year fields, so
+        # month/year filters translate to a date prefix.
+        if params.get('slot'):
+            items = [i for i in items if str(i.get('slot')) == str(params['slot'])]
+        if params.get('year'):
+            prefix = f"{int(params['year']):04d}"
+            if params.get('month') and params['month'] in MONTHS:
+                prefix += f"-{MONTHS.index(params['month']) + 1:02d}"
+            items = [i for i in items if str(i.get('date', '')).startswith(prefix)]
+    else:
+        for f in ('month', 'year', 'slot'):
+            if params.get(f):
+                items = [i for i in items if str(i.get(f)) == str(params[f])]
     # Live player names for linked records - a rename shows up immediately.
     cache = {}
     for i in items:
@@ -263,7 +275,7 @@ def public_walkins():
 
 # ---------- settlement summary (the Excel formulas, retired with honor) ----------
 
-def summary():
+def _settlement_rows():
     """Per (month, year, slot): the exact math from the Calculations sheet.
         estimated_total = SUM(estimated_cost * estimated_qty)
         actual_total    = SUM(actual_cost * actual_qty)   [falls back to estimated]
@@ -271,7 +283,7 @@ def summary():
         player_count    = COUNT(memberships with status Yes)
         cost_per_head   = estimated_total / player_count   [what members paid]
         residual_per_head = (estimated_total - actual_total + extra_collected)
-                             / player_count                [refund owed each]
+                             / player_count                [relief owed each]
     """
     expenses = _scan_type('expense')
     memberships = _scan_type('membership')
@@ -311,7 +323,6 @@ def summary():
                 continue
             bucket(month, year, w.get('slot'))['extra_collected'] += _num(w.get('fee'))
 
-    rows = []
     for b in periods.values():
         count = b['player_count']
         b['difference'] = round(b['estimated_total'] - b['actual_total'], 2)
@@ -321,83 +332,177 @@ def summary():
         b['estimated_total'] = round(b['estimated_total'], 2)
         b['actual_total'] = round(b['actual_total'], 2)
         b['extra_collected'] = round(b['extra_collected'], 2)
-        rows.append(b)
 
+    return periods
+
+
+def summary():
+    rows = list(_settlement_rows().values())
     rows.sort(key=lambda r: (r['year'], MONTHS.index(r['month']) if r['month'] in MONTHS else 99, r['slot']))
     return _response(200, {'summary': rows})
 
 
+# ---- insights: per-member monthly economics + ghosts + conversion ----
+
+# The site started capturing matches mid-month (first match July 19), so a
+# calendar month's real game count is undercounted for anyone who was
+# playing before tracking began. Estimation model (from club reality:
+# roughly 15 sessions in the 18 untracked days, 4-5 games per session):
+AVG_GAMES_PER_SESSION = 4.5
+SESSION_RATE = 15.0 / 18.0          # sessions actually held per untracked day
+ACTIVE_DAYS_THRESHOLD = 10          # below this, offer the estimated count
+
+
 def insights():
-    """Cross-references finance data with the match log:
-    - ghosts: members enrolled (Yes) in a month who have ZERO recorded
-      matches that month - the renewal chase-list.
-    - cost_per_match: for each settled month, each Yes-member's effective
-      price per match actually played (cost_per_head / matches).
-    - conversion: walk-in guests -> did they become monthly members?
-    Attribution is per calendar month (matches aren't tagged with a slot).
+    """Per-member monthly economics, ghosts, and walk-in conversion.
+
+    Effective cost model (per member, per month, ACROSS slots):
+        paid      = sum of cost_per_head for every slot enrolled (Yes) this month
+        relief    = sum of last month's residual_per_head for every slot the
+                     member was enrolled in LAST month (residuals aren't cash
+                     refunds - they discount this month's collection)
+        effective = paid - relief
+        cost/match = effective / matches played this calendar month
+
+    Match counts come in two flavours the UI can toggle:
+        matches_actual    - recorded matches in that calendar month
+        matches_estimated - actual + AVG_GAMES_PER_SESSION x estimated
+                             sessions missed before tracking started, applied
+                             only when the member has fewer than
+                             ACTIVE_DAYS_THRESHOLD recorded play days and the
+                             month has untracked days
+    Months that ended entirely before tracking began get no cost/match rows.
     """
+    params_holder = getattr(insights, '_params', {}) or {}
+    f_month = params_holder.get('month')
+    f_year = int(_num(params_holder.get('year'))) if params_holder.get('year') else None
+
     memberships = _scan_type('membership')
     walkins = _scan_type('walkin')
-    expenses = _scan_type('expense')
     matches = matches_table.scan().get('Items', [])
+    settlement = _settlement_rows()
 
-    # matches played per (player_id, 'yyyy-mm')
-    played = {}
+    # matches per (player_id, 'yyyy-mm') and distinct active days
+    played, active_days = {}, {}
+    tracking_start = None
     for m in matches:
-        ym = (m.get('date') or '')[:7]
+        date = (m.get('date') or '')
+        ym, day = date[:7], date[:10]
         if len(ym) != 7:
             continue
+        if tracking_start is None or day < tracking_start:
+            tracking_start = day
         for pid in (m.get('team_a') or []) + (m.get('team_b') or []):
             played[(pid, ym)] = played.get((pid, ym), 0) + 1
+            active_days.setdefault((pid, ym), set()).add(day)
 
-    # cost per head per (month, year, slot), estimated basis (what members paid)
-    cost_per_head = {}
-    est_totals, yes_counts = {}, {}
-    for e in expenses:
-        key = (str(e.get('month')), int(_num(e.get('year'))), str(e.get('slot')))
-        est_totals[key] = est_totals.get(key, 0) + _num(e.get('estimated_cost')) * _num(e.get('estimated_qty'), 1)
-    for mem in memberships:
-        if mem.get('status') == 'Yes':
-            key = (str(mem.get('month')), int(_num(mem.get('year'))), str(mem.get('slot')))
-            yes_counts[key] = yes_counts.get(key, 0) + 1
-    for key, total in est_totals.items():
-        if yes_counts.get(key):
-            cost_per_head[key] = total / yes_counts[key]
+    def month_key(month, year):
+        return f"{year:04d}-{MONTHS.index(month) + 1:02d}"
 
+    def prev_period(month, year):
+        i = MONTHS.index(month)
+        return (MONTHS[i - 1], year - 1 if i == 0 else year)
+
+    # memberships grouped per (member identity, month, year)
     cache = {}
-    ghosts = []
-    cost_rows = []
+    by_member_month = {}
     for mem in memberships:
-        if mem.get('status') != 'Yes':
+        if mem.get('status') != 'Yes' or mem.get('month') not in MONTHS:
             continue
-        month, year, slot = str(mem.get('month')), int(_num(mem.get('year'))), str(mem.get('slot'))
-        if month not in MONTHS:
-            continue
-        ym = f"{year:04d}-{MONTHS.index(month) + 1:02d}"
-        pid = mem.get('player_id')
-        name = _resolve_name(cache, pid) or mem.get('display_name')
-        n_played = played.get((pid, ym), 0) if pid else None
-        cph = cost_per_head.get((month, year, slot))
-        row = {'month': month, 'year': year, 'slot': slot, 'display_name': name,
-               'linked': bool(pid), 'matches_played': n_played,
-               'cost_per_head': round(cph, 2) if cph else None}
-        if pid and n_played == 0:
-            ghosts.append(row)
-        if cph:
-            row = dict(row)
-            row['cost_per_match'] = round(cph / n_played, 2) if n_played else None
-            cost_rows.append(row)
-    ghosts.sort(key=lambda r: (r['year'], MONTHS.index(r['month']), r['slot'], r['display_name']))
-    cost_rows.sort(key=lambda r: (-r['year'], -MONTHS.index(r['month']), r['slot'],
-                                   -(r['cost_per_match'] or 10 ** 9)))
+        month, year = str(mem['month']), int(_num(mem.get('year')))
+        ident = mem.get('player_id') or f"name:{mem.get('display_name')}"
+        entry = by_member_month.setdefault((ident, month, year), {
+            'player_id': mem.get('player_id'),
+            'display_name': _resolve_name(cache, mem.get('player_id')) or mem.get('display_name'),
+            'slots': []
+        })
+        entry['month'], entry['year'] = month, year
+        entry['slots'].append(str(mem.get('slot')))
 
-    # Walk-in -> membership conversion
+    ghosts, cost_rows = [], []
+    for (ident, month, year), entry in by_member_month.items():
+        if f_year and year != f_year:
+            continue
+        if f_month and month != f_month:
+            continue
+        ym = month_key(month, year)
+        pid = entry['player_id']
+
+        paid = 0.0
+        payable = True
+        for slot in entry['slots']:
+            cph = (settlement.get((month, year, slot)) or {}).get('cost_per_head')
+            if cph is None:
+                payable = False
+            else:
+                paid += cph
+
+        p_month, p_year = prev_period(month, year)
+        relief = 0.0
+        for mem2 in memberships:
+            if (mem2.get('status') == 'Yes' and str(mem2.get('month')) == p_month
+                    and int(_num(mem2.get('year'))) == p_year
+                    and (mem2.get('player_id') or f"name:{mem2.get('display_name')}") == ident):
+                res = (settlement.get((p_month, p_year, str(mem2.get('slot')))) or {}).get('residual_per_head')
+                if res:
+                    relief += res
+
+        n_actual = played.get((pid, ym), 0) if pid else None
+        n_days = len(active_days.get((pid, ym), set())) if pid else 0
+
+        # months entirely before tracking have no match data at all
+        month_end = f"{ym}-31"
+        month_tracked = tracking_start is not None and month_end >= tracking_start
+        untracked_days = 0
+        if tracking_start and tracking_start[:7] == ym:
+            untracked_days = int(tracking_start[8:10]) - 1
+
+        n_estimated = n_actual
+        estimated_applied = False
+        if (pid and month_tracked and untracked_days > 0 and n_days < ACTIVE_DAYS_THRESHOLD):
+            n_estimated = (n_actual or 0) + int(round(AVG_GAMES_PER_SESSION * SESSION_RATE * untracked_days))
+            estimated_applied = True
+
+        effective = round(paid - relief, 2) if payable else None
+        row = {
+            'month': month, 'year': year,
+            'display_name': entry['display_name'], 'linked': bool(pid),
+            'slots': sorted(entry['slots']),
+            'paid': round(paid, 2) if payable else None,
+            'relief': round(relief, 2),
+            'effective_cost': effective,
+            'matches_actual': n_actual,
+            'matches_estimated': n_estimated,
+            'estimated_applied': estimated_applied,
+            'active_days': n_days,
+            'cost_per_match_actual': (round(effective / n_actual, 2)
+                                       if effective is not None and n_actual else None),
+            'cost_per_match_estimated': (round(effective / n_estimated, 2)
+                                          if effective is not None and n_estimated else None),
+            'month_tracked': month_tracked,
+        }
+        if month_tracked:
+            cost_rows.append(row)
+        if pid and month_tracked and n_actual == 0:
+            ghosts.append({'month': month, 'year': year, 'display_name': entry['display_name'],
+                            'slots': sorted(entry['slots'])})
+
+    ghosts.sort(key=lambda r: (r['year'], MONTHS.index(r['month']), r['display_name']))
+    cost_rows.sort(key=lambda r: (-r['year'], -MONTHS.index(r['month']),
+                                    -(r['cost_per_match_actual'] or 10 ** 9), r['display_name']))
+
+    # Walk-in -> member conversion. Linking rules: a LINKED walk-in matches
+    # memberships by player_id; an UNLINKED walk-in may only name-match
+    # UNLINKED memberships - if a guest was deliberately left unlinked
+    # despite sharing a roster name (the two Mohits), they are different
+    # people and must never be counted as converted.
     member_pids = {m.get('player_id') for m in memberships if m.get('status') == 'Yes' and m.get('player_id')}
-    member_names = {m.get('display_name') for m in memberships if m.get('status') == 'Yes'}
+    unlinked_member_names = {m.get('display_name') for m in memberships
+                              if m.get('status') == 'Yes' and not m.get('player_id')}
     guests = {}
     for w in walkins:
         if _num(w.get('fee')) < 0:
-            continue  # refund rows aren't guests
+            continue
         gkey = w.get('player_id') or f"name:{w.get('display_name')}"
         g = guests.setdefault(gkey, {'display_name': _resolve_name(cache, w.get('player_id')) or w.get('display_name'),
                                       'sessions': 0, 'fees_paid': 0.0, 'recruit_verdict': None,
@@ -406,8 +511,10 @@ def insights():
         g['fees_paid'] = round(g['fees_paid'] + _num(w.get('fee')), 2)
         if w.get('recruit_verdict'):
             g['recruit_verdict'] = w.get('recruit_verdict')
-        if (w.get('player_id') and w.get('player_id') in member_pids) or w.get('display_name') in member_names:
-            g['became_member'] = True
+        if w.get('player_id'):
+            g['became_member'] = w['player_id'] in member_pids
+        else:
+            g['became_member'] = w.get('display_name') in unlinked_member_names
     guest_rows = sorted(guests.values(), key=lambda g: (-g['became_member'], -g['sessions']))
     conversion = {
         'total_guests': len(guest_rows),
@@ -415,7 +522,8 @@ def insights():
         'guests': guest_rows,
     }
 
-    return _response(200, {'ghosts': ghosts, 'cost_per_match': cost_rows, 'conversion': conversion})
+    return _response(200, {'ghosts': ghosts, 'cost_rows': cost_rows, 'conversion': conversion,
+                            'tracking_start': tracking_start})
 
 
 def _response(status_code, body_dict):

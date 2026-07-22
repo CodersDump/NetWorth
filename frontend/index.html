@@ -683,6 +683,12 @@
           <h2>Walk-ins</h2>
           <p class="card-sub">Per-session guests and their fees. Negative fee = refund/adjustment. Skill and recruit verdicts stay private even when the public walk-in list is enabled.</p>
           <div class="row">
+            <div><label>Show month
+              <select id="fwalk_filter_month"><option value="">All</option><option>January</option><option>February</option><option>March</option><option>April</option><option>May</option><option>June</option><option>July</option><option>August</option><option>September</option><option>October</option><option>November</option><option>December</option></select>
+            </label></div>
+            <div><label>Show year <input type="number" id="fwalk_filter_year"></label></div>
+          </div>
+          <div class="row">
             <div><label>Date <input type="date" id="fwalk_date"></label></div>
             <div><label>Slot
               <select id="fwalk_slot"><option>7AM-8AM</option><option>8AM-9AM</option></select>
@@ -708,7 +714,16 @@
         <div class="card">
           <h2>Insights</h2>
           <p class="card-sub">Finance data cross-referenced with the match log: who's paying but not playing, what each match effectively costs, and which walk-ins became members.</p>
-          <button id="finance-load-insights-btn" type="button" class="secondary">Load insights</button>
+          <div class="row">
+            <div><label>Month
+              <select id="fins_month"><option value="">All</option><option>January</option><option>February</option><option>March</option><option>April</option><option>May</option><option>June</option><option>July</option><option>August</option><option>September</option><option>October</option><option>November</option><option>December</option></select>
+            </label></div>
+            <div><label>Year <input type="number" id="fins_year"></label></div>
+          </div>
+          <label style="display:flex; align-items:center; gap:8px; margin-top:6px;">
+            <input type="checkbox" id="fins_estimated" style="width:auto;" checked> Use estimated match counts for partially-tracked months
+          </label>
+          <button id="finance-load-insights-btn" type="button" class="secondary" style="margin-top:8px;">Load insights</button>
           <div id="finance-insights-result" style="margin-top:12px;"></div>
         </div>
 
@@ -1002,6 +1017,11 @@
   <script>
     // Replace with your deployed API Gateway URL (see CloudFormation output: ApiUrl)
     const API_BASE_URL = 'https://REPLACE_ME.execute-api.REGION.amazonaws.com/prod';
+    // UPI payment card config: set your (ideally secondary) VPA to make the
+    // 'Pay the club' card appear on the Finance tab. Leave as REPLACE_ME to
+    // keep the card hidden.
+    const UPI_ID = 'REPLACE_ME@upi';
+    const UPI_NAME = 'Matchpoint Badminton';
 
     let allPlayers = [];
     let allGroups = [];
@@ -2610,11 +2630,6 @@
 
 
     // ---------- UPI payment card (public) ----------
-    // Set your UPI ID here (a secondary/dedicated VPA is recommended since
-    // this page and repo are public). Card stays hidden until it's set.
-    const UPI_ID = 'REPLACE_ME@upi';
-    const UPI_NAME = 'Matchpoint Badminton';
-
     (function initUpiCard() {
       if (!UPI_ID || UPI_ID.includes('REPLACE_ME')) return;
       const card = document.getElementById('upi-pay-card');
@@ -2628,12 +2643,23 @@
           setTimeout(() => { document.getElementById('upi-copy-btn').textContent = 'Copy'; }, 1500);
         });
       });
-      // Render the QR client-side; if the CDN is unreachable the ID text
-      // and deep link above still work fine.
+      // Render the QR client-side; fall back to a QR image service, and if
+      // that also fails the ID text and deep link above still work fine.
+      const qrEl = document.getElementById('upi-qr');
+      const imageFallback = () => {
+        const img = document.createElement('img');
+        img.width = 180; img.height = 180; img.alt = 'UPI QR';
+        img.src = `https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(payUrl)}`;
+        img.onerror = () => { qrEl.style.display = 'none'; };
+        qrEl.appendChild(img);
+      };
       const s = document.createElement('script');
       s.src = 'https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js';
-      s.onload = () => new QRCode(document.getElementById('upi-qr'), { text: payUrl, width: 180, height: 180 });
-      s.onerror = () => { document.getElementById('upi-qr').style.display = 'none'; };
+      s.onload = () => {
+        try { new QRCode(qrEl, { text: payUrl, width: 180, height: 180 }); }
+        catch (err) { imageFallback(); }
+      };
+      s.onerror = imageFallback;
       document.head.appendChild(s);
     })();
 
@@ -2780,10 +2806,14 @@
     async function loadFinanceWalkins() {
       const el = document.getElementById('finance-walkins-result');
       el.textContent = 'Loading...';
-      const res = await fetch(`${API_BASE_URL}/finance/walkins?${finQS()}`);
+      const fMonth = document.getElementById('fwalk_filter_month').value;
+      const fYear = document.getElementById('fwalk_filter_year').value;
+      const filters = {};
+      if (fYear) { filters.year = fYear; if (fMonth) filters.month = fMonth; }
+      const res = await fetch(`${API_BASE_URL}/finance/walkins?${finQS(filters)}`);
       const data = await res.json();
       if (!res.ok) { el.textContent = `Error: ${data.error}`; return; }
-      if (!data.walkins.length) { el.textContent = 'No walk-ins yet.'; return; }
+      if (!data.walkins.length) { el.textContent = 'No walk-ins for this period.'; return; }
       let html = '<table><tr><th>Date</th><th>Slot</th><th>Name</th><th>Fee</th><th>Skill</th><th>Recruit?</th><th></th></tr>';
       [...data.walkins].reverse().forEach(w => {
         html += `<tr><td>${w.date}</td><td>${w.slot}</td>` +
@@ -2817,29 +2847,60 @@
       loadFinanceWalkins(); loadFinanceSummary();
     }
 
+    let lastInsights = null;
+
     async function loadFinanceInsights() {
       const el = document.getElementById('finance-insights-result');
       el.textContent = 'Loading...';
-      const res = await fetch(`${API_BASE_URL}/finance/insights?${finQS()}`);
+      const filters = {};
+      const fm = document.getElementById('fins_month').value;
+      const fy = document.getElementById('fins_year').value;
+      if (fy) { filters.year = fy; if (fm) filters.month = fm; }
+      const res = await fetch(`${API_BASE_URL}/finance/insights?${finQS(filters)}`);
       const data = await res.json();
       if (!res.ok) { el.textContent = `Error: ${data.error}`; return; }
+      lastInsights = data;
+      renderInsights();
+    }
+
+    function renderInsights() {
+      const el = document.getElementById('finance-insights-result');
+      const data = lastInsights;
+      if (!data) return;
+      const useEst = document.getElementById('fins_estimated').checked;
       let html = '';
+
       if (data.ghosts && data.ghosts.length) {
-        html += '<h4>👻 Ghosts - enrolled but no matches recorded</h4><table><tr><th>Month</th><th>Slot</th><th>Member</th></tr>';
-        data.ghosts.forEach(g => { html += `<tr><td>${g.month} ${g.year}</td><td>${g.slot}</td><td>${g.display_name}</td></tr>`; });
+        html += '<h4>👻 Ghosts - enrolled but no matches recorded</h4><table><tr><th>Month</th><th>Member</th><th>Slots</th></tr>';
+        data.ghosts.forEach(g => { html += `<tr><td>${g.month} ${g.year}</td><td>${g.display_name}</td><td>${g.slots.join(', ')}</td></tr>`; });
         html += '</table>';
       } else {
-        html += '<p style="font-size:13px;">👻 No ghosts - every enrolled member has recorded matches. </p>';
+        html += '<p style="font-size:13px;">👻 No ghosts for this period - everyone enrolled has recorded matches.</p>';
       }
-      if (data.cost_per_match && data.cost_per_match.length) {
-        html += '<h4>💸 Effective cost per match played</h4><table><tr><th>Month</th><th>Slot</th><th>Member</th><th>Matches</th><th>Cost/match</th></tr>';
-        data.cost_per_match.forEach(r => {
-          html += `<tr><td>${r.month} ${r.year}</td><td>${r.slot}</td><td>${r.display_name}</td>` +
-            `<td>${r.matches_played === null ? '?' : r.matches_played}</td>` +
-            `<td>${r.cost_per_match === null ? '∞ (no matches)' : r.cost_per_match}</td></tr>`;
+
+      if (data.cost_rows && data.cost_rows.length) {
+        html += '<h4>💸 Effective monthly cost per member</h4>' +
+          '<p class="card-sub">Paid = per-head across all enrolled slots. Relief = last month\'s residual for slots you were in then (discounts this month). Effective = paid − relief.</p>' +
+          '<table><tr><th>Month</th><th>Member</th><th>Slots</th><th>Paid</th><th>Relief</th><th>Effective</th><th>Matches</th><th>Cost/match</th></tr>';
+        data.cost_rows.forEach(r => {
+          const est = useEst && r.estimated_applied;
+          const matches = est ? r.matches_estimated : r.matches_actual;
+          const cpm = est ? r.cost_per_match_estimated : r.cost_per_match_actual;
+          html += `<tr><td>${r.month} ${r.year}</td><td>${r.display_name}${r.linked ? '' : ' <span style="opacity:0.6;">(unlinked)</span>'}</td>` +
+            `<td>${r.slots.join(', ')}</td>` +
+            `<td>${r.paid === null ? 'pending' : r.paid}</td><td>${r.relief}</td>` +
+            `<td>${r.effective_cost === null ? 'pending' : r.effective_cost}</td>` +
+            `<td>${matches === null ? '?' : (est ? '~' + matches : matches)}</td>` +
+            `<td>${cpm === null ? (r.effective_cost === null ? 'pending' : '∞ (no matches)') : (est ? '~' + cpm : cpm)}</td></tr>`;
         });
         html += '</table>';
+        if (data.cost_rows.some(r => r.estimated_applied)) {
+          html += `<p style="font-size:12px; opacity:0.7;">~ = estimated: match tracking began ${data.tracking_start || 'mid-month'}; counts for players with under 10 recorded play days include an estimate of ~4.5 games x sessions held before tracking. Untick the box above for captured counts only.</p>`;
+        }
+      } else {
+        html += '<p style="font-size:13px;">💸 No cost rows for this period - either no Yes enrollments yet, or the month predates match tracking.</p>';
       }
+
       if (data.conversion) {
         const c = data.conversion;
         html += `<h4>🎯 Walk-in conversion</h4><p style="font-size:13px;">${c.became_members} of ${c.total_guests} guests became monthly members.</p>`;
@@ -2893,8 +2954,25 @@
     document.getElementById('finance-load-expenses-btn').addEventListener('click', loadFinanceExpenses);
     document.getElementById('finance-load-members-btn').addEventListener('click', loadFinanceMembers);
     document.getElementById('finance-add-member-btn').addEventListener('click', addFinanceMember);
+    (function initWalkinFilter() {
+      const now = new Date();
+      const monthNames = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+      document.getElementById('fwalk_filter_month').value = monthNames[now.getMonth()];
+      document.getElementById('fwalk_filter_year').value = now.getFullYear();
+      ['fwalk_filter_month', 'fwalk_filter_year'].forEach(id =>
+        document.getElementById(id).addEventListener('change', loadFinanceWalkins));
+    })();
     document.getElementById('finance-add-walkin-btn').addEventListener('click', addFinanceWalkin);
     document.getElementById('finance-load-walkins-btn').addEventListener('click', loadFinanceWalkins);
+    (function initInsightsFilter() {
+      const now = new Date();
+      const monthNames = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+      document.getElementById('fins_month').value = monthNames[now.getMonth()];
+      document.getElementById('fins_year').value = now.getFullYear();
+      ['fins_month', 'fins_year'].forEach(id =>
+        document.getElementById(id).addEventListener('change', loadFinanceInsights));
+      document.getElementById('fins_estimated').addEventListener('change', renderInsights);
+    })();
     document.getElementById('finance-load-insights-btn').addEventListener('click', loadFinanceInsights);
     document.getElementById('finance-save-settings-btn').addEventListener('click', saveFinanceSettings);
     document.getElementById('load-public-walkins-btn').addEventListener('click', loadPublicWalkins);
