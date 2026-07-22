@@ -24,7 +24,12 @@ from decimal import Decimal
 K_FACTOR = 32
 
 
-def compute_period_snapshot(matches, period_start_dt, period_end_dt):
+def get_group_member_ids(groups_table, group_id):
+    group = groups_table.get_item(Key={'group_id': group_id}).get('Item')
+    return set(group.get('member_ids', [])) if group else set()
+
+
+def compute_period_snapshot(matches, period_start_dt, period_end_dt, member_ids=None):
     rating_before = {}
     rating_current = {}
     matches_in_period = {}
@@ -48,6 +53,8 @@ def compute_period_snapshot(matches, period_start_dt, period_end_dt):
 
     progress_rows = []
     for pid, current in rating_current.items():
+        if member_ids is not None and pid not in member_ids:
+            continue
         start = rating_before.get(pid, 1000.0)
         delta = round(current - start, 1)
         progress_rows.append({'player_id': pid, 'delta': delta})
@@ -55,9 +62,11 @@ def compute_period_snapshot(matches, period_start_dt, period_end_dt):
 
     most_improved = progress_rows[0] if progress_rows else None
     most_active = None
-    if matches_in_period:
-        active_pid = max(matches_in_period.items(), key=lambda kv: kv[1])[0]
-        most_active = {'player_id': active_pid, 'matches': matches_in_period[active_pid]}
+    eligible_activity = {pid: cnt for pid, cnt in matches_in_period.items()
+                          if member_ids is None or pid in member_ids}
+    if eligible_activity:
+        active_pid = max(eligible_activity.items(), key=lambda kv: kv[1])[0]
+        most_active = {'player_id': active_pid, 'matches': eligible_activity[active_pid]}
 
     return {'most_improved': most_improved, 'most_active': most_active}
 
@@ -148,8 +157,8 @@ def main():
             period_end_dt = datetime.combine(period_end, datetime.min.time(), tzinfo=timezone.utc)
 
             for scope_label, group_id in scopes:
-                scoped_matches = matches if not group_id else [m for m in matches if m.get('group_id') == group_id]
-                snapshot = compute_period_snapshot(scoped_matches, period_start_dt, period_end_dt)
+                member_ids = get_group_member_ids(groups_table, group_id) if group_id else None
+                snapshot = compute_period_snapshot(matches, period_start_dt, period_end_dt, member_ids)
                 if snapshot['most_improved'] is None and snapshot['most_active'] is None:
                     continue
                 write_history_entry(history_table, players_table, scope_label, group_id, period_name,

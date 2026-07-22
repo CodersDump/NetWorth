@@ -30,6 +30,15 @@ groups_table = dynamodb.Table(os.environ['GROUPS_TABLE'])
 history_table = dynamodb.Table(os.environ['PROGRESS_HISTORY_TABLE'])
 
 
+def get_group_member_ids(group_id):
+    """The set of player_ids belonging to a group - used to decide WHO is
+    eligible to win a group's badge, not to restrict which matches count.
+    Each member's own rating delta still comes from their FULL match
+    history, including matches never tagged with any group at all."""
+    group = groups_table.get_item(Key={'group_id': group_id}).get('Item')
+    return set(group.get('member_ids', [])) if group else set()
+
+
 def handler(event, context):
     today = datetime.now(timezone.utc).date()
     matches = matches_table.scan().get('Items', [])
@@ -61,10 +70,10 @@ def handler(event, context):
 
         scopes = [('global', None)] + [(f"group_{g['group_id']}", g['group_id']) for g in groups]
         for scope_label, group_id in scopes:
-            scoped_matches = matches if not group_id else [m for m in matches if m.get('group_id') == group_id]
-            snapshot = compute_period_snapshot(scoped_matches, period_start_dt, period_end_dt)
+            member_ids = get_group_member_ids(group_id) if group_id else None
+            snapshot = compute_period_snapshot(matches, period_start_dt, period_end_dt, member_ids)
             if snapshot['most_improved'] is None and snapshot['most_active'] is None:
-                continue  # no activity in this scope for this period - nothing to record
+                continue  # no eligible activity in this scope for this period - nothing to record
 
             write_history_entry(scope_label, group_id, period_name, period_start.isoformat(), period_end.isoformat(), snapshot)
             closed.append(f"{scope_label}/{period_name}/{period_start.isoformat()}")
@@ -72,9 +81,12 @@ def handler(event, context):
     return {'statusCode': 200, 'body': f"Closed periods: {closed}"}
 
 
-def compute_period_snapshot(matches, period_start_dt, period_end_dt):
+def compute_period_snapshot(matches, period_start_dt, period_end_dt, member_ids=None):
     """Rating change and match count for every player within a fixed,
-    closed date range [period_start_dt, period_end_dt)."""
+    closed date range [period_start_dt, period_end_dt) - computed from
+    ALL matches regardless of group tagging. member_ids, if given, only
+    restricts which players are ELIGIBLE to win the badge for this scope;
+    it does not change how their own delta is calculated."""
     rating_before = {}
     rating_current = {}
     matches_in_period = {}
@@ -98,6 +110,8 @@ def compute_period_snapshot(matches, period_start_dt, period_end_dt):
 
     progress_rows = []
     for pid, current in rating_current.items():
+        if member_ids is not None and pid not in member_ids:
+            continue
         start = rating_before.get(pid, 1000.0)
         delta = round(current - start, 1)
         progress_rows.append({'player_id': pid, 'delta': delta})
@@ -105,9 +119,11 @@ def compute_period_snapshot(matches, period_start_dt, period_end_dt):
 
     most_improved = progress_rows[0] if progress_rows else None
     most_active = None
-    if matches_in_period:
-        active_pid = max(matches_in_period.items(), key=lambda kv: kv[1])[0]
-        most_active = {'player_id': active_pid, 'matches': matches_in_period[active_pid]}
+    eligible_activity = {pid: cnt for pid, cnt in matches_in_period.items()
+                          if member_ids is None or pid in member_ids}
+    if eligible_activity:
+        active_pid = max(eligible_activity.items(), key=lambda kv: kv[1])[0]
+        most_active = {'player_id': active_pid, 'matches': eligible_activity[active_pid]}
 
     return {'most_improved': most_improved, 'most_active': most_active}
 
