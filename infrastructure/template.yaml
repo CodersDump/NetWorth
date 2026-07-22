@@ -567,6 +567,18 @@ Resources:
         IntegrationHttpMethod: POST
         Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${MatchesFunction.Arn}/invocations'
 
+  MatchesIdDeleteMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RestApi
+      ResourceId: !Ref MatchesIdResource
+      HttpMethod: DELETE
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${MatchesFunction.Arn}/invocations'
+
   MatchesIdOptionsMethod:
     Type: AWS::ApiGateway::Method
     Properties:
@@ -704,6 +716,7 @@ Resources:
       - MatchesAnyMethod
       - MatchesOptionsMethod
       - MatchesIdPutMethod
+      - MatchesIdDeleteMethod
       - MatchesIdOptionsMethod
       - TournamentsAnyMethod
       - TournamentsOptionsMethod

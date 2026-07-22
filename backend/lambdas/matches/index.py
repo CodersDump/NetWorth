@@ -92,6 +92,8 @@ def handler(event, context):
             return list_matches(event)
         elif method == 'PUT' and match_id:
             return update_match(match_id, event)
+        elif method == 'DELETE' and match_id:
+            return delete_match(match_id, event)
         return _response(404, {'error': 'not found'})
     except Exception as e:
         return _response(500, {'error': str(e)})
@@ -173,6 +175,27 @@ def update_match(match_id, event):
 
     updated = matches_table.get_item(Key={'match_id': match_id}).get('Item')
     return _response(200, {'match': updated, 'note': 'All player ratings were recomputed from the corrected match history.'})
+
+
+def delete_match(match_id, event):
+    """Permanently delete a mis-recorded match - e.g. the wrong player was
+    selected entirely and a corrected match was recorded separately.
+    Requires the confirmation code, same as score corrections. Since Elo
+    is path-dependent, deleting a match doesn't just undo its own rating
+    delta - it can shift every match that happened after it too - so
+    deletion triggers the same full recompute as a score correction."""
+    body = json.loads(event.get('body') or '{}')
+    if body.get('confirm') != CONFIRMATION_CODE:
+        return _response(400, {'error': 'confirmation code is missing or incorrect'})
+
+    existing = matches_table.get_item(Key={'match_id': match_id}).get('Item')
+    if not existing:
+        return _response(404, {'error': 'match not found'})
+
+    matches_table.delete_item(Key={'match_id': match_id})
+    recompute_all_ratings()
+    return _response(200, {'deleted': True, 'match_id': match_id,
+                            'note': 'All player ratings were recomputed from the remaining match history.'})
 
 
 def recompute_all_ratings():
@@ -509,13 +532,26 @@ def compute_partnerships(player_id, items):
     return {'player_id': player_id, 'partnerships': result}
 
 
+def get_group_member_ids(group_id):
+    """The set of player_ids belonging to a group, used to filter WHO shows
+    up in a stat's results - not to restrict WHICH matches count. A group
+    filter means 'show me these people's numbers', computed from their
+    full match history regardless of whether any individual match happened
+    to be tagged with this group at recording time (tagging is optional
+    and many matches are never tagged at all)."""
+    group = groups_table.get_item(Key={'group_id': group_id}).get('Item')
+    return set(group.get('member_ids', [])) if group else set()
+
+
 def compute_attendance(items, group_id_filter=None):
     """Per-player attendance/consistency: total matches, distinct calendar
     dates played (a proxy for 'sessions attended'), recent activity
     windows, and their longest run of consecutive weeks with at least one
-    match. Optionally scoped to one group."""
-    if group_id_filter:
-        items = [i for i in items if i.get('group_id') == group_id_filter]
+    match. Optionally scoped to a group - this shows only that group's
+    members, but each member's own numbers are computed from their FULL
+    match history (including standalone matches never tagged with any
+    group), not just matches tagged with this specific group."""
+    member_ids = get_group_member_ids(group_id_filter) if group_id_filter else None
 
     now = datetime.now(timezone.utc)
     player_stats = {}
@@ -549,6 +585,8 @@ def compute_attendance(items, group_id_filter=None):
 
     result = []
     for pid, s in player_stats.items():
+        if member_ids is not None and pid not in member_ids:
+            continue
         p = players_table.get_item(Key={'player_id': pid}).get('Item')
         weeks_sorted = sorted(s['week_indices'])
         best_streak = 1 if weeks_sorted else 0
@@ -584,9 +622,14 @@ def compute_hall_of_fame(items, group_id_filter=None):
     Names are resolved from the current Players table at the very end,
     not from the names frozen onto each match record at the time it was
     played - a rename should show up everywhere immediately, rather than
-    only affecting matches recorded after the rename happened."""
-    if group_id_filter:
-        items = [i for i in items if i.get('group_id') == group_id_filter]
+    only affecting matches recorded after the rename happened.
+
+    Optionally scoped to a group: this filters WHO shows up in the
+    results to that group's members, but every computation still uses
+    each player's FULL match history (including standalone matches never
+    tagged with any group) - a group filter means 'show me these
+    people's numbers', not 'only count matches tagged with this group'."""
+    member_ids = get_group_member_ids(group_id_filter) if group_id_filter else None
 
     matches = sorted(items, key=lambda m: m.get('date', ''))
 
@@ -600,9 +643,9 @@ def compute_hall_of_fame(items, group_id_filter=None):
 
     rolling_ratings = {}
     current_streak = {}
-    best_streak = {'player_id': None, 'streak': 0}
+    personal_best_streaks = {}  # pid -> their own best-ever streak
     peak_rating = {}          # pid -> rating
-    biggest_blowout = None    # will hold team_a_ids/team_b_ids, resolved to names at the end
+    blowout_candidates = []   # every match's blowout info, filtered at output time
     giant_killer_candidates = []  # will hold winner_ids/loser_ids
     comeback_candidates = []      # will hold winner_ids
     player_deltas = {}       # pid -> [deltas]
@@ -640,8 +683,8 @@ def compute_hall_of_fame(items, group_id_filter=None):
 
             for pid in winners:
                 current_streak[pid] = current_streak.get(pid, 0) + 1
-                if current_streak[pid] > best_streak['streak']:
-                    best_streak.update({'player_id': pid, 'streak': current_streak[pid]})
+                if current_streak[pid] > personal_best_streaks.get(pid, 0):
+                    personal_best_streaks[pid] = current_streak[pid]
             for pid in losers:
                 current_streak[pid] = 0
 
@@ -669,12 +712,13 @@ def compute_hall_of_fame(items, group_id_filter=None):
                 sets[f'{stage}_tournaments'].add(tournament_id)
 
         margin = abs(score_a - score_b)
-        if biggest_blowout is None or margin > biggest_blowout['margin']:
-            biggest_blowout = {
-                'team_a_ids': team_a, 'team_b_ids': team_b,
-                'score_a': int(score_a), 'score_b': int(score_b),
-                'margin': int(margin), 'date': m.get('date')
-            }
+        winning_side_ids = team_a if score_a > score_b else team_b
+        blowout_candidates.append({
+            'team_a_ids': team_a, 'team_b_ids': team_b,
+            'winning_side_ids': winning_side_ids,
+            'score_a': int(score_a), 'score_b': int(score_b),
+            'margin': int(margin), 'date': m.get('date')
+        })
 
         momentum = m.get('momentum')
         if momentum and momentum.get('winner_overcame_deficit', 0) > 0:
@@ -696,10 +740,31 @@ def compute_hall_of_fame(items, group_id_filter=None):
     giant_killer_candidates.sort(key=lambda g: -g['upset_gap'])
     comeback_candidates.sort(key=lambda c: -c['deficit_overcome'])
 
+    # Group filtering happens here, at output time, not by restricting
+    # which matches got processed above - every calculation above already
+    # used each player's FULL history. This just decides which rows are
+    # relevant to show for this group.
+    def in_group(pid):
+        return member_ids is None or pid in member_ids
+
+    def side_in_group(ids):
+        return member_ids is None or all(pid in member_ids for pid in ids)
+
+    giant_killer_candidates = [g for g in giant_killer_candidates if side_in_group(g['winner_ids'])]
+    comeback_candidates = [c for c in comeback_candidates if side_in_group(c['winner_ids'])]
+    blowout_candidates = [b for b in blowout_candidates if side_in_group(b['winning_side_ids'])]
+    biggest_blowout = max(blowout_candidates, key=lambda b: b['margin']) if blowout_candidates else None
+
+    eligible_streaks = {pid: s for pid, s in personal_best_streaks.items() if in_group(pid)}
+    best_streak = None
+    if eligible_streaks:
+        top_pid = max(eligible_streaks.items(), key=lambda kv: kv[1])[0]
+        best_streak = {'player_id': top_pid, 'streak': eligible_streaks[top_pid]}
+
     # Consistency / volatility - population standard deviation of rating deltas, min 3 matches
     consistency_rows = []
     for pid, deltas in player_deltas.items():
-        if len(deltas) < 3:
+        if len(deltas) < 3 or not in_group(pid):
             continue
         mean_delta = sum(deltas) / len(deltas)
         variance = sum((d - mean_delta) ** 2 for d in deltas) / len(deltas)
@@ -712,6 +777,8 @@ def compute_hall_of_fame(items, group_id_filter=None):
     # Format specialist - biggest gap between singles and doubles win rate, min 2 matches in each
     format_rows = []
     for pid, fs in format_stats.items():
+        if not in_group(pid):
+            continue
         singles_total = fs['singles_w'] + fs['singles_l']
         doubles_total = fs['doubles_w'] + fs['doubles_l']
         if singles_total < 2 or doubles_total < 2:
@@ -729,6 +796,8 @@ def compute_hall_of_fame(items, group_id_filter=None):
     # Deep-run rate - fraction of tournament appearances that included a knockout-stage match
     deep_run_rows = []
     for pid, sets in tournament_stage_sets.items():
+        if not in_group(pid):
+            continue
         all_tournaments = sets['group_tournaments'] | sets['knockout_tournaments']
         if not all_tournaments:
             continue
@@ -757,15 +826,15 @@ def compute_hall_of_fame(items, group_id_filter=None):
     if biggest_blowout:
         biggest_blowout['team_a_names'] = [resolve_name(pid) for pid in biggest_blowout['team_a_ids']]
         biggest_blowout['team_b_names'] = [resolve_name(pid) for pid in biggest_blowout['team_b_ids']]
-    if best_streak['player_id']:
+    if best_streak:
         best_streak['name'] = resolve_name(best_streak['player_id'])
     peak_ratings_list = [
         {'player_id': pid, 'name': resolve_name(pid), 'rating': int(round(rating))}
-        for pid, rating in peak_rating.items()
+        for pid, rating in peak_rating.items() if in_group(pid)
     ]
 
     return {
-        'longest_win_streak': best_streak if best_streak['player_id'] else None,
+        'longest_win_streak': best_streak,
         'biggest_blowout': biggest_blowout,
         'peak_ratings': sorted(peak_ratings_list, key=lambda p: -p['rating'])[:10],
         'giant_killer_top5': giant_killer_candidates[:5],
@@ -965,9 +1034,10 @@ def compute_diversity(items, group_id_filter=None):
     'top_partner_pct' is the share of their matches played with their single
     most frequent partner - a simple, intuitive stand-in for 'how entangled
     is this rating with one fixed pairing'. Sorted with the most
-    concentrated (least-mixed) players first."""
-    if group_id_filter:
-        items = [i for i in items if i.get('group_id') == group_id_filter]
+    concentrated (least-mixed) players first. Optionally scoped to a
+    group - shows only that group's members, but each member's own
+    partner-concentration is computed from their full history."""
+    member_ids = get_group_member_ids(group_id_filter) if group_id_filter else None
 
     partner_counts = {}  # player_id -> {partner_id: count}
     for m in items:
@@ -984,6 +1054,8 @@ def compute_diversity(items, group_id_filter=None):
 
     result = []
     for pid, counts in partner_counts.items():
+        if member_ids is not None and pid not in member_ids:
+            continue
         p = players_table.get_item(Key={'player_id': pid}).get('Item')
         total = sum(counts.values())
         top_partner_id, top_count = max(counts.items(), key=lambda kv: kv[1])
@@ -1062,9 +1134,11 @@ def compute_progress_badges(items, group_id_filter=None):
     """For each of the last week/month/year: who improved their rating the
     most, and who played the most matches. Names are resolved live from
     the current Players table, same reasoning as hall_of_fame - a rename
-    should show up immediately everywhere, not just in future matches."""
-    if group_id_filter:
-        items = [i for i in items if i.get('group_id') == group_id_filter]
+    should show up immediately everywhere, not just in future matches.
+    Optionally scoped to a group - shows only that group's members
+    competing against each other for the badge, but each member's own
+    rating delta is computed from their full match history."""
+    member_ids = get_group_member_ids(group_id_filter) if group_id_filter else None
 
     matches = sorted(items, key=lambda m: m.get('date', ''))
     now = datetime.now(timezone.utc)
@@ -1105,6 +1179,8 @@ def compute_progress_badges(items, group_id_filter=None):
 
         progress_rows = []
         for pid, current in rating_current.items():
+            if member_ids is not None and pid not in member_ids:
+                continue
             start = rating_before_cutoff.get(pid, 1000.0)
             delta = round(current - start, 1)
             progress_rows.append({
@@ -1115,10 +1191,12 @@ def compute_progress_badges(items, group_id_filter=None):
         progress_rows.sort(key=lambda r: -r['delta'])
 
         most_active = None
-        if matches_in_period:
-            active_pid = max(matches_in_period.items(), key=lambda kv: kv[1])[0]
+        eligible_activity = {pid: cnt for pid, cnt in matches_in_period.items()
+                              if member_ids is None or pid in member_ids}
+        if eligible_activity:
+            active_pid = max(eligible_activity.items(), key=lambda kv: kv[1])[0]
             most_active = {'player_id': active_pid, 'name': resolve_name(active_pid),
-                            'matches': matches_in_period[active_pid]}
+                            'matches': eligible_activity[active_pid]}
 
         result[period_name] = {
             'most_improved_top5': [r for r in progress_rows if r['matches_in_period'] > 0][:5],

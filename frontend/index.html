@@ -155,6 +155,17 @@
   .h2h-bar-wins { background: var(--court); }
   .h2h-bar-losses { background: var(--smash); }
 
+  .skeleton-line {
+    height: 14px; border-radius: 4px; margin-bottom: 8px;
+    background: linear-gradient(90deg, var(--surface-2) 25%, var(--border) 50%, var(--surface-2) 75%);
+    background-size: 200% 100%;
+    animation: skeleton-pulse 1.2s ease-in-out infinite;
+  }
+  @keyframes skeleton-pulse {
+    0% { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+  }
+
   label { display: block; margin-top: 12px; font-size: 13px; font-weight: 500; color: var(--text-secondary); }
   input, select, textarea {
     width: 100%; padding: 10px; margin-top: 4px; box-sizing: border-box;
@@ -1568,6 +1579,16 @@
         return;
       }
 
+      const nameFor = (pid) => { const p = allPlayers.find(pl => pl.player_id === pid); return p ? p.name : pid; };
+      const teamAName = team_a.map(nameFor).join(' & ');
+      const teamBName = team_b.map(nameFor).join(' & ');
+      const scoreDisplay = document.getElementById('live_scoring_toggle').checked
+        ? '(final score determined by live scoring)'
+        : `${score_a}-${score_b}`;
+      if (!confirm(`Confirm recording this match?\n\n${teamAName} vs ${teamBName}\nScore: ${scoreDisplay}`)) {
+        return;
+      }
+
       resultEl.textContent = 'Recording...';
       try {
         const useLive = document.getElementById('live_scoring_toggle').checked;
@@ -1593,6 +1614,8 @@
             msg += ` - came back from a ${data.momentum.winner_overcame_deficit}-point deficit!`;
           }
           resultEl.textContent = msg;
+          document.getElementById('score_a').value = '';
+          document.getElementById('score_b').value = '';
           livePointLog = [];
           if (useLive) updateLiveScoreDisplay();
           loadPlayers();
@@ -1635,7 +1658,7 @@
           if (m.momentum && m.momentum.winner_overcame_deficit > 0) {
             notes = `Comeback: overcame a ${m.momentum.winner_overcame_deficit}-point deficit`;
           }
-          html += `<tr><td>${date}</td><td>${teamA}</td><td>${teamB}</td><td>${m.score_a} - ${m.score_b}</td><td>${notes}</td><td><button class="secondary" style="margin-top:0;padding:4px 8px;font-size:11px;" onclick="editMatchScore('${m.match_id}', ${m.score_a}, ${m.score_b})">Edit</button></td></tr>`;
+          html += `<tr><td>${date}</td><td>${teamA}</td><td>${teamB}</td><td>${m.score_a} - ${m.score_b}</td><td>${notes}</td><td><button class="secondary" style="margin-top:0;padding:4px 8px;font-size:11px;" onclick="editMatchScore('${m.match_id}', ${m.score_a}, ${m.score_b})">Edit</button> <button class="secondary" style="margin-top:0;padding:4px 8px;font-size:11px;" onclick="deleteMatch('${m.match_id}')">Delete</button></td></tr>`;
         });
         html += '</table>';
         logEl.innerHTML = html;
@@ -1666,6 +1689,31 @@
         const data = await res.json();
         if (res.ok) {
           alert('Score corrected. All ratings have been recomputed.');
+          loadGameLog();
+          loadPlayers();
+        } else {
+          alert(`Error: ${data.error}`);
+        }
+      } catch (err) {
+        alert(`Request failed: ${err.message}`);
+      }
+    }
+
+    async function deleteMatch(matchId) {
+      if (!confirm('Permanently delete this match? This cannot be undone, and every player\'s rating will be recomputed from the remaining history.')) return;
+
+      const confirmText = prompt('Enter the confirmation code to permanently delete this match.');
+      if (!confirmText) return;
+
+      try {
+        const res = await fetch(`${API_BASE_URL}/matches/${matchId}`, {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ confirm: confirmText })
+        });
+        const data = await res.json();
+        if (res.ok) {
+          alert('Match deleted. All ratings have been recomputed.');
           loadGameLog();
           loadPlayers();
         } else {
@@ -2039,9 +2087,31 @@
       }
     }
 
+    function skeletonHTML(lines = 3) {
+      const widths = ['70%', '90%', '55%', '80%', '65%'];
+      return Array.from({ length: lines }, (_, i) =>
+        `<div class="skeleton-line" style="width:${widths[i % widths.length]};"></div>`
+      ).join('');
+    }
+
+    function showProfileSkeletons() {
+      document.getElementById('profile-form-result').innerHTML = skeletonHTML(1);
+      document.getElementById('profile-attendance-result').innerHTML = skeletonHTML(1);
+      document.getElementById('profile-overall-record-result').innerHTML = skeletonHTML(3);
+      document.getElementById('profile-top-opponents-result').innerHTML = skeletonHTML(5);
+      document.getElementById('profile-achievements-result').innerHTML = skeletonHTML(3);
+      document.getElementById('profile-streak-line').textContent = '';
+      document.getElementById('profile-partnerships-result').innerHTML = skeletonHTML(3);
+      document.getElementById('profile-radar-svg').innerHTML = '';
+      document.getElementById('profile-h2h-result').innerHTML = skeletonHTML(1);
+      if (profileRatingChart) { profileRatingChart.destroy(); profileRatingChart = null; }
+    }
+
     async function loadProfile() {
       const playerId = document.getElementById('profile_player_select').value;
       if (!playerId) return;
+
+      showProfileSkeletons();
 
       // All four sections are independent of each other - run them
       // concurrently instead of one-after-another, so total load time is
