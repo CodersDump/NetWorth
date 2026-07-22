@@ -8,7 +8,9 @@ Player linking rules (as confirmed):
     - walk-in "Aditya Yelegaona"        -> roster "Adi"
     - "Aditya Nair"                     -> roster "Aditya"
     - "Sohan Kuchangari"                -> roster "Sohan" (pays per-session)
-    - walk-in "Prasanna"                -> roster "Sambvit" (renamed)
+    - "Prasanna"                        -> roster "Prasanna" (his own account;
+                                           Sambvit is a DIFFERENT person)
+    - "Saurabh Tiwari"                  -> roster roster "Saurabh T"
     - "Bibhudatta"/"Vibhudatta"         -> roster "Bibhu"
     - "Sandeep Rathore"/"Sandeep"       -> roster "Sandeep"
     - "Sashi"/"Shashi", "Udit"          -> roster (joined monthly after walk-in)
@@ -37,12 +39,14 @@ EXCEL_TO_SITE = {
     'Aditya Yelegaona': 'Adi',
     'Aditya Nair': 'Aditya',
     'Sohan Kuchangari': 'Sohan',
-    'Prasanna': 'Sambvit',
     'Bibhudatta': 'Bibhu',
     'Vibhudatta': 'Bibhu',
     'Sandeep Rathore': 'Sandeep',
     'Sashi': 'Shashi',
+    'Saurabh Tiwari': 'Saurabh T',
 }
+# NOTE: 'Prasanna' intentionally has NO mapping - he is registered under his
+# own name; 'Sambvit' is a different person entirely.
 WALKIN_NEVER_LINK = {'Mohit'}  # different person than the roster Mohit
 
 MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July',
@@ -86,6 +90,10 @@ def main():
     players = players_table.scan().get('Items', [])
     name_to_pid = {p['name']: p['player_id'] for p in players}
 
+    def norm(n):
+        return ' '.join(str(n).lower().split())
+    norm_to_player = {norm(p['name']): p for p in players}
+
     linked, unlinked = set(), set()
 
     def resolve(excel_name, is_walkin=False):
@@ -98,6 +106,12 @@ def main():
         if pid:
             linked.add(f"{excel_name} -> {site_name}")
             return site_name, pid
+        # Fallback: case/whitespace-insensitive match against the roster,
+        # so a registration typed as "abhishek v" still links "Abhishek V".
+        p = norm_to_player.get(norm(site_name))
+        if p:
+            linked.add(f"{excel_name} -> {p['name']} (case-insensitive match)")
+            return p['name'], p['player_id']
         unlinked.add(excel_name)
         return excel_name, None
 
