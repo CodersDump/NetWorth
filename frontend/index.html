@@ -238,6 +238,7 @@
     <button class="tab-btn" data-tab="matches">Matches</button>
     <button class="tab-btn" data-tab="tournaments">Tournaments</button>
     <button class="tab-btn" data-tab="stats">Stats</button>
+    <button class="tab-btn" data-tab="finance">Finance</button>
     <button class="tab-btn" data-tab="profile">Profile</button>
   </nav>
 
@@ -583,6 +584,123 @@
         <button id="load-attendance-btn" type="button" class="secondary">View attendance</button>
         <div id="attendance-result"></div>
       </div>
+
+      <div class="card">
+        <h2>Walk-in guests</h2>
+        <p class="card-sub">Guests who joined recent sessions.</p>
+        <button id="load-public-walkins-btn" type="button" class="secondary">Load walk-ins</button>
+        <div id="public-walkins-result" style="margin-top:12px;"></div>
+      </div>
+    </div>
+
+    <div class="tab-panel" id="tab-finance">
+      <div class="card" id="finance-lock-card">
+        <h2>Finance</h2>
+        <p class="card-sub">Court costs, monthly memberships, walk-in fees and settlement. Access requires the finance view key - this data is checked server-side, so nothing loads without it.</p>
+        <label>View key
+          <input type="password" id="finance_view_key" placeholder="Enter view key" autocomplete="off">
+        </label>
+        <button id="finance-unlock-btn" type="button">Unlock</button>
+        <span id="finance-lock-status" style="font-size:13px; margin-left:8px;"></span>
+      </div>
+
+      <div id="finance-content" style="display:none;">
+        <div class="card">
+          <h2>Monthly settlement</h2>
+          <p class="card-sub">Per month and slot: estimated vs actual spend, extra collected from walk-ins, and the residual owed back to each member. Same math as the old Excel, retired with honor.</p>
+          <button id="finance-load-summary-btn" type="button" class="secondary">Load settlement</button>
+          <div id="finance-summary-result" style="margin-top:12px;"></div>
+        </div>
+
+        <div class="card">
+          <h2>Expenses</h2>
+          <p class="card-sub">Line items per month and slot. Actuals can be filled in later - until then they default to the estimate.</p>
+          <div class="row">
+            <div><label>Month
+              <select id="fexp_month"><option>January</option><option>February</option><option>March</option><option selected>April</option><option>May</option><option>June</option><option>July</option><option>August</option><option>September</option><option>October</option><option>November</option><option>December</option></select>
+            </label></div>
+            <div><label>Year <input type="number" id="fexp_year" value="2026"></label></div>
+            <div><label>Slot
+              <select id="fexp_slot"><option>7AM-8AM</option><option>8AM-9AM</option></select>
+            </label></div>
+          </div>
+          <div class="row">
+            <div><label>Item <input type="text" id="fexp_item" placeholder="Monthly court booking"></label></div>
+            <div><label>Estimated cost <input type="number" id="fexp_est_cost" step="0.01"></label></div>
+            <div><label>Actual cost <input type="number" id="fexp_act_cost" step="0.01"></label></div>
+            <div><label>Est. qty <input type="number" id="fexp_est_qty" value="1"></label></div>
+            <div><label>Actual qty <input type="number" id="fexp_act_qty" value="1"></label></div>
+          </div>
+          <button id="finance-add-expense-btn" type="button">Add expense</button>
+          <button id="finance-load-expenses-btn" type="button" class="secondary">Load expenses</button>
+          <div id="finance-expenses-result" style="margin-top:12px;"></div>
+        </div>
+
+        <div class="card">
+          <h2>Monthly memberships</h2>
+          <p class="card-sub">Who is enrolled (and paying) for each month and slot. The Yes-count is the denominator that splits the cost.</p>
+          <div class="row">
+            <div><label>Month
+              <select id="fmem_month"><option>January</option><option>February</option><option>March</option><option>April</option><option>May</option><option>June</option><option selected>July</option><option>August</option><option>September</option><option>October</option><option>November</option><option>December</option></select>
+            </label></div>
+            <div><label>Year <input type="number" id="fmem_year" value="2026"></label></div>
+            <div><label>Slot
+              <select id="fmem_slot"><option>7AM-8AM</option><option>8AM-9AM</option></select>
+            </label></div>
+          </div>
+          <button id="finance-load-members-btn" type="button" class="secondary">Load memberships</button>
+          <div class="row" style="margin-top:12px;">
+            <div><label>Player (roster)
+              <select id="fmem_player"><option value="">- pick from roster -</option></select>
+            </label></div>
+            <div><label>or name (not registered)
+              <input type="text" id="fmem_name" placeholder="e.g. Ram Shukla">
+            </label></div>
+            <div><label>Status
+              <select id="fmem_status"><option>Yes</option><option>No</option><option>NA</option></select>
+            </label></div>
+            <div><label>Remark <input type="text" id="fmem_remark"></label></div>
+          </div>
+          <button id="finance-add-member-btn" type="button">Add membership</button>
+          <div id="finance-members-result" style="margin-top:12px;"></div>
+        </div>
+
+        <div class="card">
+          <h2>Walk-ins</h2>
+          <p class="card-sub">Per-session guests and their fees. Negative fee = refund/adjustment. Skill and recruit verdicts stay private even when the public walk-in list is enabled.</p>
+          <div class="row">
+            <div><label>Date <input type="date" id="fwalk_date"></label></div>
+            <div><label>Slot
+              <select id="fwalk_slot"><option>7AM-8AM</option><option>8AM-9AM</option></select>
+            </label></div>
+            <div><label>Player (roster)
+              <select id="fwalk_player"><option value="">- not on roster -</option></select>
+            </label></div>
+            <div><label>or name <input type="text" id="fwalk_name" placeholder="Guest name"></label></div>
+          </div>
+          <div class="row">
+            <div><label>Fee <input type="number" id="fwalk_fee" step="0.01" value="80"></label></div>
+            <div><label>Skill <input type="text" id="fwalk_skill" placeholder="Intermediate"></label></div>
+            <div><label>Recruit?
+              <select id="fwalk_recruit"><option value=""></option><option>Yes</option><option>Maybe</option><option>Nope</option></select>
+            </label></div>
+            <div><label>Note <input type="text" id="fwalk_note"></label></div>
+          </div>
+          <button id="finance-add-walkin-btn" type="button">Add walk-in</button>
+          <button id="finance-load-walkins-btn" type="button" class="secondary">Load walk-ins</button>
+          <div id="finance-walkins-result" style="margin-top:12px;"></div>
+        </div>
+
+        <div class="card">
+          <h2>Finance settings</h2>
+          <p class="card-sub">When enabled, a "Walk-in guests" card appears on the Stats tab for everyone - names, dates and slots only. Fees, skill ratings and recruit verdicts are never exposed there.</p>
+          <label style="display:flex; align-items:center; gap:8px;">
+            <input type="checkbox" id="finance_walkins_public" style="width:auto;"> Walk-in list visible to everyone
+          </label>
+          <button id="finance-save-settings-btn" type="button" class="secondary" style="margin-top:8px;">Save settings</button>
+          <span id="finance-settings-status" style="font-size:13px; margin-left:8px;"></span>
+        </div>
+      </div>
     </div>
 
     <div class="tab-panel" id="tab-profile">
@@ -902,6 +1020,8 @@
       populateSelect(document.getElementById('profile_compare2_select'), labeled, 'player_id', 'label', 'None');
       populateSelect(document.getElementById('profile_compare3_select'), labeled, 'player_id', 'label', 'None');
       populateSelect(document.getElementById('profile_compare4_select'), labeled, 'player_id', 'label', 'None');
+      populateSelect(document.getElementById('fmem_player'), labeled, 'player_id', 'label', '- pick from roster -');
+      populateSelect(document.getElementById('fwalk_player'), labeled, 'player_id', 'label', '- not on roster -');
       populateTeamSelects();
     }
 
@@ -2418,6 +2538,236 @@
     document.getElementById('load-attendance-btn').addEventListener('click', loadAttendance);
     document.getElementById('attendance_group_filter').addEventListener('change', loadAttendance);
 
+
+    // ---------- finance (view-key gated) ----------
+
+    let financeKey = sessionStorage.getItem('nw_finance_key') || '';
+
+    function finQS(extra) {
+      const p = new URLSearchParams(extra || {});
+      p.set('view_key', financeKey);
+      return p.toString();
+    }
+
+    async function finPost(path, method, bodyObj) {
+      const res = await fetch(`${API_BASE_URL}/finance/${path}`, {
+        method, headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...bodyObj, view_key: financeKey })
+      });
+      return { ok: res.ok, data: await res.json() };
+    }
+
+    async function financeUnlock() {
+      const statusEl = document.getElementById('finance-lock-status');
+      financeKey = document.getElementById('finance_view_key').value.trim();
+      statusEl.textContent = 'Checking...';
+      const res = await fetch(`${API_BASE_URL}/finance/settings?${finQS()}`);
+      if (!res.ok) {
+        statusEl.textContent = res.status === 403 ? 'Incorrect key' : `Error ${res.status}`;
+        document.getElementById('finance-content').style.display = 'none';
+        return;
+      }
+      sessionStorage.setItem('nw_finance_key', financeKey);
+      statusEl.textContent = 'Unlocked ✓';
+      document.getElementById('finance-content').style.display = 'block';
+      const settings = await res.json();
+      document.getElementById('finance_walkins_public').checked = !!settings.walkins_public;
+      loadFinanceSummary();
+      loadFinanceExpenses();
+      loadFinanceMembers();
+      loadFinanceWalkins();
+    }
+
+    async function loadFinanceSummary() {
+      const el = document.getElementById('finance-summary-result');
+      el.textContent = 'Loading...';
+      const res = await fetch(`${API_BASE_URL}/finance/summary?${finQS()}`);
+      const data = await res.json();
+      if (!res.ok) { el.textContent = `Error: ${data.error}`; return; }
+      if (!data.summary.length) { el.textContent = 'No finance data yet.'; return; }
+      let html = '<table><tr><th>Month</th><th>Slot</th><th>Estimated</th><th>Actual</th><th>Extra collected</th><th>Members</th><th>Per head</th><th>Residual / head</th></tr>';
+      data.summary.forEach(r => {
+        html += `<tr><td>${r.month} ${r.year}</td><td>${r.slot}</td><td>${r.estimated_total}</td><td>${r.actual_total}</td>` +
+          `<td>${r.extra_collected}</td><td>${r.player_count}</td>` +
+          `<td>${r.cost_per_head === null ? 'pending' : r.cost_per_head}</td>` +
+          `<td>${r.residual_per_head === null ? 'pending' : r.residual_per_head}</td></tr>`;
+      });
+      el.innerHTML = html + '</table>';
+    }
+
+    async function loadFinanceExpenses() {
+      const el = document.getElementById('finance-expenses-result');
+      el.textContent = 'Loading...';
+      const res = await fetch(`${API_BASE_URL}/finance/expenses?${finQS()}`);
+      const data = await res.json();
+      if (!res.ok) { el.textContent = `Error: ${data.error}`; return; }
+      if (!data.expenses.length) { el.textContent = 'No expenses yet.'; return; }
+      let html = '<table><tr><th>Month</th><th>Slot</th><th>Item</th><th>Est cost</th><th>Act cost</th><th>Est qty</th><th>Act qty</th><th></th></tr>';
+      data.expenses.forEach(e => {
+        html += `<tr><td>${e.month} ${e.year}</td><td>${e.slot}</td><td>${e.item}</td>` +
+          `<td>${e.estimated_cost ?? ''}</td><td>${e.actual_cost ?? ''}</td><td>${e.estimated_qty ?? ''}</td><td>${e.actual_qty ?? ''}</td>` +
+          `<td><button type="button" class="secondary fin-del" data-kind="expenses" data-id="${e.record_id}">Delete</button></td></tr>`;
+      });
+      el.innerHTML = html + '</table>';
+    }
+
+    async function addFinanceExpense() {
+      const body = {
+        month: document.getElementById('fexp_month').value,
+        year: document.getElementById('fexp_year').value,
+        slot: document.getElementById('fexp_slot').value,
+        item: document.getElementById('fexp_item').value.trim(),
+        estimated_cost: document.getElementById('fexp_est_cost').value,
+        actual_cost: document.getElementById('fexp_act_cost').value,
+        estimated_qty: document.getElementById('fexp_est_qty').value,
+        actual_qty: document.getElementById('fexp_act_qty').value,
+      };
+      const { ok, data } = await finPost('expenses', 'POST', body);
+      if (!ok || (data.errors && data.errors.length)) { alert('Error: ' + JSON.stringify(data.errors || data.error)); return; }
+      document.getElementById('fexp_item').value = '';
+      loadFinanceExpenses(); loadFinanceSummary();
+    }
+
+    async function loadFinanceMembers() {
+      const el = document.getElementById('finance-members-result');
+      el.textContent = 'Loading...';
+      const qs = finQS({
+        month: document.getElementById('fmem_month').value,
+        year: document.getElementById('fmem_year').value,
+        slot: document.getElementById('fmem_slot').value,
+      });
+      const res = await fetch(`${API_BASE_URL}/finance/memberships?${qs}`);
+      const data = await res.json();
+      if (!res.ok) { el.textContent = `Error: ${data.error}`; return; }
+      if (!data.memberships.length) { el.textContent = 'No membership rows for this month/slot yet.'; return; }
+      const yesCount = data.memberships.filter(m => m.status === 'Yes').length;
+      let html = `<p style="font-size:13px;">Enrolled (Yes): <strong>${yesCount}</strong></p>`;
+      html += '<table><tr><th>Player</th><th>Status</th><th>Remark</th><th></th></tr>';
+      data.memberships.forEach(m => {
+        html += `<tr><td>${m.display_name}${m.player_id ? '' : ' <span style="opacity:0.6;">(unlinked)</span>'}</td>` +
+          `<td><select class="fin-mem-status" data-id="${m.record_id}">` +
+          ['Yes', 'No', 'NA'].map(s => `<option${s === m.status ? ' selected' : ''}>${s}</option>`).join('') +
+          `</select></td><td>${m.remark || ''}</td>` +
+          `<td><button type="button" class="secondary fin-del" data-kind="memberships" data-id="${m.record_id}">Delete</button></td></tr>`;
+      });
+      el.innerHTML = html + '</table>';
+      el.querySelectorAll('.fin-mem-status').forEach(sel => sel.addEventListener('change', async (e) => {
+        const { ok, data: d } = await finPost(`memberships/${e.target.dataset.id}`, 'PUT', { status: e.target.value });
+        if (!ok) alert('Error: ' + d.error);
+        loadFinanceSummary(); loadFinanceMembers();
+      }));
+    }
+
+    async function addFinanceMember() {
+      const pid = document.getElementById('fmem_player').value;
+      const name = document.getElementById('fmem_name').value.trim();
+      const chosen = pid ? allPlayers.find(p => p.player_id === pid) : null;
+      if (!chosen && !name) { alert('Pick a roster player or type a name'); return; }
+      const body = {
+        month: document.getElementById('fmem_month').value,
+        year: document.getElementById('fmem_year').value,
+        slot: document.getElementById('fmem_slot').value,
+        display_name: chosen ? chosen.name : name,
+        status: document.getElementById('fmem_status').value,
+        remark: document.getElementById('fmem_remark').value.trim(),
+      };
+      if (chosen) body.player_id = pid;
+      const { ok, data } = await finPost('memberships', 'POST', body);
+      if (!ok || (data.errors && data.errors.length)) { alert('Error: ' + JSON.stringify(data.errors || data.error)); return; }
+      document.getElementById('fmem_name').value = '';
+      document.getElementById('fmem_remark').value = '';
+      loadFinanceMembers(); loadFinanceSummary();
+    }
+
+    async function loadFinanceWalkins() {
+      const el = document.getElementById('finance-walkins-result');
+      el.textContent = 'Loading...';
+      const res = await fetch(`${API_BASE_URL}/finance/walkins?${finQS()}`);
+      const data = await res.json();
+      if (!res.ok) { el.textContent = `Error: ${data.error}`; return; }
+      if (!data.walkins.length) { el.textContent = 'No walk-ins yet.'; return; }
+      let html = '<table><tr><th>Date</th><th>Slot</th><th>Name</th><th>Fee</th><th>Skill</th><th>Recruit?</th><th></th></tr>';
+      [...data.walkins].reverse().forEach(w => {
+        html += `<tr><td>${w.date}</td><td>${w.slot}</td>` +
+          `<td>${w.display_name}${w.player_id ? '' : ' <span style="opacity:0.6;">(guest)</span>'}${w.note ? ` <span title="${String(w.note).replace(/"/g, '&quot;')}">📝</span>` : ''}</td>` +
+          `<td>${w.fee}</td><td>${w.skill || ''}</td><td>${w.recruit_verdict || ''}</td>` +
+          `<td><button type="button" class="secondary fin-del" data-kind="walkins" data-id="${w.record_id}">Delete</button></td></tr>`;
+      });
+      el.innerHTML = html + '</table>';
+    }
+
+    async function addFinanceWalkin() {
+      const pid = document.getElementById('fwalk_player').value;
+      const name = document.getElementById('fwalk_name').value.trim();
+      const chosen = pid ? allPlayers.find(p => p.player_id === pid) : null;
+      if (!chosen && !name) { alert('Pick a roster player or type a guest name'); return; }
+      if (!document.getElementById('fwalk_date').value) { alert('Pick a date'); return; }
+      const body = {
+        date: document.getElementById('fwalk_date').value,
+        slot: document.getElementById('fwalk_slot').value,
+        display_name: chosen ? chosen.name : name,
+        fee: document.getElementById('fwalk_fee').value,
+        skill: document.getElementById('fwalk_skill').value.trim(),
+        recruit_verdict: document.getElementById('fwalk_recruit').value,
+        note: document.getElementById('fwalk_note').value.trim(),
+      };
+      if (chosen) body.player_id = pid;
+      const { ok, data } = await finPost('walkins', 'POST', body);
+      if (!ok || (data.errors && data.errors.length)) { alert('Error: ' + JSON.stringify(data.errors || data.error)); return; }
+      document.getElementById('fwalk_name').value = '';
+      document.getElementById('fwalk_note').value = '';
+      loadFinanceWalkins(); loadFinanceSummary();
+    }
+
+    async function saveFinanceSettings() {
+      const statusEl = document.getElementById('finance-settings-status');
+      const { ok, data } = await finPost('settings', 'PUT', {
+        walkins_public: document.getElementById('finance_walkins_public').checked
+      });
+      statusEl.textContent = ok ? 'Saved ✓' : `Error: ${data.error}`;
+    }
+
+    document.addEventListener('click', async (e) => {
+      if (!e.target.classList || !e.target.classList.contains('fin-del')) return;
+      const code = prompt('This permanently deletes the record. Enter the confirmation code:');
+      if (!code) return;
+      const { ok, data } = await finPost(`${e.target.dataset.kind}/${e.target.dataset.id}`, 'DELETE', { confirm: code });
+      if (!ok) { alert('Error: ' + data.error); return; }
+      loadFinanceExpenses(); loadFinanceMembers(); loadFinanceWalkins(); loadFinanceSummary();
+    });
+
+    async function loadPublicWalkins() {
+      const el = document.getElementById('public-walkins-result');
+      el.textContent = 'Loading...';
+      const res = await fetch(`${API_BASE_URL}/finance/walkins/public`);
+      if (res.status === 404) { el.textContent = 'The walk-in list is not enabled right now.'; return; }
+      const data = await res.json();
+      if (!res.ok) { el.textContent = `Error: ${data.error}`; return; }
+      if (!data.walkins.length) { el.textContent = 'No walk-ins recorded.'; return; }
+      let html = '<table><tr><th>Date</th><th>Slot</th><th>Guest</th></tr>';
+      [...data.walkins].reverse().slice(0, 50).forEach(w => {
+        html += `<tr><td>${w.date}</td><td>${w.slot}</td><td>${w.display_name}</td></tr>`;
+      });
+      el.innerHTML = html + '</table>';
+    }
+
+    document.getElementById('finance-unlock-btn').addEventListener('click', financeUnlock);
+    document.getElementById('finance-load-summary-btn').addEventListener('click', loadFinanceSummary);
+    document.getElementById('finance-add-expense-btn').addEventListener('click', addFinanceExpense);
+    document.getElementById('finance-load-expenses-btn').addEventListener('click', loadFinanceExpenses);
+    document.getElementById('finance-load-members-btn').addEventListener('click', loadFinanceMembers);
+    document.getElementById('finance-add-member-btn').addEventListener('click', addFinanceMember);
+    document.getElementById('finance-add-walkin-btn').addEventListener('click', addFinanceWalkin);
+    document.getElementById('finance-load-walkins-btn').addEventListener('click', loadFinanceWalkins);
+    document.getElementById('finance-save-settings-btn').addEventListener('click', saveFinanceSettings);
+    document.getElementById('load-public-walkins-btn').addEventListener('click', loadPublicWalkins);
+    ['fmem_month', 'fmem_year', 'fmem_slot'].forEach(id =>
+      document.getElementById(id).addEventListener('change', loadFinanceMembers));
+    if (financeKey) {
+      document.getElementById('finance_view_key').value = financeKey;
+      financeUnlock();
+    }
+
     // ---------- init ----------
 
     (async () => {
@@ -2431,6 +2781,7 @@
       loadHistory();
       loadHallOfFame();
       loadAttendance();
+      loadPublicWalkins();
       loadProfile();
     })();
 

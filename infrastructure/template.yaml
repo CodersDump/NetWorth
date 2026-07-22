@@ -70,6 +70,18 @@ Resources:
         - AttributeName: tournament_id
           KeyType: HASH
 
+  FinanceTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub '${AppName}-finance'
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: record_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: record_id
+          KeyType: HASH
+
   ProgressHistoryTable:
     Type: AWS::DynamoDB::Table
     Properties:
@@ -120,6 +132,7 @@ Resources:
                   - !GetAtt MatchesTable.Arn
                   - !GetAtt TournamentsTable.Arn
                   - !GetAtt ProgressHistoryTable.Arn
+                  - !GetAtt FinanceTable.Arn
 
   # ---------- Lambda functions (packaged from backend/lambdas/*) ----------
 
@@ -162,6 +175,20 @@ Resources:
           GROUPS_TABLE: !Ref GroupsTable
           PLAYERS_TABLE: !Ref PlayersTable
       Code: ../backend/lambdas/groups
+
+  FinanceFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${AppName}-finance'
+      Runtime: python3.12
+      Handler: index.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: 10
+      Environment:
+        Variables:
+          FINANCE_TABLE: !Ref FinanceTable
+          PLAYERS_TABLE: !Ref PlayersTable
+      Code: ../backend/lambdas/finance
 
   MatchesFunction:
     Type: AWS::Lambda::Function
@@ -495,6 +522,102 @@ Resources:
       Principal: apigateway.amazonaws.com
       SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${RestApi}/*/*'
 
+  # /finance
+
+  FinanceResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref RestApi
+      ParentId: !GetAtt RestApi.RootResourceId
+      PathPart: finance
+
+  FinanceAnyMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RestApi
+      ResourceId: !Ref FinanceResource
+      HttpMethod: ANY
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${FinanceFunction.Arn}/invocations'
+
+  FinanceOptionsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RestApi
+      ResourceId: !Ref FinanceResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type'"
+              method.response.header.Access-Control-Allow-Methods: "'OPTIONS,GET,POST,PUT,DELETE'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+            method.response.header.Access-Control-Allow-Origin: true
+
+  FinanceProxyResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref RestApi
+      ParentId: !Ref FinanceResource
+      PathPart: '{proxy+}'
+
+  FinanceProxyAnyMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RestApi
+      ResourceId: !Ref FinanceProxyResource
+      HttpMethod: ANY
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${FinanceFunction.Arn}/invocations'
+
+  FinanceProxyOptionsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RestApi
+      ResourceId: !Ref FinanceProxyResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type'"
+              method.response.header.Access-Control-Allow-Methods: "'OPTIONS,GET,POST,PUT,DELETE'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+            method.response.header.Access-Control-Allow-Origin: true
+
+  FinanceFunctionPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref FinanceFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${RestApi}/*/*'
+
   # /matches
 
   MatchesResource:
@@ -722,6 +845,10 @@ Resources:
       - TournamentsOptionsMethod
       - TournamentsProxyAnyMethod
       - TournamentsProxyOptionsMethod
+      - FinanceAnyMethod
+      - FinanceOptionsMethod
+      - FinanceProxyAnyMethod
+      - FinanceProxyOptionsMethod
     Properties:
       RestApiId: !Ref RestApi
       Description: !Sub 'Deployment trigger: ${DeploymentTimestamp}'
