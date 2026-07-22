@@ -134,7 +134,8 @@ def _num(v, default=0):
 ALLOWED_FIELDS = {
     'expense': ['month', 'year', 'slot', 'item', 'estimated_cost', 'actual_cost',
                 'estimated_qty', 'actual_qty'],
-    'membership': ['month', 'year', 'slot', 'display_name', 'player_id', 'status', 'remark'],
+    'membership': ['month', 'year', 'slot', 'display_name', 'player_id', 'status', 'remark',
+                    'attended_briefly', 'attendance_note'],
     'walkin': ['date', 'slot', 'display_name', 'player_id', 'fee', 'skill',
                'recruit_verdict', 'note'],
 }
@@ -191,11 +192,23 @@ def list_records(record_type, params):
         live = _resolve_name(cache, i.get('player_id'))
         if live:
             i['display_name'] = live
-    key = (lambda i: (i.get('date', ''), i.get('display_name', ''))) if record_type == 'walkin' \
-        else (lambda i: (int(_num(i.get('year'))), MONTHS.index(i['month']) if i.get('month') in MONTHS else 99,
-                          i.get('slot', ''), i.get('display_name', i.get('item', ''))))
-    items.sort(key=key)
-    return _response(200, {record_type + 's': items})
+    if record_type == 'walkin':
+        items.sort(key=lambda i: (i.get('date', ''), i.get('display_name', '')), reverse=True)
+    elif record_type == 'expense':
+        # Latest month at the top; slots/items ordered within it.
+        items.sort(key=lambda i: (-int(_num(i.get('year'))),
+                                   -(MONTHS.index(i['month']) if i.get('month') in MONTHS else -99),
+                                   i.get('slot', ''), i.get('item', '')))
+    else:
+        items.sort(key=lambda i: (int(_num(i.get('year'))), MONTHS.index(i['month']) if i.get('month') in MONTHS else 99,
+                                   i.get('slot', ''), i.get('display_name', '')))
+    resp = {record_type + 's': items}
+    if record_type == 'membership' and params.get('month') and params.get('year') and params.get('slot'):
+        row = _settlement_rows().get((str(params['month']), int(_num(params['year'])), str(params['slot'])))
+        if row:
+            resp['cost_per_head'] = row['cost_per_head']
+            resp['estimated_total'] = row['estimated_total']
+    return _response(200, resp)
 
 
 def create_records(record_type, body):
@@ -222,7 +235,32 @@ def update_record(record_type, record_id, body):
     existing = finance_table.get_item(Key={'record_id': record_id}).get('Item')
     if not existing or existing.get('record_type') != record_type:
         return _response(404, {'error': f'{record_type} not found'})
+
+    # Payment confirmation stores the per-head AMOUNT confirmed. Validity is
+    # derived, not stored: if expenses change or the Yes-roster changes, the
+    # current per-head shifts away from the confirmed amount and the
+    # confirmation automatically shows as needing re-confirmation.
+    if record_type == 'membership' and 'confirm_payment' in body:
+        if body['confirm_payment']:
+            row = _settlement_rows().get((str(existing.get('month')), int(_num(existing.get('year'))),
+                                           str(existing.get('slot'))))
+            cph = row['cost_per_head'] if row else None
+            if cph is None:
+                return _response(400, {'error': 'per-head amount is not computable yet (no expenses or no Yes members)'})
+            existing['payment_confirmed_amount'] = Decimal(str(cph))
+        else:
+            existing.pop('payment_confirmed_amount', None)
+        finance_table.put_item(Item=existing)
+        return _response(200, {'updated': record_id,
+                                'payment_confirmed_amount': str(existing.get('payment_confirmed_amount', ''))})
+
     updates = _clean(record_type, body)
+    if record_type == 'membership' and 'attended_briefly' in body:
+        if body['attended_briefly']:
+            existing['attended_briefly'] = True
+        else:
+            existing.pop('attended_briefly', None)
+            existing.pop('attendance_note', None)
     # Explicit unlink: player_id: null in the body clears the link.
     if 'player_id' in body and body['player_id'] in (None, ''):
         existing.pop('player_id', None)
@@ -323,7 +361,15 @@ def _settlement_rows():
                 continue
             bucket(month, year, w.get('slot'))['extra_collected'] += _num(w.get('fee'))
 
-    for b in periods.values():
+    # Collection status per period: a Yes member counts as confirmed only
+    # while their stored confirmed amount equals the CURRENT per-head.
+    confirmed = {}
+    for m in memberships:
+        if m.get('status') == 'Yes' and m.get('payment_confirmed_amount') is not None:
+            key = (str(m.get('month')), int(_num(m.get('year'))), str(m.get('slot')))
+            confirmed.setdefault(key, []).append(_num(m.get('payment_confirmed_amount')))
+
+    for key, b in periods.items():
         count = b['player_count']
         b['difference'] = round(b['estimated_total'] - b['actual_total'], 2)
         b['cost_per_head'] = round(b['estimated_total'] / count, 2) if count else None
@@ -332,6 +378,13 @@ def _settlement_rows():
         b['estimated_total'] = round(b['estimated_total'], 2)
         b['actual_total'] = round(b['actual_total'], 2)
         b['extra_collected'] = round(b['extra_collected'], 2)
+        if count and b['cost_per_head'] is not None:
+            b['confirmed_count'] = sum(1 for amt in confirmed.get(key, [])
+                                        if abs(amt - b['cost_per_head']) < 0.01)
+            b['collection_status'] = 'settled' if b['confirmed_count'] >= count else 'collecting'
+        else:
+            b['confirmed_count'] = 0
+            b['collection_status'] = None
 
     return periods
 
@@ -430,12 +483,18 @@ def insights():
 
         paid = 0.0
         payable = True
+        paid_breakdown = []
         for slot in entry['slots']:
-            cph = (settlement.get((month, year, slot)) or {}).get('cost_per_head')
+            srow = settlement.get((month, year, slot)) or {}
+            cph = srow.get('cost_per_head')
             if cph is None:
                 payable = False
+                paid_breakdown.append({'slot': slot, 'per_head': None})
             else:
                 paid += cph
+                paid_breakdown.append({'slot': slot, 'per_head': cph,
+                                        'total': srow.get('estimated_total'),
+                                        'members': srow.get('player_count')})
 
         p_month, p_year = prev_period(month, year)
         relief = 0.0
@@ -447,6 +506,15 @@ def insights():
                 if res:
                     relief += res
 
+        attended_briefly = any(
+            mem3.get('attended_briefly') for mem3 in memberships
+            if mem3.get('status') == 'Yes' and str(mem3.get('month')) == month
+            and int(_num(mem3.get('year'))) == year
+            and (mem3.get('player_id') or f"name:{mem3.get('display_name')}") == ident)
+        attendance_note = next((mem3.get('attendance_note') for mem3 in memberships
+                                 if mem3.get('attendance_note') and str(mem3.get('month')) == month
+                                 and int(_num(mem3.get('year'))) == year
+                                 and (mem3.get('player_id') or f"name:{mem3.get('display_name')}") == ident), None)
         n_actual = played.get((pid, ym), 0) if pid else None
         n_days = len(active_days.get((pid, ym), set())) if pid else 0
 
@@ -480,14 +548,23 @@ def insights():
             'cost_per_match_estimated': (round(effective / n_estimated, 2)
                                           if effective is not None and n_estimated else None),
             'month_tracked': month_tracked,
+            'paid_breakdown': paid_breakdown,
         }
         if month_tracked:
             cost_rows.append(row)
         if pid and month_tracked and n_actual == 0:
-            ghosts.append({'month': month, 'year': year, 'display_name': entry['display_name'],
-                            'slots': sorted(entry['slots'])})
+            ghost = {'month': month, 'year': year, 'display_name': entry['display_name'],
+                      'slots': sorted(entry['slots']),
+                      'membership_ids': [mem4['record_id'] for mem4 in memberships
+                                          if (mem4.get('player_id') or f"name:{mem4.get('display_name')}") == ident
+                                          and str(mem4.get('month')) == month and int(_num(mem4.get('year'))) == year],
+                      'attended_briefly': attended_briefly, 'attendance_note': attendance_note}
+            ghosts.append(ghost)
 
-    ghosts.sort(key=lambda r: (r['year'], MONTHS.index(r['month']), r['display_name']))
+    noted_attended = [g for g in ghosts if g['attended_briefly']]
+    ghosts = [g for g in ghosts if not g['attended_briefly']]
+    for lst in (ghosts, noted_attended):
+        lst.sort(key=lambda r: (r['year'], MONTHS.index(r['month']), r['display_name']))
     cost_rows.sort(key=lambda r: (-r['year'], -MONTHS.index(r['month']),
                                     -(r['cost_per_match_actual'] or 10 ** 9), r['display_name']))
 
@@ -522,7 +599,8 @@ def insights():
         'guests': guest_rows,
     }
 
-    return _response(200, {'ghosts': ghosts, 'cost_rows': cost_rows, 'conversion': conversion,
+    return _response(200, {'ghosts': ghosts, 'noted_attended': noted_attended,
+                            'cost_rows': cost_rows, 'conversion': conversion,
                             'tracking_start': tracking_start})
 
 

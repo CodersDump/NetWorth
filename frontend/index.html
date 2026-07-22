@@ -198,6 +198,12 @@
   /* Wide tables (settlement, expenses, walk-ins, HoF) scroll sideways inside
      their card on narrow screens instead of bleeding past the edge. */
   [id$="-result"] { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  /* Native date pickers bring their own intrinsic width/centering (iOS
+     especially) and break the form grid - pin them to the same box model
+     and alignment as every other input. */
+  input[type="date"] { width: 100%; max-width: 100%; box-sizing: border-box;
+    -webkit-appearance: none; appearance: none; text-align: left; display: block; }
+  input[type="date"]::-webkit-date-and-time-value { text-align: left; }
   [id$="-result"] table th { white-space: nowrap; }
   th, td { text-align: left; padding: 8px; border-bottom: 1px solid var(--border); }
   th { font-family: 'Rajdhani', sans-serif; font-weight: 700; color: var(--text-secondary); font-size: 12px; text-transform: uppercase; letter-spacing: 0.4px; }
@@ -646,6 +652,7 @@
             <div><label>Actual qty <input type="number" id="fexp_act_qty" value="1"></label></div>
           </div>
           <button id="finance-add-expense-btn" type="button">Add expense</button>
+          <button id="finance-cancel-expense-edit-btn" type="button" class="secondary" style="display:none;">Cancel edit</button>
           <button id="finance-load-expenses-btn" type="button" class="secondary">Load expenses</button>
           <div id="finance-expenses-result" style="margin-top:12px;"></div>
         </div>
@@ -2709,12 +2716,16 @@
       const data = await res.json();
       if (!res.ok) { el.textContent = `Error: ${data.error}`; return; }
       if (!data.summary.length) { el.textContent = 'No finance data yet.'; return; }
-      let html = '<table><tr><th>Month</th><th>Slot</th><th>Estimated</th><th>Actual</th><th>Extra collected</th><th>Members</th><th>Per head</th><th>Residual / head</th></tr>';
+      let html = '<table><tr><th>Month</th><th>Slot</th><th>Estimated</th><th>Actual</th><th>Extra collected</th><th>Members</th><th>Per head</th><th>Residual / head</th><th>Status</th></tr>';
       data.summary.forEach(r => {
+        const perHead = r.cost_per_head === null ? 'pending'
+          : `${r.cost_per_head}<br><span style="font-size:11px;opacity:0.65;">${r.estimated_total}÷${r.player_count}</span>`;
+        const status = r.collection_status === 'settled' ? 'Settled ✓'
+          : r.collection_status === 'collecting' ? `Collecting ${r.confirmed_count}/${r.player_count}` : '-';
         html += `<tr><td>${r.month} ${r.year}</td><td>${r.slot}</td><td>${r.estimated_total}</td><td>${r.actual_total}</td>` +
           `<td>${r.extra_collected}</td><td>${r.player_count}</td>` +
-          `<td>${r.cost_per_head === null ? 'pending' : r.cost_per_head}</td>` +
-          `<td>${r.residual_per_head === null ? 'pending' : r.residual_per_head}</td></tr>`;
+          `<td>${perHead}</td>` +
+          `<td>${r.residual_per_head === null ? 'pending' : r.residual_per_head}</td><td>${status}</td></tr>`;
       });
       el.innerHTML = html + '</table>';
     }
@@ -2726,13 +2737,41 @@
       const data = await res.json();
       if (!res.ok) { el.textContent = `Error: ${data.error}`; return; }
       if (!data.expenses.length) { el.textContent = 'No expenses yet.'; return; }
+      lastExpenses = data.expenses;
       let html = '<table><tr><th>Month</th><th>Slot</th><th>Item</th><th>Est cost</th><th>Act cost</th><th>Est qty</th><th>Act qty</th><th></th></tr>';
       data.expenses.forEach(e => {
         html += `<tr><td>${e.month} ${e.year}</td><td>${e.slot}</td><td>${e.item}</td>` +
           `<td>${e.estimated_cost ?? ''}</td><td>${e.actual_cost ?? ''}</td><td>${e.estimated_qty ?? ''}</td><td>${e.actual_qty ?? ''}</td>` +
-          `<td><button type="button" class="secondary fin-del" data-kind="expenses" data-id="${e.record_id}">Delete</button></td></tr>`;
+          `<td><button type="button" class="secondary fin-edit-exp" data-id="${e.record_id}">Edit</button> ` +
+          `<button type="button" class="secondary fin-del" data-kind="expenses" data-id="${e.record_id}">Delete</button></td></tr>`;
       });
       el.innerHTML = html + '</table>';
+      el.querySelectorAll('.fin-edit-exp').forEach(btn => btn.addEventListener('click', () => {
+        const e = lastExpenses.find(x => x.record_id === btn.dataset.id);
+        if (!e) return;
+        editingExpenseId = e.record_id;
+        document.getElementById('fexp_month').value = e.month;
+        document.getElementById('fexp_year').value = e.year;
+        document.getElementById('fexp_slot').value = e.slot;
+        document.getElementById('fexp_item').value = e.item || '';
+        document.getElementById('fexp_est_cost').value = e.estimated_cost ?? '';
+        document.getElementById('fexp_act_cost').value = e.actual_cost ?? '';
+        document.getElementById('fexp_est_qty').value = e.estimated_qty ?? '';
+        document.getElementById('fexp_act_qty').value = e.actual_qty ?? '';
+        document.getElementById('finance-add-expense-btn').textContent = 'Save changes';
+        document.getElementById('finance-cancel-expense-edit-btn').style.display = 'inline-block';
+        document.getElementById('fexp_item').scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }));
+    }
+
+    let editingExpenseId = null;
+    let lastExpenses = [];
+
+    function resetExpenseEdit() {
+      editingExpenseId = null;
+      document.getElementById('finance-add-expense-btn').textContent = 'Add expense';
+      document.getElementById('finance-cancel-expense-edit-btn').style.display = 'none';
+      document.getElementById('fexp_item').value = '';
     }
 
     async function addFinanceExpense() {
@@ -2746,10 +2785,12 @@
         estimated_qty: document.getElementById('fexp_est_qty').value,
         actual_qty: document.getElementById('fexp_act_qty').value,
       };
-      const { ok, data } = await finPost('expenses', 'POST', body);
+      const { ok, data } = editingExpenseId
+        ? await finPost(`expenses/${editingExpenseId}`, 'PUT', body)
+        : await finPost('expenses', 'POST', body);
       if (!ok || (data.errors && data.errors.length)) { alert('Error: ' + JSON.stringify(data.errors || data.error)); return; }
-      document.getElementById('fexp_item').value = '';
-      loadFinanceExpenses(); loadFinanceSummary();
+      resetExpenseEdit();
+      loadFinanceExpenses(); loadFinanceSummary(); loadFinanceMembers();
     }
 
     async function loadFinanceMembers() {
@@ -2765,16 +2806,60 @@
       if (!res.ok) { el.textContent = `Error: ${data.error}`; return; }
       if (!data.memberships.length) { el.textContent = 'No membership rows for this month/slot yet.'; return; }
       const yesCount = data.memberships.filter(m => m.status === 'Yes').length;
-      let html = `<p style="font-size:13px;">Enrolled (Yes): <strong>${yesCount}</strong></p>`;
-      html += '<table><tr><th>Player</th><th>Status</th><th>Remark</th><th></th></tr>';
+      const cph = data.cost_per_head;
+      let html = `<p style="font-size:13px;">Enrolled (Yes): <strong>${yesCount}</strong>` +
+        (cph != null ? ` · Per head: <strong>${cph}</strong> <span style="opacity:0.65;">(${data.estimated_total}÷${yesCount})</span>` : '') + `</p>`;
+      html += '<table><tr><th>Player</th><th>Status</th><th>Payment</th><th>Remark</th><th></th></tr>';
       data.memberships.forEach(m => {
+        let pay = '-';
+        if (m.status === 'Yes' && cph != null) {
+          const conf = m.payment_confirmed_amount != null ? parseFloat(m.payment_confirmed_amount) : null;
+          if (conf !== null && Math.abs(conf - cph) < 0.01) {
+            pay = `Paid ✓ ${conf} <button type="button" class="secondary fin-unconfirm" data-id="${m.record_id}">undo</button>`;
+          } else if (conf !== null) {
+            pay = `<button type="button" class="fin-confirm" data-id="${m.record_id}" data-name="${m.display_name}">Reconfirm ${cph}</button> <span style="font-size:11px;opacity:0.65;">amount changed (was ${conf})</span>`;
+          } else {
+            pay = `<button type="button" class="fin-confirm" data-id="${m.record_id}" data-name="${m.display_name}">Confirm payment</button>`;
+          }
+        }
         html += `<tr><td>${m.display_name}${m.player_id ? '' : ' <span style="opacity:0.6;">(unlinked)</span>'}</td>` +
           `<td><select class="fin-mem-status" data-id="${m.record_id}">` +
           ['Yes', 'No', 'NA'].map(s => `<option${s === m.status ? ' selected' : ''}>${s}</option>`).join('') +
-          `</select></td><td>${m.remark || ''}</td>` +
-          `<td><button type="button" class="secondary fin-del" data-kind="memberships" data-id="${m.record_id}">Delete</button></td></tr>`;
+          `</select></td><td>${pay}</td><td>${m.remark || ''}</td>` +
+          `<td><button type="button" class="secondary fin-refund" data-name="${m.display_name}" data-pid="${m.player_id || ''}">Refund…</button> ` +
+          `<button type="button" class="secondary fin-del" data-kind="memberships" data-id="${m.record_id}">Delete</button></td></tr>`;
       });
       el.innerHTML = html + '</table>';
+      el.querySelectorAll('.fin-confirm').forEach(btn => btn.addEventListener('click', async () => {
+        if (!confirm(`Confirm that ${btn.dataset.name} paid ${cph} for ${document.getElementById('fmem_month').value} ${document.getElementById('fmem_slot').value}?`)) return;
+        const { ok, data: d } = await finPost(`memberships/${btn.dataset.id}`, 'PUT', { confirm_payment: true });
+        if (!ok) alert('Error: ' + d.error);
+        loadFinanceMembers(); loadFinanceSummary();
+      }));
+      el.querySelectorAll('.fin-unconfirm').forEach(btn => btn.addEventListener('click', async () => {
+        if (!confirm('Mark this payment as NOT confirmed?')) return;
+        const { ok, data: d } = await finPost(`memberships/${btn.dataset.id}`, 'PUT', { confirm_payment: false });
+        if (!ok) alert('Error: ' + d.error);
+        loadFinanceMembers(); loadFinanceSummary();
+      }));
+      el.querySelectorAll('.fin-refund').forEach(btn => btn.addEventListener('click', async () => {
+        const amount = parseFloat(prompt(`Refund amount for ${btn.dataset.name} (paid back from this slot's walk-in collection):`));
+        if (!amount || amount <= 0) return;
+        const reason = prompt('Reason (e.g. medical - ankle fracture):') || 'compassionate refund';
+        if (!confirm(`Issue a refund of ${amount} to ${btn.dataset.name}? Reason: ${reason}`)) return;
+        const body = {
+          date: new Date().toISOString().slice(0, 10),
+          slot: document.getElementById('fmem_slot').value,
+          display_name: btn.dataset.name,
+          fee: -amount,
+          note: `refund: ${reason}`,
+        };
+        if (btn.dataset.pid) body.player_id = btn.dataset.pid;
+        const { ok, data: d } = await finPost('walkins', 'POST', body);
+        if (!ok) { alert('Error: ' + JSON.stringify(d.errors || d.error)); return; }
+        alert('Refund recorded as a negative walk-in entry.');
+        loadFinanceWalkins(); loadFinanceSummary(); loadFinanceMembers();
+      }));
       el.querySelectorAll('.fin-mem-status').forEach(sel => sel.addEventListener('change', async (e) => {
         const { ok, data: d } = await finPost(`memberships/${e.target.dataset.id}`, 'PUT', { status: e.target.value });
         if (!ok) alert('Error: ' + d.error);
@@ -2815,7 +2900,7 @@
       if (!res.ok) { el.textContent = `Error: ${data.error}`; return; }
       if (!data.walkins.length) { el.textContent = 'No walk-ins for this period.'; return; }
       let html = '<table><tr><th>Date</th><th>Slot</th><th>Name</th><th>Fee</th><th>Skill</th><th>Recruit?</th><th></th></tr>';
-      [...data.walkins].reverse().forEach(w => {
+      data.walkins.forEach(w => {
         html += `<tr><td>${w.date}</td><td>${w.slot}</td>` +
           `<td>${w.display_name}${w.player_id ? '' : ' <span style="opacity:0.6;">(guest)</span>'}${w.note ? ` <span title="${String(w.note).replace(/"/g, '&quot;')}">📝</span>` : ''}</td>` +
           `<td>${w.fee}</td><td>${w.skill || ''}</td><td>${w.recruit_verdict || ''}</td>` +
@@ -2844,7 +2929,20 @@
       if (!ok || (data.errors && data.errors.length)) { alert('Error: ' + JSON.stringify(data.errors || data.error)); return; }
       document.getElementById('fwalk_name').value = '';
       document.getElementById('fwalk_note').value = '';
-      loadFinanceWalkins(); loadFinanceSummary();
+      // Prepend the new row locally instead of re-fetching the whole table;
+      // the settlement refresh happens quietly in the background.
+      const tbl = document.querySelector('#finance-walkins-result table');
+      if (tbl && data.created && data.created.length) {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `<td>${body.date}</td><td>${body.slot}</td>` +
+          `<td>${body.display_name}${body.player_id ? '' : ' <span style="opacity:0.6;">(guest)</span>'}</td>` +
+          `<td>${body.fee}</td><td>${body.skill || ''}</td><td>${body.recruit_verdict || ''}</td>` +
+          `<td><button type="button" class="secondary fin-del" data-kind="walkins" data-id="${data.created[0]}">Delete</button></td>`;
+        tbl.insertBefore(tr, tbl.rows[1] || null);
+      } else {
+        loadFinanceWalkins();
+      }
+      loadFinanceSummary();
     }
 
     let lastInsights = null;
@@ -2871,11 +2969,18 @@
       let html = '';
 
       if (data.ghosts && data.ghosts.length) {
-        html += '<h4>👻 Ghosts - enrolled but no matches recorded</h4><table><tr><th>Month</th><th>Member</th><th>Slots</th></tr>';
-        data.ghosts.forEach(g => { html += `<tr><td>${g.month} ${g.year}</td><td>${g.display_name}</td><td>${g.slots.join(', ')}</td></tr>`; });
+        html += '<h4>👻 Ghosts - enrolled but no matches recorded</h4><table><tr><th>Month</th><th>Member</th><th>Slots</th><th></th></tr>';
+        data.ghosts.forEach(g => {
+          html += `<tr><td>${g.month} ${g.year}</td><td>${g.display_name}</td><td>${g.slots.join(', ')}</td>` +
+            `<td><button type="button" class="secondary fin-attended" data-ids="${(g.membership_ids || []).join(',')}" data-name="${g.display_name}">Attended a bit</button></td></tr>`;
+        });
         html += '</table>';
       } else {
         html += '<p style="font-size:13px;">👻 No ghosts for this period - everyone enrolled has recorded matches.</p>';
+      }
+      if (data.noted_attended && data.noted_attended.length) {
+        html += '<p style="font-size:12px; opacity:0.75;">Noted as having attended: ' +
+          data.noted_attended.map(g => `${g.display_name}${g.attendance_note ? ` (${g.attendance_note})` : ''}`).join(', ') + '</p>';
       }
 
       if (data.cost_rows && data.cost_rows.length) {
@@ -2886,9 +2991,13 @@
           const est = useEst && r.estimated_applied;
           const matches = est ? r.matches_estimated : r.matches_actual;
           const cpm = est ? r.cost_per_match_estimated : r.cost_per_match_actual;
+          const paidCell = r.paid === null ? 'pending'
+            : `${r.paid}<br><span style="font-size:11px;opacity:0.65;">` +
+              (r.paid_breakdown || []).filter(b => b.per_head != null)
+                .map(b => `${b.slot}: ${b.total}÷${b.members}=${b.per_head}`).join('<br>') + `</span>`;
           html += `<tr><td>${r.month} ${r.year}</td><td>${r.display_name}${r.linked ? '' : ' <span style="opacity:0.6;">(unlinked)</span>'}</td>` +
             `<td>${r.slots.join(', ')}</td>` +
-            `<td>${r.paid === null ? 'pending' : r.paid}</td><td>${r.relief}</td>` +
+            `<td>${paidCell}</td><td>${r.relief}</td>` +
             `<td>${r.effective_cost === null ? 'pending' : r.effective_cost}</td>` +
             `<td>${matches === null ? '?' : (est ? '~' + matches : matches)}</td>` +
             `<td>${cpm === null ? (r.effective_cost === null ? 'pending' : '∞ (no matches)') : (est ? '~' + cpm : cpm)}</td></tr>`;
@@ -2914,6 +3023,14 @@
         }
       }
       el.innerHTML = html;
+      el.querySelectorAll('.fin-attended').forEach(btn => btn.addEventListener('click', async () => {
+        const note = prompt(`How much did ${btn.dataset.name} attend? (optional note, e.g. 'came 3-4 times before injury')`) || '';
+        if (!confirm(`Mark ${btn.dataset.name} as having attended (removes them from the ghost list)?`)) return;
+        for (const id of btn.dataset.ids.split(',').filter(Boolean)) {
+          await finPost(`memberships/${id}`, 'PUT', { attended_briefly: true, attendance_note: note });
+        }
+        loadFinanceInsights();
+      }));
     }
 
     async function saveFinanceSettings() {
@@ -2951,6 +3068,7 @@
     document.getElementById('finance-unlock-btn').addEventListener('click', financeUnlock);
     document.getElementById('finance-load-summary-btn').addEventListener('click', loadFinanceSummary);
     document.getElementById('finance-add-expense-btn').addEventListener('click', addFinanceExpense);
+    document.getElementById('finance-cancel-expense-edit-btn').addEventListener('click', resetExpenseEdit);
     document.getElementById('finance-load-expenses-btn').addEventListener('click', loadFinanceExpenses);
     document.getElementById('finance-load-members-btn').addEventListener('click', loadFinanceMembers);
     document.getElementById('finance-add-member-btn').addEventListener('click', addFinanceMember);
