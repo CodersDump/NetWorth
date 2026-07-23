@@ -52,6 +52,11 @@
     display: flex; align-items: center; justify-content: space-between;
     box-shadow: 0 2px 8px rgba(0,0,0,0.12);
   }
+  /* Buttons everywhere else on the site sit below a form label and need
+     that top margin; header buttons are inline/flex-aligned next to plain
+     text and don't - without this reset they sit visibly lower than the
+     email status text beside them. */
+  header.app-header button { margin-top: 0; }
   .app-title { display: flex; align-items: center; gap: 10px; }
   .app-title h1 {
     font-family: 'Rajdhani', sans-serif;
