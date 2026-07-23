@@ -14,11 +14,19 @@ Env vars:
 """
 import json
 import os
+import re
 import boto3
 from datetime import datetime, timezone
 
 dynamodb = boto3.resource('dynamodb')
 table = dynamodb.Table(os.environ['PLAYERS_TABLE'])
+
+
+def sanitize_nickname(raw):
+    """Same rule as register_player's version (duplicated on purpose -
+    separate Lambda): lowercase, alphanumeric + underscore only."""
+    cleaned = re.sub(r'[^a-z0-9_]', '', raw.lower())
+    return cleaned or 'player'
 
 CONFIRMATION_CODE = os.environ['CONFIRMATION_CODE']  # supplied at deploy time via GitHub Secrets -> CFN parameter, never stored in the repo
 
@@ -116,7 +124,8 @@ def update_player(player_id, event):
     if nickname_provided:
         if not nickname:
             return _response(400, {'error': "nickname can't be cleared - it's now this player's unique ID"})
-        if any(p['player_id'] != player_id and p.get('nickname', '').strip().lower() == nickname.lower() for p in other_players):
+        nickname = sanitize_nickname(nickname)
+        if any(p['player_id'] != player_id and p.get('nickname', '').strip().lower() == nickname for p in other_players):
             return _response(400, {'error': f'nickname "{nickname}" is already taken - nicknames must be unique'})
 
     update_parts = []

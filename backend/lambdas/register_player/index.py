@@ -19,6 +19,15 @@ dynamodb = boto3.resource('dynamodb')
 table = dynamodb.Table(os.environ['PLAYERS_TABLE'])
 
 
+def sanitize_nickname(raw):
+    """Hard format rule: lowercase, alphanumeric + underscore only.
+    Applied uniformly whether the nickname was auto-derived from a real
+    name or typed explicitly - 'SneakShot!' and 'Sneak Shot' both become
+    'sneakshot'. Never rejects; just strips whatever doesn't fit."""
+    cleaned = re.sub(r'[^a-z0-9_]', '', raw.lower())
+    return cleaned or 'player'  # defensive fallback if literally nothing survives sanitizing
+
+
 def handler(event, context):
     try:
         body = json.loads(event.get('body') or '{}')
@@ -32,21 +41,21 @@ def handler(event, context):
         existing_players = table.scan().get('Items', [])
         existing_nicknames = {p.get('nickname', '').strip().lower() for p in existing_players if p.get('nickname')}
 
+        # Nickname format is a hard rule regardless of source (auto-derived
+        # or explicitly typed): lowercase, alphanumeric + underscore only.
+        # Sanitized rather than rejected - typing "SneakShot!" just becomes
+        # "sneakshot" instead of bouncing the request back with an error.
+        nickname = sanitize_nickname(nickname) if nickname else ''
+
         if not nickname:
-            # Auto-derive: name with all whitespace stripped, then
-            # de-duplicated with a numeric suffix if that collides -
-            # nickname is now the unique player identifier, so every
-            # player needs one, not just people who opt in to a cosmetic
-            # display name.
-            base = re.sub(r'\s+', '', name)
+            base = sanitize_nickname(name)
             nickname = base
             n = 2
-            while nickname.lower() in existing_nicknames:
+            while nickname in existing_nicknames:
                 nickname = f"{base}{n}"
                 n += 1
-        else:
-            if nickname.lower() in existing_nicknames:
-                return _response(400, {'error': f'nickname "{nickname}" is already taken - nicknames must be unique'})
+        elif nickname in existing_nicknames:
+            return _response(400, {'error': f'nickname "{nickname}" is already taken - nicknames must be unique'})
 
         player_id = str(uuid.uuid4())
         table.put_item(Item={

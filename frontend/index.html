@@ -261,6 +261,7 @@
       <span id="auth-status" style="font-size:13px; opacity:0.85;"></span>
       <button class="secondary" id="auth-login-btn" type="button">Log in</button>
       <button class="secondary" id="auth-logout-btn" type="button" style="display:none;">Log out</button>
+      <button class="theme-toggle" id="display-mode-toggle-btn" type="button">Show: Nickname</button>
       <button class="theme-toggle" id="theme-toggle-btn" type="button">Dark mode</button>
     </div>
   </header>
@@ -1181,6 +1182,38 @@
       const role = myRoleInGroup(group);
       return role === 'owner' || role === 'admin';
     }
+
+    // ---------- nickname/name display toggle ----------
+    // Deliberately zero new API calls: GET /players (and everywhere that
+    // reuses that data - rankings, group member lists, the header
+    // identity) already returns both name and nickname per player, so
+    // flipping this just re-renders already-cached data with the other
+    // field prioritized. Match/tournament/substitution selectors always
+    // show both regardless of this toggle (disambiguation there isn't a
+    // preference, it's a safety requirement). Hall of Fame, achievements,
+    // and progress history are NOT yet toggle-aware - the backend
+    // currently pre-merges "Nickname (Name)" into one string for those,
+    // which would need to change to raw fields for this to reach them too
+    // (a separate, larger follow-up, not done here).
+    let showNicknameFirst = localStorage.getItem('nw_display_mode') !== 'name';
+
+    function formatPlayerLabel(name, nickname) {
+      if (!nickname) return name;
+      return showNicknameFirst ? `${nickname} (${name})` : `${name} (${nickname})`;
+    }
+
+    function toggleDisplayMode() {
+      showNicknameFirst = !showNicknameFirst;
+      localStorage.setItem('nw_display_mode', showNicknameFirst ? 'nickname' : 'name');
+      document.getElementById('display-mode-toggle-btn').textContent = `Show: ${showNicknameFirst ? 'Nickname' : 'Name'}`;
+      // Re-render whatever's already loaded - no new fetches needed.
+      if (typeof loadRankings === 'function') loadRankings();
+      const groupSel = document.getElementById('group_select');
+      if (groupSel && groupSel.value && typeof loadGroupMembers === 'function') loadGroupMembers(groupSel.value);
+      if (isLoggedIn() && typeof loadVisiblePlayers === 'function') loadVisiblePlayers();
+      if (typeof updateAuthUI === 'function') updateAuthUI();
+    }
+
     // UPI payment card config: set your (ideally secondary) VPA to make the
     // 'Pay the club' card appear on the Finance tab. Leave as REPLACE_ME to
     // keep the card hidden.
@@ -1295,7 +1328,7 @@
         // it at all, rather than clicking it and getting a confusing 403.
         const removeBtn = (!isLoggedIn() || iCanManage)
           ? `<button onclick="removePlayerFromGroup('${groupId}','${m.player_id}')">Remove</button>` : '';
-        const displayLabel = m.nickname ? `${m.nickname} (${m.name})` : m.name;
+        const displayLabel = formatPlayerLabel(m.name, m.nickname);
         return `<div class="member-row"><span>${displayLabel} (${m.rating})${roleTag}</span>${removeBtn}</div>`;
       }).join('');
     }
@@ -2188,7 +2221,7 @@
         const sorted = [...rankedPlayers].sort((a, b) => Number(b.rating) - Number(a.rating));
         let html = '<table><tr><th>#</th><th>Player</th><th>Rating</th></tr>';
         sorted.forEach((p, idx) => {
-          const label = p.nickname ? `${p.nickname} (${p.name})` : p.name;
+          const label = formatPlayerLabel(p.name, p.nickname);
           html += `<tr><td>${idx + 1}</td><td>${label}</td><td class="rating">${p.rating}</td></tr>`;
         });
         html += '</table>';
@@ -2219,7 +2252,7 @@
         if (!res.ok) return;
         const visible = data.players || [];
         const labeledVisible = visible.map(p => ({
-          ...p, label: `${p.nickname ? p.nickname + ' (' + p.name + ')' : p.name} (${p.rating})`
+          ...p, label: `${formatPlayerLabel(p.name, p.nickname)} (${p.rating})`
         }));
         populateSelect(document.getElementById('profile_player_select'), labeledVisible, 'player_id', 'label', null);
         populateSelect(document.getElementById('profile_h2h_opponent_select'), labeledVisible, 'player_id', 'label', null);
@@ -3541,7 +3574,7 @@
       if (authSession) {
         const linkedPlayer = allPlayers.find(p => p.player_id === myPlayerId());
         const identity = linkedPlayer
-          ? (linkedPlayer.nickname ? `${linkedPlayer.nickname} (${linkedPlayer.name})` : linkedPlayer.name)
+          ? formatPlayerLabel(linkedPlayer.name, linkedPlayer.nickname)
           : authSession.claims.email;
         statusEl.textContent = identity + (isSuperAdmin() ? ' (SuperAdmin)' : '');
         loginBtn.style.display = 'none';
@@ -4661,6 +4694,9 @@
       document.getElementById('theme-toggle-btn').textContent = theme === 'dark' ? 'Light mode' : 'Dark mode';
       localStorage.setItem('networth_theme', theme);
     }
+
+    document.getElementById('display-mode-toggle-btn').textContent = `Show: ${showNicknameFirst ? 'Nickname' : 'Name'}`;
+    document.getElementById('display-mode-toggle-btn').addEventListener('click', toggleDisplayMode);
 
     document.getElementById('theme-toggle-btn').addEventListener('click', () => {
       const current = document.documentElement.getAttribute('data-theme');

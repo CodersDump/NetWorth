@@ -3,10 +3,10 @@ NetWorth - one-time backfill: nickname becomes the unique player
 identifier going forward (registration/rename now enforce this), but
 every player registered BEFORE that change has no nickname at all.
 
-Rule (exact spec): nickname = name with all whitespace removed.
-"Aditya Nair" -> "AdityaNair". If that collides with an existing
-nickname, a numeric suffix is appended (AdityaNair2, AdityaNair3, ...)
-until it's unique.
+Rule (final spec): lowercase, alphanumeric + underscore only. Derived
+from the real name with everything else stripped - "Aditya Nair" ->
+"adityanair", "O'Brien-Smith" -> "obriensmith". Collisions get a numeric
+suffix (adityanair2, adityanair3, ...) until unique.
 
 Usage:
     python backfill_nicknames.py            (dry run - shows every proposed nickname)
@@ -19,6 +19,13 @@ import argparse
 import re
 
 import boto3
+
+
+def sanitize_nickname(raw):
+    """Same rule enforced server-side on every new registration and
+    rename: lowercase, alphanumeric + underscore only."""
+    cleaned = re.sub(r'[^a-z0-9_]', '', raw.lower())
+    return cleaned or 'player'
 
 
 def main():
@@ -38,13 +45,13 @@ def main():
         if p.get('nickname'):
             print(f"  {p['name']:<20} already has nickname '{p['nickname']}', skipping")
             continue
-        base = re.sub(r'\s+', '', p['name'])
+        base = sanitize_nickname(p['name'])
         nickname = base
         n = 2
-        while nickname.lower() in existing_nicknames:
+        while nickname in existing_nicknames:
             nickname = f"{base}{n}"
             n += 1
-        existing_nicknames.add(nickname.lower())  # reserve it against the next player in this same run
+        existing_nicknames.add(nickname)  # reserve it against the next player in this same run
         to_write.append((p['player_id'], p['name'], nickname))
         print(f"  {p['name']:<20} -> nickname '{nickname}'")
 

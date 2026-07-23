@@ -36,6 +36,14 @@ import boto3
 
 dynamodb = boto3.resource('dynamodb')
 groups_table = dynamodb.Table(os.environ['GROUPS_TABLE'])
+
+
+def sanitize_nickname(raw):
+    """Same rule as register_player's version (duplicated - separate
+    Lambda, kept identical on purpose): lowercase, alphanumeric +
+    underscore only, sanitized rather than rejected."""
+    cleaned = re.sub(r'[^a-z0-9_]', '', raw.lower())
+    return cleaned or 'player'
 players_table = dynamodb.Table(os.environ['PLAYERS_TABLE'])
 
 CONFIRMATION_CODE = os.environ['CONFIRMATION_CODE']  # supplied at deploy time via GitHub Secrets -> CFN parameter, never stored in the repo
@@ -162,14 +170,15 @@ def register_and_join(event):
     existing_players = players_table.scan().get('Items', [])
     existing_nicknames = {p.get('nickname', '').strip().lower() for p in existing_players if p.get('nickname')}
 
+    nickname = sanitize_nickname(nickname) if nickname else ''
     if not nickname:
-        base = re.sub(r'\s+', '', name)
+        base = sanitize_nickname(name)
         nickname = base
         n = 2
-        while nickname.lower() in existing_nicknames:
+        while nickname in existing_nicknames:
             nickname = f"{base}{n}"
             n += 1
-    elif nickname.lower() in existing_nicknames:
+    elif nickname in existing_nicknames:
         return _response(400, {'error': f'nickname "{nickname}" is already taken - nicknames must be unique'})
 
     group = None
