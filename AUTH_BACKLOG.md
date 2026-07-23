@@ -170,7 +170,32 @@ their role allows, and rename themselves if their account name is wrong.
 
 ---
 
-## Deferred / parallel, not blocking the above
+## Epic 7 — Guest visibility scoping (parked, exact spec captured 2026-07-23)
+
+Right now "guest" just means "not logged in," with no tab-level
+restriction at all — a guest sees the same tabs a logged-in member does,
+just without access to the write actions we've locked down so far. The
+actual intended guest experience, per-tab:
+
+| Tab | Guest access |
+|---|---|
+| Matches | Match log / results only — no recording new matches |
+| Tournaments | View existing tournaments only — no creating new ones |
+| Stats | Fully accessible, no restriction |
+| Profile | Fully accessible, no restriction |
+| Finance | **Only the public UPI QR payment card** — no settlement, expenses, memberships, walk-ins, or insights, even read-only |
+| Players / Groups | Not specified yet — likely read-only list, same open question as write actions generally |
+
+Implementation shape (when picked up): mostly a frontend tab-rendering
+change (`isLoggedIn()` already exists from Epic 5 - gate tab *content*,
+not just buttons, based on it), plus possibly new read-restrictions on the
+finance Lambda's non-delete routes so a guest hitting the API directly
+(bypassing the UI) is equally restricted, not just visually hidden.
+
+**Not started. No code changes yet for this epic - noted here so the
+exact spec survives until it's picked up.**
+
+---
 
 - **CloudFront unification** (single domain for frontend + API, drops
   CORS, enables httpOnly cookies) — can happen any time, independent of
