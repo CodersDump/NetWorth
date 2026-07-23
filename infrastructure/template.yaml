@@ -957,6 +957,71 @@ Resources:
             method.response.header.Access-Control-Allow-Methods: true
             method.response.header.Access-Control-Allow-Origin: true
 
+  # Epic 4 (increment 4): finance deletes, triple-gated (SuperAdmin +
+  # FINANCE_VIEW_KEY + CONFIRMATION_CODE). Same top-level isolation as
+  # every other Epic 4 route, for the same platform reason.
+  FinanceDeleteResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref RestApi
+      ParentId: !GetAtt RestApi.RootResourceId
+      PathPart: finance-delete
+
+  FinanceDeleteRecordTypeResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref RestApi
+      ParentId: !Ref FinanceDeleteResource
+      PathPart: '{record_type}'
+
+  FinanceDeleteRecordIdResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref RestApi
+      ParentId: !Ref FinanceDeleteRecordTypeResource
+      PathPart: '{record_id}'
+
+  FinanceDeleteMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RestApi
+      ResourceId: !Ref FinanceDeleteRecordIdResource
+      HttpMethod: DELETE
+      AuthorizationType: COGNITO_USER_POOLS
+      AuthorizerId: !Ref CognitoAuthorizer
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${FinanceFunction.Arn}/invocations'
+
+  FinanceDeleteOptionsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RestApi
+      ResourceId: !Ref FinanceDeleteRecordIdResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,Authorization'"
+              method.response.header.Access-Control-Allow-Methods: "'OPTIONS,DELETE'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+            method.response.header.Access-Control-Allow-Origin: true
+
+  # No separate Lambda permission needed here - FinanceFunctionPermission
+  # (defined earlier) already grants apigateway.amazonaws.com invoke
+  # access via a '/*/*' wildcard covering every method/path on this API.
+
   # /matches
 
   MatchesResource:
@@ -1196,6 +1261,8 @@ Resources:
       - GroupDeleteOptionsMethod
       - GroupMemberRemoveMethod
       - GroupMemberRemoveOptionsMethod
+      - FinanceDeleteMethod
+      - FinanceDeleteOptionsMethod
     Properties:
       RestApiId: !Ref RestApi
       Description: !Sub 'Deployment trigger: ${DeploymentTimestamp}'

@@ -72,10 +72,35 @@ MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July',
           'August', 'September', 'October', 'November', 'December']
 
 
+def _caller_claims(event):
+    """Claims API Gateway's Cognito Authorizer attaches to the request.
+    Only present on the new isolated /finance-delete route - every other
+    finance route still has no caller identity check at all, same
+    staged-rollout approach as the groups Lambda."""
+    return (event.get('requestContext') or {}).get('authorizer', {}).get('claims') or {}
+
+
+def _is_super_admin(claims):
+    groups = (claims.get('cognito:groups') or '').split(',')
+    return 'SuperAdmin' in groups
+
+
 def handler(event, context):
     try:
         method = event.get('httpMethod')
-        proxy = (event.get('pathParameters') or {}).get('proxy', '')
+        path_params = event.get('pathParameters') or {}
+
+        # New isolated route (Epic 4 increment 4): DELETE
+        # /finance-delete/{record_type}/{record_id}. Triple-gated - SuperAdmin
+        # identity, the existing FINANCE_VIEW_KEY, AND the existing
+        # CONFIRMATION_CODE (via the unchanged delete_record function) all
+        # required. Lives at its own top-level path, not nested under
+        # /finance/{proxy+}, for the same platform reason as /group-role -
+        # API Gateway forbids a named path param as a sibling of {proxy+}.
+        if 'record_type' in path_params and 'record_id' in path_params and method == 'DELETE':
+            return delete_record_enforced(path_params['record_type'], path_params['record_id'], event)
+
+        proxy = path_params.get('proxy', '')
         parts = [p for p in proxy.split('/') if p] if proxy else []
         params = event.get('queryStringParameters') or {}
         body = json.loads(event.get('body') or '{}')
@@ -269,6 +294,29 @@ def update_record(record_type, record_id, body):
     existing.update(updates)
     finance_table.put_item(Item=existing)
     return _response(200, {'updated': record_id})
+
+
+def delete_record_enforced(record_type, record_id, event):
+    """Triple-gated: SuperAdmin identity + FINANCE_VIEW_KEY + the existing
+    CONFIRMATION_CODE (checked inside delete_record itself). Any one
+    missing or wrong -> rejected. Finance data isn't scoped per-group like
+    club Groups are, so there's no owner/admin tier here - just the one
+    global SuperAdmin bar, matching how FINANCE_VIEW_KEY always worked as
+    a single shared gate rather than a per-group one."""
+    if record_type not in ('expense', 'membership', 'walkin'):
+        return _response(400, {'error': f'unknown record_type: {record_type}'})
+
+    claims = _caller_claims(event)
+    if not _is_super_admin(claims):
+        return _response(403, {'error': 'SuperAdmin required to delete finance records'})
+
+    body = json.loads(event.get('body') or '{}')
+    params = event.get('queryStringParameters') or {}
+    supplied_key = params.get('view_key') or body.get('view_key')
+    if supplied_key != VIEW_KEY:
+        return _response(403, {'error': 'view key is missing or incorrect'})
+
+    return delete_record(record_type, record_id, body)
 
 
 def delete_record(record_type, record_id, body):
