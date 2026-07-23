@@ -1229,6 +1229,7 @@
       // regardless is what actually makes the toggle reach every view
       // consistently instead of only the one you're currently looking at.
       if (typeof loadRankings === 'function') loadRankings();
+      if (lastHofData && typeof renderHallOfFame === 'function') renderHallOfFame(lastHofData);
       const groupSel = document.getElementById('group_select');
       if (groupSel && typeof loadGroupMembers === 'function') loadGroupMembers(groupSel.value);
       if (typeof loadVisiblePlayers === 'function') loadVisiblePlayers();
@@ -2859,6 +2860,23 @@
     document.getElementById('load-diversity-btn').addEventListener('click', loadDiversity);
     document.getElementById('diversity_group_filter').addEventListener('change', loadDiversity);
 
+    // Looks up the CURRENT (toggle-aware) label for a player_id from the
+    // already-cached allPlayers list, ignoring whatever name string the
+    // backend sent (which is a frozen snapshot from whenever that match/
+    // stat was computed, and not toggle-aware itself). Every Hall of Fame
+    // section already carries the raw player_id(s) alongside its name(s)
+    // in the response - this is what makes toggling it possible with
+    // zero new API calls or backend changes.
+    function playerLabelById(playerId, fallbackName) {
+      const p = allPlayers.find(pl => pl.player_id === playerId);
+      return p ? formatPlayerLabel(p.name, p.nickname) : (fallbackName || playerId);
+    }
+    function playerLabelsById(playerIds, fallbackNames) {
+      return (playerIds || []).map((pid, i) => playerLabelById(pid, fallbackNames ? fallbackNames[i] : null));
+    }
+
+    let lastHofData = null;
+
     async function loadHallOfFame() {
       const groupId = document.getElementById('hof_group_filter').value;
       const resultEl = document.getElementById('hof-result');
@@ -2870,75 +2888,88 @@
         const res = await fetch(`${API_BASE_URL}/matches?${params.toString()}`);
         const data = await res.json();
         if (!res.ok) { resultEl.textContent = `Error: ${data.error}`; return; }
+        lastHofData = data;
+        renderHallOfFame(data);
+      } catch (err) {
+        resultEl.textContent = `Request failed: ${err.message}`;
+      }
+    }
 
+    // Re-renders already-fetched Hall of Fame data with the current
+    // toggle state - called both after a real fetch and directly from
+    // the display-mode toggle, which must NOT trigger a new network call
+    // just to relabel players using data that's already cached.
+    function renderHallOfFame(data) {
+      const resultEl = document.getElementById('hof-result');
+      try {
         let html = '';
         if (data.longest_win_streak) {
-          html += `<p><strong>Longest win streak:</strong> ${data.longest_win_streak.name} - ${data.longest_win_streak.streak} in a row</p>`;
+          html += `<p><strong>Longest win streak:</strong> ${playerLabelById(data.longest_win_streak.player_id, data.longest_win_streak.name)} - ${data.longest_win_streak.streak} in a row</p>`;
         }
         if (data.biggest_blowout) {
           const b = data.biggest_blowout;
-          html += `<p><strong>Biggest blowout:</strong> ${b.team_a_names.join(' & ')} ${b.score_a}-${b.score_b} ${b.team_b_names.join(' & ')} (margin ${b.margin})</p>`;
+          html += `<p><strong>Biggest blowout:</strong> ${playerLabelsById(b.team_a_ids, b.team_a_names).join(' & ')} ${b.score_a}-${b.score_b} ${playerLabelsById(b.team_b_ids, b.team_b_names).join(' & ')} (margin ${b.margin})</p>`;
         }
         if (data.peak_ratings && data.peak_ratings.length) {
           html += '<h4>Peak ratings ever</h4><table><tr><th>Player</th><th>Peak</th></tr>';
-          data.peak_ratings.forEach(p => { html += `<tr><td>${p.name}</td><td class="rating">${p.rating}</td></tr>`; });
+          data.peak_ratings.forEach(p => { html += `<tr><td>${playerLabelById(p.player_id, p.name)}</td><td class="rating">${p.rating}</td></tr>`; });
           html += '</table>';
         }
         if (data.giant_killer_top5 && data.giant_killer_top5.length) {
           html += '<h4>Giant-killer upsets</h4><table><tr><th>Winner</th><th>Beat</th><th>Score</th><th>Rating gap</th></tr>';
           data.giant_killer_top5.forEach(g => {
-            html += `<tr><td>${g.winner_names.join(' & ')}</td><td>${g.loser_names.join(' & ')}</td><td>${g.score}</td><td>${g.upset_gap}</td></tr>`;
+            html += `<tr><td>${playerLabelsById(g.winner_ids, g.winner_names).join(' & ')}</td><td>${playerLabelsById(g.loser_ids, g.loser_names).join(' & ')}</td><td>${g.score}</td><td>${g.upset_gap}</td></tr>`;
           });
           html += '</table>';
         }
         if (data.comeback_top5 && data.comeback_top5.length) {
           html += '<h4>Best comebacks</h4><p class="card-sub">Only available for matches recorded with live scoring.</p><table><tr><th>Winner</th><th>Deficit overcome</th></tr>';
-          data.comeback_top5.forEach(c => { html += `<tr><td>${c.winner_names.join(' & ')}</td><td>${c.deficit_overcome}</td></tr>`; });
+          data.comeback_top5.forEach(c => { html += `<tr><td>${playerLabelsById(c.winner_ids, c.winner_names).join(' & ')}</td><td>${c.deficit_overcome}</td></tr>`; });
           html += '</table>';
         }
         if (data.most_consistent && data.most_consistent.length) {
           html += '<h4>Most consistent</h4><p class="card-sub">Lowest swing in rating from match to match (needs 3+ matches).</p><table><tr><th>Player</th><th>Matches</th><th>Volatility</th></tr>';
-          data.most_consistent.forEach(p => { html += `<tr><td>${p.name}</td><td>${p.matches}</td><td>${p.volatility}</td></tr>`; });
+          data.most_consistent.forEach(p => { html += `<tr><td>${playerLabelById(p.player_id, p.name)}</td><td>${p.matches}</td><td>${p.volatility}</td></tr>`; });
           html += '</table>';
         }
         if (data.most_volatile && data.most_volatile.length) {
           html += '<h4>Most volatile</h4><p class="card-sub">Biggest swings, win or lose - the streaky players.</p><table><tr><th>Player</th><th>Matches</th><th>Volatility</th></tr>';
-          data.most_volatile.forEach(p => { html += `<tr><td>${p.name}</td><td>${p.matches}</td><td>${p.volatility}</td></tr>`; });
+          data.most_volatile.forEach(p => { html += `<tr><td>${playerLabelById(p.player_id, p.name)}</td><td>${p.matches}</td><td>${p.volatility}</td></tr>`; });
           html += '</table>';
         }
         if (data.format_specialists && data.format_specialists.length) {
           html += '<h4>Format specialists</h4><p class="card-sub">Biggest gap between singles and doubles win rate (needs 2+ matches in each).</p><table><tr><th>Player</th><th>Singles win %</th><th>Doubles win %</th><th>Stronger in</th></tr>';
-          data.format_specialists.forEach(p => { html += `<tr><td>${p.name}</td><td>${p.singles_win_pct}%</td><td>${p.doubles_win_pct}%</td><td>${p.stronger_format}</td></tr>`; });
+          data.format_specialists.forEach(p => { html += `<tr><td>${playerLabelById(p.player_id, p.name)}</td><td>${p.singles_win_pct}%</td><td>${p.doubles_win_pct}%</td><td>${p.stronger_format}</td></tr>`; });
           html += '</table>';
         }
         if (data.best_partnerships && data.best_partnerships.length) {
           html += '<h4>Best partnerships</h4><p class="card-sub">Doubles pairs by win rate, minimum 3 matches together.</p><table><tr><th>Pair</th><th>W-L</th><th>Win %</th></tr>';
-          data.best_partnerships.forEach(p => { html += `<tr><td>${p.names.join(' & ')}</td><td>${p.wins}-${p.losses}</td><td>${p.win_pct}%</td></tr>`; });
+          data.best_partnerships.forEach(p => { html += `<tr><td>${playerLabelsById(p.member_ids, p.names).join(' & ')}</td><td>${p.wins}-${p.losses}</td><td>${p.win_pct}%</td></tr>`; });
           html += '</table>';
         }
         if (data.session_mvps && data.session_mvps.length) {
           html += '<h4>Session MVPs</h4><p class="card-sub">Best total rating gain on each play day.</p><table><tr><th>Date</th><th>MVP</th><th>Rating gained</th></tr>';
-          data.session_mvps.forEach(s => { html += `<tr><td>${s.date}</td><td>${s.names.join(' & ')}</td><td>+${s.delta}</td></tr>`; });
+          data.session_mvps.forEach(s => { html += `<tr><td>${s.date}</td><td>${playerLabelsById(s.player_ids, s.names).join(' & ')}</td><td>+${s.delta}</td></tr>`; });
           html += '</table>';
         }
         if (data.biggest_swings && data.biggest_swings.length) {
           html += '<h4>Biggest single-match rating swings</h4><table><tr><th>Player</th><th>Swing</th></tr>';
-          data.biggest_swings.forEach(p => { html += `<tr><td>${p.name}</td><td>+${p.swing}</td></tr>`; });
+          data.biggest_swings.forEach(p => { html += `<tr><td>${playerLabelById(p.player_id, p.name)}</td><td>+${p.swing}</td></tr>`; });
           html += '</table>';
         }
         if (data.deuce_specialists && data.deuce_specialists.length) {
           html += '<h4>Deuce specialists</h4><p class="card-sub">Wins by exactly 2 points after deuce - the nerveless ones.</p><table><tr><th>Player</th><th>Deuce wins</th></tr>';
-          data.deuce_specialists.forEach(p => { html += `<tr><td>${p.name}</td><td>${p.deuce_wins}</td></tr>`; });
+          data.deuce_specialists.forEach(p => { html += `<tr><td>${playerLabelById(p.player_id, p.name)}</td><td>${p.deuce_wins}</td></tr>`; });
           html += '</table>';
         }
         if (data.undefeated_sessions && data.undefeated_sessions.length) {
           html += '<h4>Undefeated sessions</h4><p class="card-sub">Days with 3+ matches and zero losses.</p><table><tr><th>Player</th><th>Perfect days</th></tr>';
-          data.undefeated_sessions.forEach(p => { html += `<tr><td>${p.name}</td><td>${p.sessions}</td></tr>`; });
+          data.undefeated_sessions.forEach(p => { html += `<tr><td>${playerLabelById(p.player_id, p.name)}</td><td>${p.sessions}</td></tr>`; });
           html += '</table>';
         }
         if (data.deep_run_rates && data.deep_run_rates.length) {
           html += '<h4>Deep-run rate</h4><p class="card-sub">Of the tournaments a player has entered, how often they reached the knockout stage.</p><table><tr><th>Player</th><th>Tournaments entered</th><th>Reached knockout</th><th>Rate</th></tr>';
-          data.deep_run_rates.forEach(p => { html += `<tr><td>${p.name}</td><td>${p.tournaments_entered}</td><td>${p.reached_knockout}</td><td>${p.deep_run_rate}%</td></tr>`; });
+          data.deep_run_rates.forEach(p => { html += `<tr><td>${playerLabelById(p.player_id, p.name)}</td><td>${p.tournaments_entered}</td><td>${p.reached_knockout}</td><td>${p.deep_run_rate}%</td></tr>`; });
           html += '</table>';
         }
         if (!html) html = '<p style="font-size:13px;color:var(--text-secondary);">Not enough match history yet.</p>';
