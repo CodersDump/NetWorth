@@ -181,6 +181,9 @@
     font-family: 'Inter', sans-serif; font-weight: 600; font-size: 13px;
     transition: transform 0.08s, background 0.15s;
   }
+  a { color: var(--court); }
+  a:visited { color: var(--court); }
+  a:hover { opacity: 0.85; }
   button:hover { background: var(--court-dark); }
   button:active { transform: scale(0.97); }
   button.secondary { background: var(--surface-2); color: var(--text); border: 1px solid var(--border); }
@@ -262,7 +265,7 @@
     <div class="card" style="max-width:400px; width:90%; max-height:85vh; overflow-y:auto;">
       <div style="display:flex; justify-content:space-between; align-items:center;">
         <h2 id="auth-modal-title">Log in</h2>
-        <button class="secondary" onclick="closeAuthModal()" type="button">\u2715</button>
+        <button class="secondary" onclick="closeAuthModal()" type="button">&#10005;</button>
       </div>
 
       <div id="auth-login-view">
