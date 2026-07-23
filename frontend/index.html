@@ -346,6 +346,9 @@
               <option value="advanced">Advanced</option>
             </select>
           </label>
+          <label id="register-group-link-label" style="display:none;">Add to a group of yours (optional)
+            <select id="register_group_id"><option value="">Don't add to a group yet</option></select>
+          </label>
           <button type="submit">Register</button>
         </form>
         <div id="result" class="result"></div>
@@ -495,6 +498,7 @@
               <label>Group (optional)
                 <select id="match_group_select"><option value="">None</option></select>
               </label>
+              <button type="button" class="secondary" id="match-quick-add-player-btn" style="display:none; margin-top:6px;">+ Register a new player for this match</button>
             </div>
             <div>
               <label>Match type
@@ -1188,7 +1192,7 @@
     // If that file isn't there, a QR is generated on the fly from UPI_ID
     // instead (needs a reachable CDN) - either works, the image is simpler
     // and has no external dependency.
-    const UPI_QR_IMAGE = 'assets/upi-qr.png';
+    const UPI_QR_IMAGE_BASE = 'assets/upi-qr';   // tries .png, .jpg, .jpeg, .webp in that order - upload whichever format you have, no code change needed
 
     let allPlayers = [];
     let allGroups = [];
@@ -1240,6 +1244,7 @@
       const data = await res.json();
       allGroups = data.groups || [];
       populateSelect(document.getElementById('group_select'), allGroups, 'group_id', 'group_name', null);
+      populateSelect(document.getElementById('register_group_id'), allGroups, 'group_id', 'group_name', "Don't add to a group yet");
       populateSelect(document.getElementById('match_group_select'), allGroups, 'group_id', 'group_name', 'None');
       populateSelect(document.getElementById('log_group_filter'), allGroups, 'group_id', 'group_name', 'All groups');
       populateSelect(document.getElementById('attendance_group_filter'), allGroups, 'group_id', 'group_name', 'All groups');
@@ -1671,18 +1676,26 @@
       e.preventDefault();
       const name = document.getElementById('name').value;
       const skill_level = document.getElementById('skill_level').value;
+      const groupId = document.getElementById('register_group_id').value;
       const resultEl = document.getElementById('result');
       resultEl.textContent = 'Registering...';
       try {
-        const res = await fetch(`${API_BASE_URL}/register`, {
+        const url = isLoggedIn() ? `${API_BASE_URL}/register-and-join` : `${API_BASE_URL}/register`;
+        const body = { name, skill_level };
+        if (isLoggedIn() && groupId) body.group_id = groupId;
+        const res = await fetch(url, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name, skill_level })
+          headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+          body: JSON.stringify(body)
         });
         const data = await res.json();
         if (res.ok) {
-          resultEl.textContent = `Registered! Player ID: ${data.player_id}`;
+          resultEl.textContent = data.added_to_group
+            ? `Registered! Added to ${data.added_to_group}.`
+            : `Registered! Player ID: ${data.player_id}`;
+          document.getElementById('register_group_id').value = '';
           loadPlayers();
+          loadGroups();
         } else {
           resultEl.textContent = `Error: ${data.error}`;
         }
@@ -1933,6 +1946,23 @@
     });
 
     // ---------- matches ----------
+
+    document.getElementById('match-quick-add-player-btn').addEventListener('click', async () => {
+      const name = prompt("New player's name:");
+      if (!name || !name.trim()) return;
+      const groupId = document.getElementById('match_group_select').value;
+      const body = { name: name.trim(), skill_level: 'intermediate' };
+      if (groupId) body.group_id = groupId;
+      const res = await fetch(`${API_BASE_URL}/register-and-join`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+        body: JSON.stringify(body)
+      });
+      const data = await res.json();
+      if (!res.ok) { alert('Error: ' + data.error); return; }
+      await loadPlayers();  // refreshes allPlayers + every team-select dropdown
+      alert(`${name.trim()} is registered${data.added_to_group ? ' and added to ' + data.added_to_group : ''} - pick them from the team dropdowns below.`);
+    });
 
     document.getElementById('match-form').addEventListener('submit', async (e) => {
       e.preventDefault();
@@ -2870,7 +2900,7 @@
     // ---------- UPI payment card (public) ----------
     (function initUpiCard() {
       const idSet = UPI_ID && !UPI_ID.includes('REPLACE_ME');
-      const imgSet = !!UPI_QR_IMAGE;
+      const imgSet = !!UPI_QR_IMAGE_BASE;
       if (!idSet && !imgSet) return;
       const card = document.getElementById('upi-pay-card');
       card.style.display = 'block';
@@ -2914,11 +2944,21 @@
         document.head.appendChild(s);
       };
       if (imgSet) {
+        const extensions = ['png', 'jpg', 'jpeg', 'webp'];
         const img = document.createElement('img');
         img.width = 180; img.height = 180; img.alt = 'UPI QR';
         img.style.display = 'block';
-        img.onerror = () => { qrEl.innerHTML = ''; generateFallback(); };
-        img.src = UPI_QR_IMAGE;
+        let extIndex = 0;
+        img.onerror = () => {
+          extIndex++;
+          if (extIndex < extensions.length) {
+            img.src = `${UPI_QR_IMAGE_BASE}.${extensions[extIndex]}`;
+          } else {
+            qrEl.innerHTML = '';
+            generateFallback();
+          }
+        };
+        img.src = `${UPI_QR_IMAGE_BASE}.${extensions[0]}`;
         qrEl.appendChild(img);
       } else {
         generateFallback();
@@ -3472,6 +3512,7 @@
       const showForms = isLoggedIn();
       document.getElementById('record-match-guest-notice').style.display = showForms ? 'none' : 'block';
       document.getElementById('record-match-card').style.display = showForms ? 'block' : 'none';
+      document.getElementById('match-quick-add-player-btn').style.display = showForms ? 'inline-block' : 'none';
       document.getElementById('create-tournament-guest-notice').style.display = showForms ? 'none' : 'block';
       document.getElementById('create-tournament-card').style.display = showForms ? 'block' : 'none';
       // Guests see only the public UPI QR card, not even the option to
@@ -3483,6 +3524,7 @@
       document.getElementById('profile-guest-notice').style.display = showForms ? 'none' : 'block';
       document.getElementById('profile-content-wrapper').style.display = showForms ? 'block' : 'none';
       if (showForms) loadVisiblePlayers();
+      document.getElementById('register-group-link-label').style.display = showForms ? 'block' : 'none';
       if (authSession) {
         const linkedPlayer = allPlayers.find(p => p.player_id === myPlayerId());
         const identity = linkedPlayer

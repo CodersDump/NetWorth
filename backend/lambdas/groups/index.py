@@ -66,6 +66,8 @@ def handler(event, context):
             return create_group_enforced(event)
         if event.get('resource') == '/visible-players' and method == 'GET':
             return visible_players_for_caller(event)
+        if event.get('resource') == '/register-and-join' and method == 'POST':
+            return register_and_join(event)
 
         proxy = path_params.get('proxy', '')
         parts = [p for p in proxy.split('/') if p] if proxy else []
@@ -130,6 +132,65 @@ def remove_player_enforced(group_id, player_id, event):
     if denied:
         return denied
     return remove_player(group_id, player_id, event)
+
+
+def register_and_join(event):
+    """Combined 'register a friend' + 'quick-add during match setup'
+    capability - one new player record, optionally linked into a group
+    the CALLER themselves belongs to.
+
+    Deliberately a different, lower bar than add_player_enforced: you only
+    need to be a MEMBER (any role) of the target group, not owner/admin -
+    vouching a friend into your own circle is a different, lower-stakes
+    action than managing an arbitrary group's roster. If no group_id is
+    given, this is just a plain registration (no linking at all).
+    """
+    claims = _caller_claims(event)
+    if not claims:
+        return _response(403, {'error': 'log in to register a new player'})
+
+    body = json.loads(event.get('body') or '{}')
+    name = (body.get('name') or '').strip()
+    skill_level = body.get('skill_level', 'unrated')
+    group_id = body.get('group_id')
+
+    if not name:
+        return _response(400, {'error': 'name is required'})
+
+    existing_players = players_table.scan().get('Items', [])
+    if any(p.get('name', '').strip().lower() == name.lower() for p in existing_players):
+        return _response(400, {'error': f'a player named "{name}" already exists - names must be unique'})
+
+    group = None
+    if group_id:
+        group = groups_table.get_item(Key={'group_id': group_id}).get('Item')
+        if not group:
+            return _response(404, {'error': 'group not found'})
+        caller_player_id = claims.get('custom:player_id')
+        is_member = caller_player_id and caller_player_id in group.get('member_ids', [])
+        if not (_is_super_admin(claims) or is_member):
+            return _response(403, {'error': 'you can only add new players into a group you belong to'})
+
+    player_id = str(uuid.uuid4())
+    players_table.put_item(Item={
+        'player_id': player_id, 'name': name, 'skill_level': skill_level, 'rating': 1000
+    })
+
+    added_to = None
+    if group:
+        member_ids = set(group.get('member_ids', []))
+        member_ids.add(player_id)
+        roles = dict(group.get('roles', {}))
+        roles.setdefault(player_id, 'member')
+        groups_table.update_item(
+            Key={'group_id': group_id},
+            UpdateExpression='SET member_ids = :m, #r = :r',
+            ExpressionAttributeNames={'#r': 'roles'},
+            ExpressionAttributeValues={':m': list(member_ids), ':r': roles}
+        )
+        added_to = group.get('group_name')
+
+    return _response(200, {'player_id': player_id, 'name': name, 'added_to_group': added_to})
 
 
 def add_player_enforced(group_id, event):
