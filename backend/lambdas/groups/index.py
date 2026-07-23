@@ -16,13 +16,13 @@ Env vars:
     GROUPS_TABLE  - DynamoDB table name for groups
     PLAYERS_TABLE - DynamoDB table name for players
 
-NOTE on roles (Epic 3 of the auth backlog): this Lambda now stores and
-returns role data, but does NOT yet enforce it - nothing here checks who is
-calling, because no reliable caller identity exists until the API Gateway
-Cognito Authorizer is wired in Epic 4. Until then, anyone who can reach
-these routes can still set roles, same as every other route today. Do not
-treat `roles` as a security boundary yet - it's the data model the
-boundary will be built on top of.
+NOTE on roles (Epic 3 + Epic 4 of the auth backlog): `PUT .../roles/{player_id}`
+is now the FIRST enforced route in the app - it requires a valid Cognito
+token (via a dedicated, non-proxy API Gateway path so this doesn't affect
+any other /groups/* route) and checks the caller is either a SuperAdmin or
+already owner/admin of THIS group before allowing the change. Every other
+route in this file (create/list/get/add/remove) still has no caller
+identity check at all - that's deliberate, staged rollout, not an oversight.
 """
 import json
 import os
@@ -220,16 +220,31 @@ def remove_player(group_id, player_id, event):
 VALID_ROLES = {'owner', 'admin', 'member'}
 
 
+def _caller_claims(event):
+    """Claims API Gateway's Cognito Authorizer attaches to the request.
+    Only present on routes with COGNITO_USER_POOLS auth attached - which,
+    as of Epic 4 increment 2, is just this one route. Every other route
+    in this Lambda is untouched and still has no caller identity at all."""
+    return (event.get('requestContext') or {}).get('authorizer', {}).get('claims') or {}
+
+
+def _is_super_admin(claims):
+    groups = (claims.get('cognito:groups') or '').split(',')
+    return 'SuperAdmin' in groups
+
+
 def set_role(group_id, player_id, event):
     """Set (or change) a member's role within this group.
 
-    NOT YET ENFORCED - see the module docstring. Right now this will
-    happily let anyone promote anyone to owner, because there is no
-    reliable caller identity to check against. Epic 4 adds the check
-    ("is the caller SuperAdmin, or already owner/admin of this group?")
-    in front of this function - this function itself doesn't change then,
-    only what's allowed to reach it does.
+    NOW ENFORCED (Epic 4 increment 2) - this is the first route in the
+    app where a real caller identity is checked. The caller must be
+    either a SuperAdmin, or already owner/admin of THIS SPECIFIC group -
+    checked against the roles map itself, so ownership of one group never
+    grants power over another.
     """
+    claims = _caller_claims(event)
+    caller_player_id = claims.get('custom:player_id')
+
     body = json.loads(event.get('body') or '{}')
     role = body.get('role')
     if role not in VALID_ROLES:
@@ -238,10 +253,16 @@ def set_role(group_id, player_id, event):
     group = groups_table.get_item(Key={'group_id': group_id}).get('Item')
     if not group:
         return _response(404, {'error': 'group not found'})
+
+    existing_roles = group.get('roles', {})
+    caller_role = existing_roles.get(caller_player_id) if caller_player_id else None
+    if not _is_super_admin(claims) and caller_role not in ('owner', 'admin'):
+        return _response(403, {'error': 'you must be an owner or admin of this group to change roles'})
+
     if player_id not in group.get('member_ids', []):
         return _response(400, {'error': 'player is not a member of this group - add them first'})
 
-    roles = dict(group.get('roles', {}))
+    roles = dict(existing_roles)
     roles[player_id] = role
     groups_table.update_item(
         Key={'group_id': group_id},

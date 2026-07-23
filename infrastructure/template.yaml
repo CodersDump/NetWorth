@@ -575,6 +575,70 @@ Resources:
       ParentId: !Ref GroupsResource
       PathPart: '{proxy+}'
 
+  # Epic 4 (increment 2): a specific, non-proxy path for the roles route.
+  # API Gateway always prefers a literal/specific path match over a greedy
+  # {proxy+} pattern, so once this exists, requests to exactly this path
+  # are routed here (Cognito-enforced) and never fall through to the old
+  # catch-all - no risk of the two paths racing or double-handling a call.
+  # Every other /groups/* route is completely untouched.
+  GroupsGroupIdResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref RestApi
+      ParentId: !Ref GroupsResource
+      PathPart: '{group_id}'
+
+  GroupsRolesResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref RestApi
+      ParentId: !Ref GroupsGroupIdResource
+      PathPart: roles
+
+  GroupsRolesPlayerIdResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref RestApi
+      ParentId: !Ref GroupsRolesResource
+      PathPart: '{player_id}'
+
+  GroupsRolesPutMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RestApi
+      ResourceId: !Ref GroupsRolesPlayerIdResource
+      HttpMethod: PUT
+      AuthorizationType: COGNITO_USER_POOLS
+      AuthorizerId: !Ref CognitoAuthorizer
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${GroupsFunction.Arn}/invocations'
+
+  GroupsRolesOptionsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RestApi
+      ResourceId: !Ref GroupsRolesPlayerIdResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,Authorization'"
+              method.response.header.Access-Control-Allow-Methods: "'OPTIONS,PUT'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+            method.response.header.Access-Control-Allow-Origin: true
+
   GroupsProxyAnyMethod:
     Type: AWS::ApiGateway::Method
     Properties:
@@ -1004,6 +1068,8 @@ Resources:
       - FinanceProxyOptionsMethod
       - WhoamiGetMethod
       - WhoamiOptionsMethod
+      - GroupsRolesPutMethod
+      - GroupsRolesOptionsMethod
     Properties:
       RestApiId: !Ref RestApi
       Description: !Sub 'Deployment trigger: ${DeploymentTimestamp}'
