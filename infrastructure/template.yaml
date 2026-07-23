@@ -844,6 +844,107 @@ Resources:
   # access via a '/*/*' wildcard covering every method/path on this API,
   # this new route included.
 
+  # Epic 4 (increment 6): group creation and add-player, both requiring a
+  # real Cognito login. /group-create fixes a genuine spoofing gap in the
+  # old anonymous route (client could claim any creator_player_id); logged
+  # in via this route, the caller's own token identity is used instead,
+  # can't be overridden by the request body. /group-add-player additionally
+  # requires SuperAdmin-or-owner/admin of the specific group.
+  GroupCreateResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref RestApi
+      ParentId: !GetAtt RestApi.RootResourceId
+      PathPart: group-create
+
+  GroupCreateMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RestApi
+      ResourceId: !Ref GroupCreateResource
+      HttpMethod: POST
+      AuthorizationType: COGNITO_USER_POOLS
+      AuthorizerId: !Ref CognitoAuthorizer
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${GroupsFunction.Arn}/invocations'
+
+  GroupCreateOptionsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RestApi
+      ResourceId: !Ref GroupCreateResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,Authorization'"
+              method.response.header.Access-Control-Allow-Methods: "'OPTIONS,POST'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+            method.response.header.Access-Control-Allow-Origin: true
+
+  GroupAddPlayerResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref RestApi
+      ParentId: !GetAtt RestApi.RootResourceId
+      PathPart: group-add-player
+
+  GroupAddPlayerGroupIdResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref RestApi
+      ParentId: !Ref GroupAddPlayerResource
+      PathPart: '{group_id}'
+
+  GroupAddPlayerMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RestApi
+      ResourceId: !Ref GroupAddPlayerGroupIdResource
+      HttpMethod: POST
+      AuthorizationType: COGNITO_USER_POOLS
+      AuthorizerId: !Ref CognitoAuthorizer
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${GroupsFunction.Arn}/invocations'
+
+  GroupAddPlayerOptionsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RestApi
+      ResourceId: !Ref GroupAddPlayerGroupIdResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,Authorization'"
+              method.response.header.Access-Control-Allow-Methods: "'OPTIONS,POST'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+            method.response.header.Access-Control-Allow-Origin: true
+
   # Epic 4 (increment 3): delete_group and remove_player, dual-gated -
   # both the new Cognito ownership check AND the existing CONFIRMATION_CODE
   # must pass (see delete_group_enforced/remove_player_enforced). Same
@@ -1021,6 +1122,67 @@ Resources:
   # No separate Lambda permission needed here - FinanceFunctionPermission
   # (defined earlier) already grants apigateway.amazonaws.com invoke
   # access via a '/*/*' wildcard covering every method/path on this API.
+
+  # Epic 4 (increment 5): ALL finance routes (reads and writes - summary,
+  # expenses, memberships, walkins, insights, settings), covered by ONE new
+  # top-level catch-all rather than one CFN resource tree per route. Since
+  # /finance-secure shares no parent with /finance/{proxy+}, there's no
+  # sibling-variable conflict - same reasoning as every other isolated
+  # route this epic, just reusing a GREEDY proxy instead of named params
+  # because finance has many sub-routes to cover at once. The Lambda
+  # itself detects whether a request arrived via this authorized path
+  # (Cognito claims present) and additionally requires SuperAdmin - see
+  # the top of finance/index.py's handler().
+  FinanceSecureResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref RestApi
+      ParentId: !GetAtt RestApi.RootResourceId
+      PathPart: finance-secure
+
+  FinanceSecureProxyResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref RestApi
+      ParentId: !Ref FinanceSecureResource
+      PathPart: '{proxy+}'
+
+  FinanceSecureAnyMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RestApi
+      ResourceId: !Ref FinanceSecureProxyResource
+      HttpMethod: ANY
+      AuthorizationType: COGNITO_USER_POOLS
+      AuthorizerId: !Ref CognitoAuthorizer
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${FinanceFunction.Arn}/invocations'
+
+  FinanceSecureOptionsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RestApi
+      ResourceId: !Ref FinanceSecureProxyResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,Authorization'"
+              method.response.header.Access-Control-Allow-Methods: "'OPTIONS,GET,POST,PUT,DELETE'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+            method.response.header.Access-Control-Allow-Origin: true
 
   # /matches
 
@@ -1263,6 +1425,12 @@ Resources:
       - GroupMemberRemoveOptionsMethod
       - FinanceDeleteMethod
       - FinanceDeleteOptionsMethod
+      - FinanceSecureAnyMethod
+      - FinanceSecureOptionsMethod
+      - GroupCreateMethod
+      - GroupCreateOptionsMethod
+      - GroupAddPlayerMethod
+      - GroupAddPlayerOptionsMethod
     Properties:
       RestApiId: !Ref RestApi
       Description: !Sub 'Deployment trigger: ${DeploymentTimestamp}'

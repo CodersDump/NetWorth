@@ -100,6 +100,18 @@ def handler(event, context):
         if 'record_type' in path_params and 'record_id' in path_params and method == 'DELETE':
             return delete_record_enforced(path_params['record_type'], path_params['record_id'], event)
 
+        # Epic 4 (increment 5): if this request has an 'authorizer' context
+        # at all, it arrived via the new /finance-secure/{proxy+} catch-all
+        # - checked by KEY PRESENCE, not claims truthiness, so an edge case
+        # of an empty-but-present claims dict can't silently skip the check
+        # the way `if claims:` would (empty dict is falsy in Python).
+        # Requests with no authorizer key at all came via the original open
+        # /finance/{proxy+} route and are completely unaffected.
+        came_via_secure_route = 'authorizer' in (event.get('requestContext') or {})
+        claims = _caller_claims(event)
+        if came_via_secure_route and not _is_super_admin(claims):
+            return _response(403, {'error': 'SuperAdmin required for this finance route'})
+
         proxy = path_params.get('proxy', '')
         parts = [p for p in proxy.split('/') if p] if proxy else []
         params = event.get('queryStringParameters') or {}

@@ -60,6 +60,10 @@ def handler(event, context):
             return remove_player_enforced(path_params['group_id'], path_params['player_id'], event)
         if 'group_id' in path_params and 'player_id' not in path_params and method == 'DELETE':
             return delete_group_enforced(path_params['group_id'], event)
+        if 'group_id' in path_params and 'player_id' not in path_params and method == 'POST':
+            return add_player_enforced(path_params['group_id'], event)
+        if event.get('resource') == '/group-create' and method == 'POST':
+            return create_group_enforced(event)
 
         proxy = path_params.get('proxy', '')
         parts = [p for p in proxy.split('/') if p] if proxy else []
@@ -124,6 +128,34 @@ def remove_player_enforced(group_id, player_id, event):
     if denied:
         return denied
     return remove_player(group_id, player_id, event)
+
+
+def add_player_enforced(group_id, event):
+    """Requires SuperAdmin, or already owner/admin of THIS group - reuses
+    the same check as delete_group_enforced/remove_player_enforced."""
+    denied = _authorize_group_action(group_id, _caller_claims(event))
+    if denied:
+        return denied
+    return add_player(group_id, event)
+
+
+def create_group_enforced(event):
+    """Requires a valid Cognito login (any authenticated account - no
+    SuperAdmin restriction, anyone should be able to start their own club
+    group). The real security fix here versus the old anonymous route:
+    creator_player_id is derived from the CALLER'S OWN verified token
+    claims, not trusted from a client-supplied body field - previously
+    anyone could claim to be any player_id when creating a group and
+    silently make themselves that player's "owner". If the caller's
+    account isn't linked to a player_id, the group is still created, just
+    without an automatic owner (same gap the old anonymous route always
+    had - not worse, just not improved for unlinked accounts either)."""
+    claims = _caller_claims(event)
+    body = json.loads(event.get('body') or '{}')
+    body['creator_player_id'] = claims.get('custom:player_id')  # overrides anything the client sent
+    patched_event = dict(event)
+    patched_event['body'] = json.dumps(body)
+    return create_group(patched_event)
 
 
 def create_group(event):

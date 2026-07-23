@@ -1768,9 +1768,13 @@
       const resultEl = document.getElementById('create-group-result');
       resultEl.textContent = 'Creating...';
       try {
-        const res = await fetch(`${API_BASE_URL}/groups`, {
+        // Logged-in users go through the new route, which ties ownership
+        // to their real verified identity instead of a client-supplied
+        // field; guests keep using the original anonymous route unchanged.
+        const url = isLoggedIn() ? `${API_BASE_URL}/group-create` : `${API_BASE_URL}/groups`;
+        const res = await fetch(url, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
           body: JSON.stringify({ group_name })
         });
         const data = await res.json();
@@ -1833,9 +1837,10 @@
 
       resultEl.textContent = 'Adding...';
       try {
-        const res = await fetch(`${API_BASE_URL}/groups/${groupId}/players`, {
+        const url = isLoggedIn() ? `${API_BASE_URL}/group-add-player/${groupId}` : `${API_BASE_URL}/groups/${groupId}/players`;
+        const res = await fetch(url, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
           body: JSON.stringify({ player_ids: checked })
         });
         const data = await res.json();
@@ -2855,7 +2860,7 @@
       }
     })();
 
-    // ---------- finance (view-key gated) ----------
+    // ---------- finance (view-key gated, now SuperAdmin-enforced when logged in) ----------
 
     let financeKey = sessionStorage.getItem('nw_finance_key') || '';
 
@@ -2865,9 +2870,17 @@
       return p.toString();
     }
 
+    // SuperAdmin (once logged in) routes through /finance-secure, which
+    // the Lambda additionally requires SuperAdmin for on top of the
+    // existing view_key check. Anyone not logged in as SuperAdmin keeps
+    // using the original /finance path unchanged, exactly as before.
+    function financeBaseUrl() {
+      return isSuperAdmin() ? `${API_BASE_URL}/finance-secure` : `${API_BASE_URL}/finance`;
+    }
+
     async function finPost(path, method, bodyObj) {
-      const res = await fetch(`${API_BASE_URL}/finance/${path}`, {
-        method, headers: { 'Content-Type': 'application/json' },
+      const res = await fetch(`${financeBaseUrl()}/${path}`, {
+        method, headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
         body: JSON.stringify({ ...bodyObj, view_key: financeKey })
       });
       return { ok: res.ok, data: await res.json() };
@@ -2877,7 +2890,7 @@
       const statusEl = document.getElementById('finance-lock-status');
       financeKey = document.getElementById('finance_view_key').value.trim();
       statusEl.textContent = 'Checking...';
-      const res = await fetch(`${API_BASE_URL}/finance/settings?${finQS()}`);
+      const res = await fetch(`${financeBaseUrl()}/settings?${finQS()}`, { headers: getAuthHeaders() });
       if (!res.ok) {
         statusEl.textContent = res.status === 403 ? 'Incorrect key' : `Error ${res.status}`;
         document.getElementById('finance-content').style.display = 'none';
@@ -2897,7 +2910,7 @@
     async function loadFinanceSummary() {
       const el = document.getElementById('finance-summary-result');
       el.textContent = 'Loading...';
-      const res = await fetch(`${API_BASE_URL}/finance/summary?${finQS()}`);
+      const res = await fetch(`${financeBaseUrl()}/summary?${finQS()}`, { headers: getAuthHeaders() });
       const data = await res.json();
       if (!res.ok) { el.textContent = `Error: ${data.error}`; return; }
       if (!data.summary.length) { el.textContent = 'No finance data yet.'; return; }
@@ -2918,7 +2931,7 @@
     async function loadFinanceExpenses() {
       const el = document.getElementById('finance-expenses-result');
       el.textContent = 'Loading...';
-      const res = await fetch(`${API_BASE_URL}/finance/expenses?${finQS()}`);
+      const res = await fetch(`${financeBaseUrl()}/expenses?${finQS()}`, { headers: getAuthHeaders() });
       const data = await res.json();
       if (!res.ok) { el.textContent = `Error: ${data.error}`; return; }
       if (!data.expenses.length) { el.textContent = 'No expenses yet.'; return; }
@@ -2986,7 +2999,7 @@
         year: document.getElementById('fmem_year').value,
         slot: document.getElementById('fmem_slot').value,
       });
-      const res = await fetch(`${API_BASE_URL}/finance/memberships?${qs}`);
+      const res = await fetch(`${financeBaseUrl()}/memberships?${qs}`, { headers: getAuthHeaders() });
       const data = await res.json();
       if (!res.ok) { el.textContent = `Error: ${data.error}`; return; }
       if (!data.memberships.length) { el.textContent = 'No membership rows for this month/slot yet.'; renderBulkRosterList(); return; }
@@ -3099,7 +3112,7 @@
       const prevMonth = monthNamesFull[(idx + 11) % 12];
       const prevYear = idx === 0 ? year - 1 : year;
       const qs = finQS({ month: prevMonth, year: prevYear, slot });
-      const res = await fetch(`${API_BASE_URL}/finance/memberships?${qs}`);
+      const res = await fetch(`${financeBaseUrl()}/memberships?${qs}`, { headers: getAuthHeaders() });
       const data = await res.json();
       if (!res.ok) { alert('Error: ' + data.error); return; }
       const prevYes = (data.memberships || []).filter(m => m.status === 'Yes');
@@ -3144,7 +3157,7 @@
       const fYear = document.getElementById('fwalk_filter_year').value;
       const filters = {};
       if (fYear) { filters.year = fYear; if (fMonth) filters.month = fMonth; }
-      const res = await fetch(`${API_BASE_URL}/finance/walkins?${finQS(filters)}`);
+      const res = await fetch(`${financeBaseUrl()}/walkins?${finQS(filters)}`, { headers: getAuthHeaders() });
       const data = await res.json();
       if (!res.ok) { el.textContent = `Error: ${data.error}`; return; }
       if (!data.walkins.length) { el.textContent = 'No walk-ins for this period.'; return; }
@@ -3203,7 +3216,7 @@
       const fm = document.getElementById('fins_month').value;
       const fy = document.getElementById('fins_year').value;
       if (fy) { filters.year = fy; if (fm) filters.month = fm; }
-      const res = await fetch(`${API_BASE_URL}/finance/insights?${finQS(filters)}`);
+      const res = await fetch(`${financeBaseUrl()}/insights?${finQS(filters)}`, { headers: getAuthHeaders() });
       const data = await res.json();
       if (!res.ok) { el.textContent = `Error: ${data.error}`; return; }
       lastInsights = data;
