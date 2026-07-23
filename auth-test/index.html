@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<!--
+  THROWAWAY TEST PAGE - Epic 1 verification only.
+
+  This file lives in auth-test/, NOT frontend/, on purpose: the deploy
+  workflow only ever copies frontend/index.html to S3
+  (see .github/workflows/deploy.yml), so nothing here can accidentally
+  become part of the live site. Open this file directly in a browser
+  from your own machine (double-click it, or `open auth-test/index.html`)
+  to test Cognito in complete isolation from your real app.
+
+  It exists to prove, before anything is wired into the live API or
+  frontend, that: sign-up works, email confirmation works, login works,
+  a forced password change (the flow Epic 2's bulk-provisioned users hit
+  on first login) works, and password reset works.
+
+  Nothing typed into this page touches PlayersTable, GroupsTable, or any
+  of your existing data - it only talks to Cognito.
+-->
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>NetWorth - Cognito test (not the real app)</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  body { font-family: -apple-system, sans-serif; max-width: 480px; margin: 20px auto; padding: 0 16px;
+         background: #0d1a12; color: #e8f0ea; }
+  h1 { font-size: 18px; }
+  .banner { background: #3a2a10; border: 1px solid #a06a20; border-radius: 8px; padding: 10px 14px; font-size: 13px; margin-bottom: 16px; }
+  fieldset { border: 1px solid #2a4033; border-radius: 8px; margin-bottom: 14px; padding: 12px 14px; }
+  legend { padding: 0 6px; font-size: 13px; opacity: 0.8; }
+  label { display: block; font-size: 13px; margin-top: 8px; }
+  input, select { width: 100%; box-sizing: border-box; padding: 8px; margin-top: 3px; border-radius: 6px;
+                  border: 1px solid #2a4033; background: #10231a; color: #e8f0ea; }
+  button { margin-top: 10px; padding: 8px 14px; border-radius: 6px; border: none; background: #3f9463;
+           color: white; font-weight: 600; cursor: pointer; }
+  button.secondary { background: #1c3327; color: #cfe6da; }
+  pre { background: #10231a; border-radius: 6px; padding: 10px; font-size: 11px; overflow-x: auto; white-space: pre-wrap; word-break: break-all; }
+  .status { font-size: 13px; margin-top: 8px; }
+  .ok { color: #6fd99a; } .err { color: #ff8a80; }
+</style>
+</head>
+<body>
+
+<div class="banner">⚠️ Test page only - not the real NetWorth app. Verifies Cognito in isolation before anything touches your live site.</div>
+
+<h1>1. Pool connection</h1>
+<fieldset>
+  <legend>from CloudFormation Outputs after deploying the template</legend>
+  <label>Region <input id="region" placeholder="us-east-1"></label>
+  <label>User Pool ID <input id="poolId" placeholder="us-east-1_XXXXXXXXX"></label>
+  <label>App Client ID <input id="clientId" placeholder="from UserPoolClientId output"></label>
+  <button class="secondary" onclick="saveConfig()">Save (remembered for this browser tab only)</button>
+  <div id="configStatus" class="status"></div>
+</fieldset>
+
+<h1>2. Sign up</h1>
+<fieldset>
+  <label>Email <input id="suEmail" type="email"></label>
+  <label>Password <input id="suPassword" type="password" placeholder="min 8 chars, 1 number"></label>
+  <button onclick="doSignUp()">Sign up</button>
+  <div id="signupStatus" class="status"></div>
+</fieldset>
+
+<h1>3. Confirm sign-up</h1>
+<fieldset>
+  <legend>code arrives by email (Cognito's default verification message)</legend>
+  <label>Email <input id="confEmail" type="email"></label>
+  <label>Confirmation code <input id="confCode"></label>
+  <button onclick="doConfirm()">Confirm</button>
+  <div id="confirmStatus" class="status"></div>
+</fieldset>
+
+<h1>4. Log in</h1>
+<fieldset>
+  <label>Email <input id="liEmail" type="email"></label>
+  <label>Password <input id="liPassword" type="password"></label>
+  <button onclick="doLogin()">Log in</button>
+  <div id="loginStatus" class="status"></div>
+  <div id="newPasswordBlock" style="display:none; margin-top:10px;">
+    <p style="font-size:13px;">This account must set a new password (this is the exact flow Epic 2's bulk-provisioned players will hit on their first login).</p>
+    <label>New password <input id="newPassword" type="password"></label>
+    <button onclick="doNewPassword()">Set new password &amp; complete login</button>
+  </div>
+</fieldset>
+
+<h1>5. Forgot password</h1>
+<fieldset>
+  <label>Email <input id="fpEmail" type="email"></label>
+  <button class="secondary" onclick="doForgotPassword()">Send reset code</button>
+  <div id="fpStatus" class="status"></div>
+  <div id="fpConfirmBlock" style="display:none; margin-top:10px;">
+    <label>Reset code (from email) <input id="fpCode"></label>
+    <label>New password <input id="fpNewPassword" type="password"></label>
+    <button onclick="doConfirmForgotPassword()">Set new password</button>
+  </div>
+</fieldset>
+
+<h1>Result</h1>
+<pre id="tokenOutput">Log in above to see the decoded ID token here.</pre>
+
+<script src="https://unpkg.com/amazon-cognito-identity-js@6/dist/amazon-cognito-identity.min.js"></script>
+<script>
+  let userPool = null;
+  let pendingUser = null; // holds the CognitoUser mid-challenge (NEW_PASSWORD_REQUIRED)
+
+  function saveConfig() {
+    const region = document.getElementById('region').value.trim();
+    const poolId = document.getElementById('poolId').value.trim();
+    const clientId = document.getElementById('clientId').value.trim();
+    if (!poolId || !clientId) { setStatus('configStatus', 'Pool ID and Client ID are both required.', true); return; }
+    sessionStorage.setItem('nwtest_region', region);
+    sessionStorage.setItem('nwtest_poolId', poolId);
+    sessionStorage.setItem('nwtest_clientId', clientId);
+    initPool();
+    setStatus('configStatus', 'Saved. Pool connected \u2713', false);
+  }
+
+  function initPool() {
+    const poolId = sessionStorage.getItem('nwtest_poolId');
+    const clientId = sessionStorage.getItem('nwtest_clientId');
+    if (!poolId || !clientId) return;
+    userPool = new AmazonCognitoIdentity.CognitoUserPool({ UserPoolId: poolId, ClientId: clientId });
+  }
+
+  function setStatus(id, msg, isError) {
+    const el = document.getElementById(id);
+    el.textContent = msg;
+    el.className = 'status ' + (isError ? 'err' : 'ok');
+  }
+
+  function requirePool() {
+    if (!userPool) { alert('Save the pool connection details in section 1 first.'); return false; }
+    return true;
+  }
+
+  function doSignUp() {
+    if (!requirePool()) return;
+    const email = document.getElementById('suEmail').value.trim();
+    const password = document.getElementById('suPassword').value;
+    const attrs = [new AmazonCognitoIdentity.CognitoUserAttribute({ Name: 'email', Value: email })];
+    userPool.signUp(email, password, attrs, null, (err, result) => {
+      if (err) { setStatus('signupStatus', err.message, true); return; }
+      setStatus('signupStatus', 'Signed up. Check email for a confirmation code, then use section 3.', false);
+    });
+  }
+
+  function doConfirm() {
+    if (!requirePool()) return;
+    const email = document.getElementById('confEmail').value.trim();
+    const code = document.getElementById('confCode').value.trim();
+    const user = new AmazonCognitoIdentity.CognitoUser({ Username: email, Pool: userPool });
+    user.confirmRegistration(code, true, (err, result) => {
+      if (err) { setStatus('confirmStatus', err.message, true); return; }
+      setStatus('confirmStatus', 'Confirmed \u2713 - you can log in now (section 4).', false);
+    });
+  }
+
+  function doLogin() {
+    if (!requirePool()) return;
+    const email = document.getElementById('liEmail').value.trim();
+    const password = document.getElementById('liPassword').value;
+    const authDetails = new AmazonCognitoIdentity.AuthenticationDetails({ Username: email, Password: password });
+    const user = new AmazonCognitoIdentity.CognitoUser({ Username: email, Pool: userPool });
+    pendingUser = user;
+    user.authenticateUser(authDetails, {
+      onSuccess: (session) => {
+        setStatus('loginStatus', 'Logged in \u2713', false);
+        document.getElementById('newPasswordBlock').style.display = 'none';
+        showToken(session);
+      },
+      onFailure: (err) => setStatus('loginStatus', err.message, true),
+      newPasswordRequired: () => {
+        setStatus('loginStatus', 'Password change required (expected for Epic 2 bulk-provisioned accounts).', false);
+        document.getElementById('newPasswordBlock').style.display = 'block';
+      }
+    });
+  }
+
+  function doNewPassword() {
+    if (!pendingUser) return;
+    const newPassword = document.getElementById('newPassword').value;
+    pendingUser.completeNewPasswordChallenge(newPassword, {}, {
+      onSuccess: (session) => {
+        setStatus('loginStatus', 'Password set, logged in \u2713', false);
+        document.getElementById('newPasswordBlock').style.display = 'none';
+        showToken(session);
+      },
+      onFailure: (err) => setStatus('loginStatus', err.message, true)
+    });
+  }
+
+  function doForgotPassword() {
+    if (!requirePool()) return;
+    const email = document.getElementById('fpEmail').value.trim();
+    const user = new AmazonCognitoIdentity.CognitoUser({ Username: email, Pool: userPool });
+    pendingUser = user;
+    user.forgotPassword({
+      onSuccess: () => setStatus('fpStatus', 'Reset code sent \u2713', false),
+      onFailure: (err) => setStatus('fpStatus', err.message, true),
+      inputVerificationCode: () => {
+        setStatus('fpStatus', 'Reset code sent - enter it below.', false);
+        document.getElementById('fpConfirmBlock').style.display = 'block';
+      }
+    });
+  }
+
+  function doConfirmForgotPassword() {
+    if (!pendingUser) return;
+    const code = document.getElementById('fpCode').value.trim();
+    const newPassword = document.getElementById('fpNewPassword').value;
+    pendingUser.confirmPassword(code, newPassword, {
+      onSuccess: () => setStatus('fpStatus', 'Password reset \u2713 - log in with it in section 4.', false),
+      onFailure: (err) => setStatus('fpStatus', err.message, true)
+    });
+  }
+
+  function showToken(session) {
+    const idToken = session.getIdToken().payload;
+    document.getElementById('tokenOutput').textContent = JSON.stringify(idToken, null, 2);
+  }
+
+  // restore saved config on load
+  window.addEventListener('load', () => {
+    const region = sessionStorage.getItem('nwtest_region');
+    const poolId = sessionStorage.getItem('nwtest_poolId');
+    const clientId = sessionStorage.getItem('nwtest_clientId');
+    if (poolId && clientId) {
+      document.getElementById('region').value = region || '';
+      document.getElementById('poolId').value = poolId;
+      document.getElementById('clientId').value = clientId;
+      initPool();
+    }
+  });
+</script>
+</body>
+</html>

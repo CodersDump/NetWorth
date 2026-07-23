@@ -142,6 +142,63 @@ Resources:
                   - !GetAtt ProgressHistoryTable.Arn
                   - !GetAtt FinanceTable.Arn
 
+  # ---------- Cognito (Epic 1 - foundation only, not yet wired to any
+  # route or the live frontend. Standalone and isolated by design; nothing
+  # existing changes as a result of these resources existing.) ----------
+
+  UserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: !Sub '${AppName}-users'
+      AutoVerifiedAttributes: [email]
+      UsernameAttributes: [email]
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 8
+          RequireUppercase: false
+          RequireLowercase: true
+          RequireNumbers: true
+          RequireSymbols: false
+          TemporaryPasswordValidityDays: 30
+      Schema:
+        - Name: email
+          AttributeDataType: String
+          Required: true
+          Mutable: true
+        - Name: player_id
+          AttributeDataType: String
+          Mutable: true
+          # Custom attribute linking a Cognito identity to an existing
+          # PlayersTable row. Set at account-creation time for pre-existing
+          # roster members (Epic 2's bulk provisioning script); set via a
+          # claim step for anyone new (Epic 6).
+
+  UserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      ClientName: !Sub '${AppName}-web-client'
+      UserPoolId: !Ref UserPool
+      GenerateSecret: false
+      # No client secret - this is a browser SPA, a secret can't be kept
+      # safe in JS anyway (same reasoning as never embedding AWS keys
+      # client-side).
+      ExplicitAuthFlows:
+        - ALLOW_USER_PASSWORD_AUTH
+        - ALLOW_USER_SRP_AUTH
+        - ALLOW_REFRESH_TOKEN_AUTH
+      PreventUserExistenceErrors: ENABLED
+
+  SuperAdminGroup:
+    Type: AWS::Cognito::UserPoolGroup
+    Properties:
+      GroupName: SuperAdmin
+      UserPoolId: !Ref UserPool
+      Description: >-
+        Pool-wide override role (Adi, and any future co-admin). Bypasses
+        per-group owner/admin checks entirely once wired up in Epic 4.
+        Deliberately NOT the same mechanism as club-group ownership, which
+        lives in GroupsTable instead - see README for why.
+
   # ---------- Lambda functions (packaged from backend/lambdas/*) ----------
 
   RegisterPlayerFunction:
@@ -946,6 +1003,14 @@ Outputs:
   RestApiId:
     Description: Used by the workflow to force a fresh API Gateway deployment
     Value: !Ref RestApi
+
+  UserPoolId:
+    Description: Cognito User Pool ID (used by the auth test page and provisioning script)
+    Value: !Ref UserPool
+
+  UserPoolClientId:
+    Description: Cognito App Client ID (used by the frontend/test page - not secret)
+    Value: !Ref UserPoolClient
 
   PlayersTableName:
     Value: !Ref PlayersTable
