@@ -656,7 +656,10 @@ def compute_hall_of_fame(items, group_id_filter=None):
     def resolve_name(pid, fallback=None):
         if pid not in name_cache:
             p = players_table.get_item(Key={'player_id': pid}).get('Item')
-            name_cache[pid] = p['name'] if p else (fallback or pid)
+            if p:
+                name_cache[pid] = f"{p['nickname']} ({p['name']})" if p.get('nickname') else p['name']
+            else:
+                name_cache[pid] = fallback or pid
         return name_cache[pid]
 
     rolling_ratings = {}
@@ -1324,7 +1327,10 @@ def compute_progress_badges(items, group_id_filter=None):
     def resolve_name(pid):
         if pid not in name_cache:
             p = players_table.get_item(Key={'player_id': pid}).get('Item')
-            name_cache[pid] = p['name'] if p else pid
+            if p:
+                name_cache[pid] = f"{p['nickname']} ({p['name']})" if p.get('nickname') else p['name']
+            else:
+                name_cache[pid] = pid
         return name_cache[pid]
 
     result = {}

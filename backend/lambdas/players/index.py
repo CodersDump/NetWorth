@@ -45,6 +45,7 @@ def list_players():
         {
             'player_id': i['player_id'],
             'name': i['name'],
+            'nickname': i.get('nickname'),
             'skill_level': i.get('skill_level'),
             'rating': i.get('rating', 1000)
         }
@@ -64,9 +65,11 @@ def update_player(player_id, event):
 
     name = (body.get('name') or '').strip()
     skill_level = body.get('skill_level')
+    nickname_provided = 'nickname' in body
+    nickname = (body.get('nickname') or '').strip() if nickname_provided else None
 
-    if not name and not skill_level:
-        return _response(400, {'error': 'provide name and/or skill_level to update'})
+    if not name and not skill_level and not nickname_provided:
+        return _response(400, {'error': 'provide name, skill_level, and/or nickname to update'})
 
     if name:
         other_players = table.scan().get('Items', [])
@@ -76,6 +79,7 @@ def update_player(player_id, event):
             print(f"[AUDIT RENAME] {datetime.now(timezone.utc).isoformat()} - player_id={player_id} old_name=\"{existing.get('name')}\" new_name=\"{name}\"")
 
     update_parts = []
+    remove_parts = []
     names = {}
     values = {}
     if name:
@@ -85,12 +89,22 @@ def update_player(player_id, event):
     if skill_level:
         update_parts.append('skill_level = :s')
         values[':s'] = skill_level
+    if nickname_provided:
+        if nickname:
+            update_parts.append('nickname = :nk')
+            values[':nk'] = nickname
+        else:
+            remove_parts.append('nickname')  # empty string = clear the nickname
 
-    kwargs = {
-        'Key': {'player_id': player_id},
-        'UpdateExpression': 'SET ' + ', '.join(update_parts),
-        'ExpressionAttributeValues': values
-    }
+    expr = ''
+    if update_parts:
+        expr += 'SET ' + ', '.join(update_parts)
+    if remove_parts:
+        expr += (' ' if expr else '') + 'REMOVE ' + ', '.join(remove_parts)
+
+    kwargs = {'Key': {'player_id': player_id}, 'UpdateExpression': expr}
+    if values:
+        kwargs['ExpressionAttributeValues'] = values
     if names:
         kwargs['ExpressionAttributeNames'] = names
 

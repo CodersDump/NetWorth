@@ -370,14 +370,18 @@
 
       <div class="card">
         <h2>Edit a player's name</h2>
+        <p class="card-sub">Nickname shows as "Nickname (Real Name)" across Stats, Hall of Fame, and Profile. Match and tournament creation always use the real name only, so new players and teammates aren't confused about who's who.</p>
         <form id="edit-player-form">
           <label>Player
             <select id="edit_player_select" required></select>
           </label>
-          <label>New name
-            <input type="text" id="edit_player_name" required>
+          <label>New name <span style="opacity:0.6; font-weight:normal;">(leave blank to only change the nickname)</span>
+            <input type="text" id="edit_player_name">
           </label>
-          <button type="submit" class="secondary">Save name</button>
+          <label>Nickname <span style="opacity:0.6; font-weight:normal;">(optional - blank clears it)</span>
+            <input type="text" id="edit_player_nickname" placeholder="e.g. SneakShot">
+          </label>
+          <button type="submit" class="secondary">Save</button>
         </form>
         <div id="edit-player-result" class="result"></div>
       </div>
@@ -1165,18 +1169,26 @@
       const data = await res.json();
       allPlayers = data.players || [];
       const labeled = allPlayers.map(p => ({ ...p, label: `${p.name} (${p.rating})` }));
+      // Profile is player-identity-centric, so it shows nickname there;
+      // match/tournament creation and admin lists always use the real
+      // name only, so teammates and new players aren't confused about
+      // who's who.
+      const labeledWithNickname = allPlayers.map(p => ({
+        ...p, label: `${p.nickname ? p.nickname + ' (' + p.name + ')' : p.name} (${p.rating})`
+      }));
       renderAddPlayersChecklist();
       populateSelect(document.getElementById('delete_player_id'), labeled, 'player_id', 'label', null);
       populateSelect(document.getElementById('edit_player_select'), labeled, 'player_id', 'label', null);
       populateSelect(document.getElementById('log_player_filter'), labeled, 'player_id', 'label', 'All players');
-      populateSelect(document.getElementById('profile_player_select'), labeled, 'player_id', 'label', null);
-      populateSelect(document.getElementById('profile_h2h_opponent_select'), labeled, 'player_id', 'label', null);
-      populateSelect(document.getElementById('profile_compare2_select'), labeled, 'player_id', 'label', 'None');
-      populateSelect(document.getElementById('profile_compare3_select'), labeled, 'player_id', 'label', 'None');
-      populateSelect(document.getElementById('profile_compare4_select'), labeled, 'player_id', 'label', 'None');
+      populateSelect(document.getElementById('profile_player_select'), labeledWithNickname, 'player_id', 'label', null);
+      populateSelect(document.getElementById('profile_h2h_opponent_select'), labeledWithNickname, 'player_id', 'label', null);
+      populateSelect(document.getElementById('profile_compare2_select'), labeledWithNickname, 'player_id', 'label', 'None');
+      populateSelect(document.getElementById('profile_compare3_select'), labeledWithNickname, 'player_id', 'label', 'None');
+      populateSelect(document.getElementById('profile_compare4_select'), labeledWithNickname, 'player_id', 'label', 'None');
       populateSelect(document.getElementById('fmem_player'), labeled, 'player_id', 'label', '- pick from roster -');
       populateSelect(document.getElementById('fwalk_player'), labeled, 'player_id', 'label', '- not on roster -');
       populateTeamSelects();
+      updateAuthUI();  // refresh header identity now that nicknames are available (matters after a restored session)
     }
 
     async function loadGroups() {
@@ -1697,27 +1709,48 @@
       }
     });
 
+    document.getElementById('edit_player_select').addEventListener('change', (e) => {
+      const player = allPlayers.find(p => p.player_id === e.target.value);
+      const nicknameInput = document.getElementById('edit_player_nickname');
+      nicknameInput.value = (player && player.nickname) || '';
+      nicknameInput.dataset.touched = 'false';
+    });
+    document.getElementById('edit_player_nickname').addEventListener('input', (e) => {
+      e.target.dataset.touched = 'true';
+    });
+
     document.getElementById('edit-player-form').addEventListener('submit', async (e) => {
       e.preventDefault();
       const playerId = document.getElementById('edit_player_select').value;
       const newName = document.getElementById('edit_player_name').value.trim();
+      const nicknameInput = document.getElementById('edit_player_nickname');
+      const nickname = nicknameInput.value.trim();
       const resultEl = document.getElementById('edit-player-result');
-      if (!playerId || !newName) { resultEl.textContent = 'Select a player and enter a new name.'; return; }
+      if (!playerId) { resultEl.textContent = 'Select a player.'; return; }
+      if (!newName && nicknameInput.dataset.touched !== 'true') {
+        resultEl.textContent = 'Enter a new name, or change the nickname field, then save.';
+        return;
+      }
 
-      const confirmText = prompt('Enter the confirmation code to rename this player:');
+      const confirmText = prompt('Enter the confirmation code to update this player:');
       if (!confirmText) { resultEl.textContent = 'Cancelled.'; return; }
 
       resultEl.textContent = 'Saving...';
       try {
+        const body = { confirm: confirmText };
+        if (newName) body.name = newName;
+        if (nicknameInput.dataset.touched === 'true') body.nickname = nickname;  // '' clears it
         const res = await fetch(`${API_BASE_URL}/players/${playerId}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name: newName, confirm: confirmText })
+          body: JSON.stringify(body)
         });
         const data = await res.json();
         if (res.ok) {
-          resultEl.textContent = 'Name updated.';
+          resultEl.textContent = 'Updated.';
           document.getElementById('edit_player_name').value = '';
+          nicknameInput.value = '';
+          nicknameInput.dataset.touched = 'false';
           loadPlayers();
         } else {
           resultEl.textContent = `Error: ${data.error}`;
@@ -3375,7 +3408,11 @@
       const loginBtn = document.getElementById('auth-login-btn');
       const logoutBtn = document.getElementById('auth-logout-btn');
       if (authSession) {
-        statusEl.textContent = authSession.claims.email + (isSuperAdmin() ? ' (SuperAdmin)' : '');
+        const linkedPlayer = allPlayers.find(p => p.player_id === myPlayerId());
+        const identity = linkedPlayer
+          ? (linkedPlayer.nickname ? `${linkedPlayer.nickname} (${linkedPlayer.name})` : linkedPlayer.name)
+          : authSession.claims.email;
+        statusEl.textContent = identity + (isSuperAdmin() ? ' (SuperAdmin)' : '');
         loginBtn.style.display = 'none';
         logoutBtn.style.display = 'inline-block';
       } else {
