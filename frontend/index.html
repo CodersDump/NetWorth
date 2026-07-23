@@ -327,7 +327,7 @@
     <button class="tab-btn" data-tab="tournaments">Tournaments</button>
     <button class="tab-btn" data-tab="stats">Stats</button>
     <button class="tab-btn" data-tab="finance">Finance</button>
-    <button class="tab-btn" data-tab="profile">Profile</button>
+    <button class="tab-btn" data-tab="profile">Player Card</button>
   </nav>
 
   <div class="app-shell">
@@ -855,14 +855,14 @@
 
     <div class="tab-panel" id="tab-profile">
       <div class="card" id="profile-guest-notice" style="display:none;">
-        <h2>Player profile</h2>
-        <p class="card-sub">Log in to view player profiles - you'll be able to see anyone who shares a group with you.</p>
+        <h2>Player Card</h2>
+        <p class="card-sub">Log in to view player cards - you'll be able to see anyone who shares a group with you.</p>
         <button type="button" onclick="openAuthModal()">Log in</button>
       </div>
       <div id="profile-content-wrapper">
       <div class="card">
-        <h2>Player profile</h2>
-        <p class="card-sub">A single player's rating history, partnerships, and mix, all in one place.</p>
+        <h2>Player Card</h2>
+        <p class="card-sub">A single player's rating history, partnerships, and mix, all in one place. Defaults to your own card.</p>
         <label>Player
           <select id="profile_player_select"></select>
         </label>
@@ -2226,6 +2226,14 @@
         populateSelect(document.getElementById('profile_compare2_select'), labeledVisible, 'player_id', 'label', 'None');
         populateSelect(document.getElementById('profile_compare3_select'), labeledVisible, 'player_id', 'label', 'None');
         populateSelect(document.getElementById('profile_compare4_select'), labeledVisible, 'player_id', 'label', 'None');
+        // Player Card defaults to your own card, not just whatever's
+        // alphabetically first - you're always in the visible list
+        // (viewing your own card is always allowed), so this is safe
+        // whenever the account is linked to a player_id at all.
+        const myId = myPlayerId();
+        if (myId && visible.some(p => p.player_id === myId)) {
+          document.getElementById('profile_player_select').value = myId;
+        }
         if (visible.length) loadProfile();
       } catch (err) { /* silent - profile tab just stays empty until this succeeds */ }
     }
@@ -2241,9 +2249,14 @@
         if (!form || !form.length) {
           formEl.innerHTML = '<p style="font-size:13px;color:var(--text-secondary);">No matches recorded yet.</p>';
         } else {
-          formEl.innerHTML = form.map(f =>
-            `<div class="form-chip ${f.result === 'W' ? 'win' : 'loss'}" title="${f.result === 'W' ? 'Won' : 'Lost'} vs ${(f.opponent_names || []).join(' & ')} on ${f.date ? f.date.slice(0, 10) : ''}">${f.result}</div>`
-          ).join('');
+          formEl.innerHTML = form.map(f => {
+            const detail = `${f.result === 'W' ? 'Won' : 'Lost'} vs ${(f.opponent_names || []).join(' & ')} on ${f.date ? f.date.slice(0, 10) : ''}`;
+            const detailEscaped = detail.replace(/'/g, "\\'").replace(/"/g, '&quot;');
+            // title= gives desktop hover for free; onclick gives mobile/tablet
+            // the SAME info via tap, since touch devices have no hover state
+            // at all - relying on title alone left this silently broken there.
+            return `<div class="form-chip ${f.result === 'W' ? 'win' : 'loss'}" title="${detailEscaped}" onclick="alert('${detailEscaped}')">${f.result}</div>`;
+          }).join('');
         }
 
         // Attendance
@@ -3269,7 +3282,7 @@
       let html = '<table><tr><th>Date</th><th>Slot</th><th>Name</th><th>Fee</th><th>Skill</th><th>Recruit?</th><th></th></tr>';
       data.walkins.forEach(w => {
         html += `<tr><td>${w.date}</td><td>${w.slot}</td>` +
-          `<td>${w.display_name}${w.player_id ? '' : ' <span style="opacity:0.6;">(guest)</span>'}${w.note ? ` <span title="${String(w.note).replace(/"/g, '&quot;')}">📝</span>` : ''}</td>` +
+          `<td>${w.display_name}${w.player_id ? '' : ' <span style="opacity:0.6;">(guest)</span>'}${w.note ? ` <span title="${String(w.note).replace(/"/g, '&quot;')}" onclick="alert('${String(w.note).replace(/'/g, "\\'").replace(/"/g, '&quot;')}')">📝</span>` : ''}</td>` +
           `<td>${w.fee}</td><td>${w.skill || ''}</td><td>${w.recruit_verdict || ''}</td>` +
           `<td><button type="button" class="secondary fin-del" data-kind="walkins" data-id="${w.record_id}">Delete</button></td></tr>`;
       });
