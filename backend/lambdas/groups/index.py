@@ -188,7 +188,8 @@ def add_player(group_id, event):
 
     groups_table.update_item(
         Key={'group_id': group_id},
-        UpdateExpression='SET member_ids = :m, roles = :r',
+        UpdateExpression='SET member_ids = :m, #r = :r',
+        ExpressionAttributeNames={'#r': 'roles'},  # 'roles' is a DynamoDB reserved keyword - must be aliased
         ExpressionAttributeValues={':m': list(member_ids), ':r': roles}
     )
     result = {'group_id': group_id, 'added': added}
@@ -209,7 +210,8 @@ def remove_player(group_id, player_id, event):
     roles = {pid: r for pid, r in group.get('roles', {}).items() if pid != player_id}
     groups_table.update_item(
         Key={'group_id': group_id},
-        UpdateExpression='SET member_ids = :m, roles = :r',
+        UpdateExpression='SET member_ids = :m, #r = :r',
+        ExpressionAttributeNames={'#r': 'roles'},
         ExpressionAttributeValues={':m': member_ids, ':r': roles}
     )
     return _response(200, {'group_id': group_id, 'removed': player_id})
@@ -243,7 +245,8 @@ def set_role(group_id, player_id, event):
     roles[player_id] = role
     groups_table.update_item(
         Key={'group_id': group_id},
-        UpdateExpression='SET roles = :r',
+        UpdateExpression='SET #r = :r',
+        ExpressionAttributeNames={'#r': 'roles'},
         ExpressionAttributeValues={':r': roles}
     )
     return _response(200, {'group_id': group_id, 'player_id': player_id, 'role': role})

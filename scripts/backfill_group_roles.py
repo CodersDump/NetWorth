@@ -102,7 +102,8 @@ def main():
     for group_id, group_name, owner_id, _ in to_write:
         groups_table.update_item(
             Key={'group_id': group_id},
-            UpdateExpression='SET roles = :r',
+            UpdateExpression='SET #r = :r',
+            ExpressionAttributeNames={'#r': 'roles'},
             ExpressionAttributeValues={':r': {owner_id: 'owner'}}
         )
         print(f"  Wrote: {group_name} -> owner {pid_to_name.get(owner_id, owner_id)}")
