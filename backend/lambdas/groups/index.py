@@ -64,6 +64,8 @@ def handler(event, context):
             return add_player_enforced(path_params['group_id'], event)
         if event.get('resource') == '/group-create' and method == 'POST':
             return create_group_enforced(event)
+        if event.get('resource') == '/visible-players' and method == 'GET':
+            return visible_players_for_caller(event)
 
         proxy = path_params.get('proxy', '')
         parts = [p for p in proxy.split('/') if p] if proxy else []
@@ -156,6 +158,37 @@ def create_group_enforced(event):
     patched_event = dict(event)
     patched_event['body'] = json.dumps(body)
     return create_group(patched_event)
+
+
+def visible_players_for_caller(event):
+    """For populating the Profile tab's player picker: SuperAdmin gets
+    everyone; a regular logged-in member gets the union of every player
+    across every group they belong to (their own profile's visibility
+    scope, made browsable rather than needing to guess a player_id)."""
+    claims = _caller_claims(event)
+    if not claims:
+        return _response(403, {'error': 'log in to see visible players'})
+
+    all_players = players_table.scan().get('Items', [])
+    if _is_super_admin(claims):
+        visible = all_players
+    else:
+        caller_player_id = claims.get('custom:player_id')
+        if not caller_player_id:
+            visible = []
+        else:
+            groups = groups_table.scan().get('Items', [])
+            visible_ids = {caller_player_id}
+            for g in groups:
+                members = g.get('member_ids', [])
+                if caller_player_id in members:
+                    visible_ids.update(members)
+            visible = [p for p in all_players if p['player_id'] in visible_ids]
+
+    return _response(200, {'players': [
+        {'player_id': p['player_id'], 'name': p['name'], 'nickname': p.get('nickname'), 'rating': p.get('rating', 1000)}
+        for p in visible
+    ]})
 
 
 def create_group(event):

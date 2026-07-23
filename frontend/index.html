@@ -850,6 +850,12 @@
     </div>
 
     <div class="tab-panel" id="tab-profile">
+      <div class="card" id="profile-guest-notice" style="display:none;">
+        <h2>Player profile</h2>
+        <p class="card-sub">Log in to view player profiles - you'll be able to see anyone who shares a group with you.</p>
+        <button type="button" onclick="openAuthModal()">Log in</button>
+      </div>
+      <div id="profile-content-wrapper">
       <div class="card">
         <h2>Player profile</h2>
         <p class="card-sub">A single player's rating history, partnerships, and mix, all in one place.</p>
@@ -954,6 +960,7 @@
         <p class="card-sub">Records and badges this player currently holds.</p>
         <p id="profile-streak-line" style="font-size:14px; margin:0 0 12px;"></p>
         <div id="profile-achievements-result" class="achievement-grid"></div>
+      </div>
       </div>
     </div>
 
@@ -1179,22 +1186,16 @@
       const data = await res.json();
       allPlayers = data.players || [];
       const labeled = allPlayers.map(p => ({ ...p, label: `${p.name} (${p.rating})` }));
-      // Profile is player-identity-centric, so it shows nickname there;
-      // match/tournament creation and admin lists always use the real
-      // name only, so teammates and new players aren't confused about
-      // who's who.
-      const labeledWithNickname = allPlayers.map(p => ({
-        ...p, label: `${p.nickname ? p.nickname + ' (' + p.name + ')' : p.name} (${p.rating})`
-      }));
+      // Profile-related selects are populated separately by
+      // loadVisiblePlayers(), which is group-scoped server-side.
       renderAddPlayersChecklist();
       populateSelect(document.getElementById('delete_player_id'), labeled, 'player_id', 'label', null);
       populateSelect(document.getElementById('edit_player_select'), labeled, 'player_id', 'label', null);
       populateSelect(document.getElementById('log_player_filter'), labeled, 'player_id', 'label', 'All players');
-      populateSelect(document.getElementById('profile_player_select'), labeledWithNickname, 'player_id', 'label', null);
-      populateSelect(document.getElementById('profile_h2h_opponent_select'), labeledWithNickname, 'player_id', 'label', null);
-      populateSelect(document.getElementById('profile_compare2_select'), labeledWithNickname, 'player_id', 'label', 'None');
-      populateSelect(document.getElementById('profile_compare3_select'), labeledWithNickname, 'player_id', 'label', 'None');
-      populateSelect(document.getElementById('profile_compare4_select'), labeledWithNickname, 'player_id', 'label', 'None');
+      // Profile-related selects are populated by loadVisiblePlayers()
+      // instead (group-scoped server-side) - not here, which would show
+      // the full unrestricted roster regardless of who's actually
+      // allowed to view whom.
       populateSelect(document.getElementById('fmem_player'), labeled, 'player_id', 'label', '- pick from roster -');
       populateSelect(document.getElementById('fwalk_player'), labeled, 'player_id', 'label', '- not on roster -');
       populateTeamSelects();
@@ -2137,7 +2138,7 @@
     document.getElementById('rankings_scope_select').addEventListener('change', loadRankings);
 
     async function fetchRatingHistory(playerId) {
-      const res = await fetch(`${API_BASE_URL}/matches?player_id=${playerId}`);
+      const res = await fetch(`${API_BASE_URL}/profile-secure/matches?player_id=${playerId}`, { headers: getAuthHeaders() });
       const data = await res.json();
       const matches = (data.matches || []).slice().sort((a, b) => a.date.localeCompare(b.date));
       return matches
@@ -2147,9 +2148,28 @@
 
     let profileRatingChart = null;
 
+    async function loadVisiblePlayers() {
+      if (!isLoggedIn()) return;
+      try {
+        const res = await fetch(`${API_BASE_URL}/visible-players`, { headers: getAuthHeaders() });
+        const data = await res.json();
+        if (!res.ok) return;
+        const visible = data.players || [];
+        const labeledVisible = visible.map(p => ({
+          ...p, label: `${p.nickname ? p.nickname + ' (' + p.name + ')' : p.name} (${p.rating})`
+        }));
+        populateSelect(document.getElementById('profile_player_select'), labeledVisible, 'player_id', 'label', null);
+        populateSelect(document.getElementById('profile_h2h_opponent_select'), labeledVisible, 'player_id', 'label', null);
+        populateSelect(document.getElementById('profile_compare2_select'), labeledVisible, 'player_id', 'label', 'None');
+        populateSelect(document.getElementById('profile_compare3_select'), labeledVisible, 'player_id', 'label', 'None');
+        populateSelect(document.getElementById('profile_compare4_select'), labeledVisible, 'player_id', 'label', 'None');
+        if (visible.length) loadProfile();
+      } catch (err) { /* silent - profile tab just stays empty until this succeeds */ }
+    }
+
     async function loadProfileBundle(playerId) {
       try {
-        const res = await fetch(`${API_BASE_URL}/matches?profile_bundle_for=${playerId}`);
+        const res = await fetch(`${API_BASE_URL}/profile-secure/matches?profile_bundle_for=${playerId}`, { headers: getAuthHeaders() });
         const bundle = await res.json();
 
         // Recent form
@@ -2404,8 +2424,8 @@
       radarParams.set('top_n', partnershipsTopN);
 
       const [tableResult, radarResult] = await Promise.allSettled([
-        fetch(`${API_BASE_URL}/matches?${tableParams.toString()}`).then(r => r.json()),
-        fetch(`${API_BASE_URL}/matches?${radarParams.toString()}`).then(r => r.json())
+        fetch(`${API_BASE_URL}/profile-secure/matches?${tableParams.toString()}`, { headers: getAuthHeaders() }).then(r => r.json()),
+        fetch(`${API_BASE_URL}/profile-secure/matches?${radarParams.toString()}`, { headers: getAuthHeaders() }).then(r => r.json())
       ]);
 
       const el = document.getElementById('profile-partnerships-result');
@@ -2449,7 +2469,7 @@
         return;
       }
       try {
-        const res = await fetch(`${API_BASE_URL}/matches?head_to_head=${playerId}&opponent=${opponentId}`);
+        const res = await fetch(`${API_BASE_URL}/profile-secure/matches?head_to_head=${playerId}&opponent=${opponentId}`, { headers: getAuthHeaders() });
         const data = await res.json();
         if (!data.matches) {
           h2hEl.innerHTML = '<p style="font-size:13px;color:var(--text-secondary);">These two have never played against each other.</p>';
@@ -3392,7 +3412,7 @@
     document.getElementById('load-public-walkins-btn').addEventListener('click', loadPublicWalkins);
     ['fmem_month', 'fmem_year', 'fmem_slot'].forEach(id =>
       document.getElementById(id).addEventListener('change', loadFinanceMembers));
-    if (financeKey) {
+    if (financeKey && isLoggedIn()) {
       document.getElementById('finance_view_key').value = financeKey;
       financeUnlock();
     }
@@ -3442,6 +3462,15 @@
       document.getElementById('record-match-card').style.display = showForms ? 'block' : 'none';
       document.getElementById('create-tournament-guest-notice').style.display = showForms ? 'none' : 'block';
       document.getElementById('create-tournament-card').style.display = showForms ? 'block' : 'none';
+      // Guests see only the public UPI QR card, not even the option to
+      // try entering a finance view key.
+      document.getElementById('finance-lock-card').style.display = showForms ? 'block' : 'none';
+      if (!showForms) document.getElementById('finance-content').style.display = 'none';
+      // Profile: guests see a login prompt only; logged-in users see the
+      // real tab (populated from /visible-players, group-scoped server-side).
+      document.getElementById('profile-guest-notice').style.display = showForms ? 'none' : 'block';
+      document.getElementById('profile-content-wrapper').style.display = showForms ? 'block' : 'none';
+      if (showForms) loadVisiblePlayers();
       if (authSession) {
         const linkedPlayer = allPlayers.find(p => p.player_id === myPlayerId());
         const identity = linkedPlayer

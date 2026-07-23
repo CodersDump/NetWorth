@@ -98,17 +98,61 @@ def _is_valid_completed_game(score_a, score_b, target):
 
 def _caller_claims(event):
     """Claims API Gateway's Cognito Authorizer attaches to the request.
-    Only present on the new isolated /record-match route - Epic 7's guest
-    restriction: recording a match now requires being logged in (any
-    authenticated account, no special role - once you're a known member,
-    you can record matches)."""
+    Only present on the isolated /record-match and /profile-secure routes."""
     return (event.get('requestContext') or {}).get('authorizer', {}).get('claims') or {}
+
+
+def _is_super_admin(claims):
+    groups = (claims.get('cognito:groups') or '').split(',')
+    return 'SuperAdmin' in groups
+
+
+def _can_view_profile(claims, target_player_id):
+    """SuperAdmin sees everyone. Anyone can view their own profile. A
+    logged-in member can view another player's profile only if they share
+    at least one group - matches the spec: 'if I'm part of 3 groups, I
+    can see all members across those 3 groups'."""
+    if _is_super_admin(claims):
+        return True
+    caller_player_id = claims.get('custom:player_id')
+    if not caller_player_id:
+        return False
+    if caller_player_id == target_player_id:
+        return True
+    groups = groups_table.scan().get('Items', [])
+    for g in groups:
+        members = g.get('member_ids', [])
+        if caller_player_id in members and target_player_id in members:
+            return True
+    return False
 
 
 def record_match_enforced(event):
     if not _caller_claims(event):
         return _response(403, {'error': 'log in to record a match'})
     return record_match(event)
+
+
+def profile_view_enforced(event):
+    """Entry point for the isolated /profile-secure/{proxy+} catch-all.
+    Determines which player's profile is being requested from whichever
+    query param is present, checks _can_view_profile, then delegates to
+    the existing list_matches() unchanged - same computation logic either
+    way, just gated entry."""
+    claims = _caller_claims(event)
+    if not claims:
+        return _response(403, {'error': 'log in to view profiles'})
+
+    params = event.get('queryStringParameters') or {}
+    target = (params.get('profile_bundle_for') or params.get('player_id')
+              or params.get('partnerships_for') or params.get('radar_for')
+              or params.get('head_to_head'))
+    if not target:
+        return _response(400, {'error': 'no player specified'})
+    if not _can_view_profile(claims, target):
+        return _response(403, {'error': 'you can only view profiles of players who share a group with you'})
+
+    return list_matches(event)
 
 
 def handler(event, context):
@@ -122,6 +166,16 @@ def handler(event, context):
         # path can't sit alongside {proxy+}/ANY at the same parent).
         if event.get('resource') == '/record-match' and method == 'POST':
             return record_match_enforced(event)
+
+        # Epic 7 extension: profile viewing is now genuinely restricted -
+        # guests can't view any profile at all; logged-in members can only
+        # view profiles of players sharing at least one group with them
+        # (or their own); SuperAdmin sees everyone. Reached via the
+        # isolated /profile-secure/{proxy+} catch-all (same reasoning as
+        # finance-secure - one route covers every profile-related query
+        # param without needing a separate resource tree per param).
+        if event.get('resource', '').startswith('/profile-secure'):
+            return profile_view_enforced(event)
 
         if method == 'POST':
             # The original anonymous path - genuinely closed now, not left
