@@ -249,8 +249,68 @@
       </svg>
       <h1>NetWorth</h1>
     </div>
-    <button class="theme-toggle" id="theme-toggle-btn" type="button">Dark mode</button>
+    <div style="display:flex; align-items:center; gap:10px;">
+      <span id="auth-status" style="font-size:13px; opacity:0.85;"></span>
+      <button class="secondary" id="auth-login-btn" type="button">Log in</button>
+      <button class="secondary" id="auth-logout-btn" type="button" style="display:none;">Log out</button>
+      <button class="theme-toggle" id="theme-toggle-btn" type="button">Dark mode</button>
+    </div>
   </header>
+
+  <!-- Login/signup modal - hidden until "Log in" is clicked -->
+  <div id="auth-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:1000; align-items:flex-start; justify-content:center; padding-top:60px;">
+    <div class="card" style="max-width:400px; width:90%; max-height:85vh; overflow-y:auto;">
+      <div style="display:flex; justify-content:space-between; align-items:center;">
+        <h2 id="auth-modal-title">Log in</h2>
+        <button class="secondary" onclick="closeAuthModal()" type="button">\u2715</button>
+      </div>
+
+      <div id="auth-login-view">
+        <label>Email <input type="email" id="auth-login-email"></label>
+        <label>Password <input type="password" id="auth-login-password"></label>
+        <button type="button" id="auth-login-submit-btn">Log in</button>
+        <p style="font-size:13px; margin-top:10px;">
+          New here? <a href="#" onclick="showAuthView('signup'); return false;">Sign up</a> ·
+          <a href="#" onclick="showAuthView('forgot'); return false;">Forgot password?</a>
+        </p>
+        <div id="auth-login-status" style="font-size:13px; margin-top:6px;"></div>
+      </div>
+
+      <div id="auth-newpassword-view" style="display:none;">
+        <p class="card-sub">Your account needs a new password before you can log in (this happens once, the first time).</p>
+        <label>New password <input type="password" id="auth-newpassword-input"></label>
+        <button type="button" id="auth-newpassword-submit-btn">Set password &amp; log in</button>
+        <div id="auth-newpassword-status" style="font-size:13px; margin-top:6px;"></div>
+      </div>
+
+      <div id="auth-signup-view" style="display:none;">
+        <label>Email <input type="email" id="auth-signup-email"></label>
+        <label>Password <input type="password" id="auth-signup-password" placeholder="min 8 chars, 1 number"></label>
+        <button type="button" id="auth-signup-submit-btn">Sign up</button>
+        <p style="font-size:13px; margin-top:10px;"><a href="#" onclick="showAuthView('login'); return false;">Back to log in</a></p>
+        <div id="auth-signup-status" style="font-size:13px; margin-top:6px;"></div>
+      </div>
+
+      <div id="auth-confirm-view" style="display:none;">
+        <p class="card-sub">Check your email for a confirmation code.</p>
+        <label>Confirmation code <input type="text" id="auth-confirm-code"></label>
+        <button type="button" id="auth-confirm-submit-btn">Confirm</button>
+        <div id="auth-confirm-status" style="font-size:13px; margin-top:6px;"></div>
+      </div>
+
+      <div id="auth-forgot-view" style="display:none;">
+        <label>Email <input type="email" id="auth-forgot-email"></label>
+        <button type="button" id="auth-forgot-submit-btn">Send reset code</button>
+        <div id="auth-forgot-status" style="font-size:13px; margin-top:6px;"></div>
+        <div id="auth-forgot-confirm-block" style="display:none; margin-top:10px;">
+          <label>Reset code <input type="text" id="auth-forgot-code"></label>
+          <label>New password <input type="password" id="auth-forgot-newpassword"></label>
+          <button type="button" id="auth-forgot-confirm-btn">Set new password</button>
+        </div>
+        <p style="font-size:13px; margin-top:10px;"><a href="#" onclick="showAuthView('login'); return false;">Back to log in</a></p>
+      </div>
+    </div>
+  </div>
 
   <nav class="tab-strip" id="tab-strip">
     <button class="tab-btn active" data-tab="players">Players</button>
@@ -1047,9 +1107,14 @@
     </div>
   </div>
 
+  <script src="https://unpkg.com/amazon-cognito-identity-js@6/dist/amazon-cognito-identity.min.js"></script>
   <script>
     // Replace with your deployed API Gateway URL (see CloudFormation output: ApiUrl)
     const API_BASE_URL = 'https://REPLACE_ME.execute-api.REGION.amazonaws.com/prod';
+    // Auto-injected at deploy time from CloudFormation Outputs, same as
+    // API_BASE_URL above - no manual config needed after each deploy.
+    const COGNITO_USER_POOL_ID = 'REPLACE_ME_USER_POOL_ID';
+    const COGNITO_CLIENT_ID = 'REPLACE_ME_CLIENT_ID';
     // UPI payment card config: set your (ideally secondary) VPA to make the
     // 'Pay the club' card appear on the Finance tab. Leave as REPLACE_ME to
     // keep the card hidden.
@@ -1129,17 +1194,23 @@
     }
 
     let currentGroupMemberIds = new Set();
+    let currentGroupRoles = {};
 
     async function loadGroupMembers(groupId) {
       const membersEl = document.getElementById('group-members');
-      if (!groupId) { membersEl.innerHTML = ''; currentGroupMemberIds = new Set(); renderAddPlayersChecklist(); return; }
+      if (!groupId) { membersEl.innerHTML = ''; currentGroupMemberIds = new Set(); currentGroupRoles = {}; renderAddPlayersChecklist(); return; }
       const res = await fetch(`${API_BASE_URL}/groups/${groupId}`);
       const data = await res.json();
       if (!res.ok) { membersEl.textContent = data.error; return; }
 
       currentGroupMemberIds = new Set((data.members || []).map(m => m.player_id));
+      currentGroupRoles = data.roles || {};
       renderAddPlayersChecklist();
       applyGroupDefaultsToForm('group_default_', data.default_tournament_settings);
+
+      const iCanManage = canManageGroup({ roles: currentGroupRoles });
+      const deleteBtn = document.getElementById('delete-group-btn');
+      if (deleteBtn) deleteBtn.style.display = (!isLoggedIn() || iCanManage) ? 'block' : 'none';
 
       if (!data.members.length) {
         membersEl.innerHTML = '<p style="font-size:13px;color:#555;">No members yet.</p>';
@@ -1150,7 +1221,12 @@
         const roleTag = m.role && m.role !== 'member'
           ? `<span style="font-size:11px; opacity:0.75; margin-left:6px; border:1px solid var(--border); border-radius:4px; padding:1px 6px;">${m.role}</span>`
           : '';
-        return `<div class="member-row"><span>${m.name} (${m.rating})${roleTag}</span><button onclick="removePlayerFromGroup('${groupId}','${m.player_id}')">Remove</button></div>`;
+        // Guests keep seeing Remove (legacy code-only flow, unchanged); a
+        // logged-in user who can't manage this specific group doesn't see
+        // it at all, rather than clicking it and getting a confusing 403.
+        const removeBtn = (!isLoggedIn() || iCanManage)
+          ? `<button onclick="removePlayerFromGroup('${groupId}','${m.player_id}')">Remove</button>` : '';
+        return `<div class="member-row"><span>${m.name} (${m.rating})${roleTag}</span>${removeBtn}</div>`;
       }).join('');
     }
 
@@ -1184,9 +1260,16 @@
       const confirmText = prompt('Enter the confirmation code to remove this player from the group:');
       if (!confirmText) return;
 
-      const res = await fetch(`${API_BASE_URL}/groups/${groupId}/players/${playerId}`, {
+      // Logged-in users go through the new Cognito-enforced route (proves
+      // real ownership, not just knowledge of a shared code); guests keep
+      // using the original code-only route unchanged, for backward
+      // compatibility until everyone's been provisioned a login.
+      const url = isLoggedIn()
+        ? `${API_BASE_URL}/group-member-remove/${groupId}/${playerId}`
+        : `${API_BASE_URL}/groups/${groupId}/players/${playerId}`;
+      const res = await fetch(url, {
         method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
         body: JSON.stringify({ confirm: confirmText })
       });
       if (res.ok) {
@@ -1680,9 +1763,10 @@
 
       resultEl.textContent = 'Deleting...';
       try {
-        const res = await fetch(`${API_BASE_URL}/groups/${groupId}`, {
+        const url = isLoggedIn() ? `${API_BASE_URL}/group-delete/${groupId}` : `${API_BASE_URL}/groups/${groupId}`;
+        const res = await fetch(url, {
           method: 'DELETE',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
           body: JSON.stringify({ confirm: confirmText })
         });
         const data = await res.json();
@@ -3169,7 +3253,23 @@
       if (!e.target.classList || !e.target.classList.contains('fin-del')) return;
       const code = prompt('This permanently deletes the record. Enter the confirmation code:');
       if (!code) return;
-      const { ok, data } = await finPost(`${e.target.dataset.kind}/${e.target.dataset.id}`, 'DELETE', { confirm: code });
+      const kind = e.target.dataset.kind;               // e.g. 'expenses', 'memberships', 'walkins'
+      const recordType = kind.endsWith('s') ? kind.slice(0, -1) : kind;
+      const recordId = e.target.dataset.id;
+      let ok, data;
+      if (isSuperAdmin()) {
+        // New triple-gated route: SuperAdmin identity + view_key + confirm
+        // code, all required. Falls back to the old view_key-only route
+        // below if not logged in as SuperAdmin, unchanged for now.
+        const res = await fetch(`${API_BASE_URL}/finance-delete/${recordType}/${recordId}`, {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+          body: JSON.stringify({ view_key: financeKey, confirm: code })
+        });
+        ok = res.ok; data = await res.json();
+      } else {
+        ({ ok, data } = await finPost(`${kind}/${recordId}`, 'DELETE', { confirm: code }));
+      }
       if (!ok) { alert('Error: ' + data.error); return; }
       loadFinanceExpenses(); loadFinanceMembers(); loadFinanceWalkins(); loadFinanceSummary();
     });
@@ -3230,6 +3330,180 @@
       document.getElementById('finance_view_key').value = financeKey;
       financeUnlock();
     }
+
+    // ---------- auth (Cognito login/signup/session) ----------
+    let userPool = null;
+    if (COGNITO_USER_POOL_ID && !COGNITO_USER_POOL_ID.includes('REPLACE_ME')) {
+      userPool = new AmazonCognitoIdentity.CognitoUserPool({
+        UserPoolId: COGNITO_USER_POOL_ID, ClientId: COGNITO_CLIENT_ID
+      });
+    }
+
+    let authSession = null;   // { idToken (raw string), claims (decoded), _pendingUser (mid-challenge) }
+
+    function getAuthHeaders() {
+      return authSession ? { 'Authorization': `Bearer ${authSession.idToken}` } : {};
+    }
+    function isLoggedIn() { return !!authSession; }
+    function isSuperAdmin() {
+      if (!authSession) return false;
+      const groups = authSession.claims['cognito:groups'] || '';
+      return (Array.isArray(groups) ? groups : groups.split(',')).includes('SuperAdmin');
+    }
+    function myPlayerId() { return authSession ? authSession.claims['custom:player_id'] : null; }
+    function myRoleInGroup(group) {
+      if (isSuperAdmin()) return 'owner';  // SuperAdmin acts with owner-level power everywhere
+      const pid = myPlayerId();
+      if (!pid || !group || !group.roles) return null;
+      return group.roles[pid] || null;
+    }
+    function canManageGroup(group) {
+      const role = myRoleInGroup(group);
+      return role === 'owner' || role === 'admin';
+    }
+
+    function updateAuthUI() {
+      const statusEl = document.getElementById('auth-status');
+      const loginBtn = document.getElementById('auth-login-btn');
+      const logoutBtn = document.getElementById('auth-logout-btn');
+      if (authSession) {
+        statusEl.textContent = authSession.claims.email + (isSuperAdmin() ? ' (SuperAdmin)' : '');
+        loginBtn.style.display = 'none';
+        logoutBtn.style.display = 'inline-block';
+      } else {
+        statusEl.textContent = 'Guest';
+        loginBtn.style.display = 'inline-block';
+        logoutBtn.style.display = 'none';
+      }
+      if (typeof loadGroupMembers === 'function') {
+        const sel = document.getElementById('group_select');
+        if (sel && sel.value) loadGroupMembers(sel.value);
+      }
+    }
+
+    function openAuthModal() { document.getElementById('auth-modal').style.display = 'flex'; showAuthView('login'); }
+    function closeAuthModal() { document.getElementById('auth-modal').style.display = 'none'; }
+    function showAuthView(view) {
+      ['login', 'newpassword', 'signup', 'confirm', 'forgot'].forEach(v => {
+        document.getElementById(`auth-${v}-view`).style.display = (v === view) ? 'block' : 'none';
+      });
+      document.getElementById('auth-modal-title').textContent =
+        { login: 'Log in', newpassword: 'Set new password', signup: 'Sign up', confirm: 'Confirm sign-up', forgot: 'Reset password' }[view];
+    }
+
+    function setAuthSession(session) {
+      const idToken = session.getIdToken();
+      authSession = { idToken: idToken.getJwtToken(), claims: idToken.payload };
+      sessionStorage.setItem('nw_auth_token', authSession.idToken);
+      updateAuthUI();
+      closeAuthModal();
+    }
+
+    function doLogin() {
+      const email = document.getElementById('auth-login-email').value.trim();
+      const password = document.getElementById('auth-login-password').value;
+      const statusEl = document.getElementById('auth-login-status');
+      if (!userPool) { statusEl.textContent = 'Login is not configured yet.'; return; }
+      const user = new AmazonCognitoIdentity.CognitoUser({ Username: email, Pool: userPool });
+      const authDetails = new AmazonCognitoIdentity.AuthenticationDetails({ Username: email, Password: password });
+      window._pendingAuthUser = user;
+      user.authenticateUser(authDetails, {
+        onSuccess: (session) => { window._pendingAuthUser = null; setAuthSession(session); },
+        onFailure: (err) => { statusEl.textContent = err.message; },
+        newPasswordRequired: () => { showAuthView('newpassword'); }
+      });
+    }
+
+    function doNewPassword() {
+      const user = window._pendingAuthUser;
+      const statusEl = document.getElementById('auth-newpassword-status');
+      if (!user) { statusEl.textContent = 'Session expired, log in again.'; showAuthView('login'); return; }
+      const newPassword = document.getElementById('auth-newpassword-input').value;
+      user.completeNewPasswordChallenge(newPassword, {}, {
+        onSuccess: (session) => { setAuthSession(session); },
+        onFailure: (err) => { statusEl.textContent = err.message; }
+      });
+    }
+
+    function doSignup() {
+      const email = document.getElementById('auth-signup-email').value.trim();
+      const password = document.getElementById('auth-signup-password').value;
+      const statusEl = document.getElementById('auth-signup-status');
+      if (!userPool) { statusEl.textContent = 'Sign up is not configured yet.'; return; }
+      const attrs = [new AmazonCognitoIdentity.CognitoUserAttribute({ Name: 'email', Value: email })];
+      userPool.signUp(email, password, attrs, null, (err) => {
+        if (err) { statusEl.textContent = err.message; return; }
+        document.getElementById('auth-confirm-code').dataset.email = email;
+        showAuthView('confirm');
+      });
+    }
+
+    function doConfirmSignup() {
+      const email = document.getElementById('auth-confirm-code').dataset.email;
+      const code = document.getElementById('auth-confirm-code').value.trim();
+      const statusEl = document.getElementById('auth-confirm-status');
+      const user = new AmazonCognitoIdentity.CognitoUser({ Username: email, Pool: userPool });
+      user.confirmRegistration(code, true, (err) => {
+        if (err) { statusEl.textContent = err.message; return; }
+        statusEl.textContent = 'Confirmed! You can log in now.';
+        setTimeout(() => showAuthView('login'), 1200);
+      });
+    }
+
+    function doForgotPassword() {
+      const email = document.getElementById('auth-forgot-email').value.trim();
+      const statusEl = document.getElementById('auth-forgot-status');
+      const user = new AmazonCognitoIdentity.CognitoUser({ Username: email, Pool: userPool });
+      window._pendingAuthUser = user;
+      user.forgotPassword({
+        onSuccess: () => { statusEl.textContent = 'Reset code sent.'; },
+        onFailure: (err) => { statusEl.textContent = err.message; },
+        inputVerificationCode: () => {
+          statusEl.textContent = 'Reset code sent - enter it below.';
+          document.getElementById('auth-forgot-confirm-block').style.display = 'block';
+        }
+      });
+    }
+
+    function doConfirmForgotPassword() {
+      const user = window._pendingAuthUser;
+      const statusEl = document.getElementById('auth-forgot-status');
+      if (!user) { statusEl.textContent = 'Session expired, start again.'; return; }
+      const code = document.getElementById('auth-forgot-code').value.trim();
+      const newPassword = document.getElementById('auth-forgot-newpassword').value;
+      user.confirmPassword(code, newPassword, {
+        onSuccess: () => { statusEl.textContent = 'Password reset - log in now.'; setTimeout(() => showAuthView('login'), 1200); },
+        onFailure: (err) => { statusEl.textContent = err.message; }
+      });
+    }
+
+    function doLogout() {
+      authSession = null;
+      sessionStorage.removeItem('nw_auth_token');
+      updateAuthUI();
+    }
+
+    function restoreSession() {
+      const token = sessionStorage.getItem('nw_auth_token');
+      if (!token) return;
+      try {
+        const payload = JSON.parse(atob(token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
+        if (payload.exp && payload.exp * 1000 < Date.now()) { sessionStorage.removeItem('nw_auth_token'); return; }
+        authSession = { idToken: token, claims: payload };
+      } catch (e) { sessionStorage.removeItem('nw_auth_token'); }
+    }
+
+    document.getElementById('auth-login-btn').addEventListener('click', openAuthModal);
+    document.getElementById('auth-logout-btn').addEventListener('click', doLogout);
+    document.getElementById('auth-login-submit-btn').addEventListener('click', doLogin);
+    document.getElementById('auth-newpassword-submit-btn').addEventListener('click', doNewPassword);
+    document.getElementById('auth-signup-submit-btn').addEventListener('click', doSignup);
+    document.getElementById('auth-confirm-submit-btn').addEventListener('click', doConfirmSignup);
+    document.getElementById('auth-forgot-submit-btn').addEventListener('click', doForgotPassword);
+    document.getElementById('auth-forgot-confirm-btn').addEventListener('click', doConfirmForgotPassword);
+
+    restoreSession();
+    updateAuthUI();
 
     // ---------- init ----------
 

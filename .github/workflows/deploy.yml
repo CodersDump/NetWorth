@@ -65,10 +65,22 @@ jobs:
             --query "Stacks[0].Outputs[?OutputKey=='ApiUrl'].OutputValue" \
             --output text)
           echo "api_url=$API_URL" >> "$GITHUB_OUTPUT"
+          USER_POOL_ID=$(aws cloudformation describe-stacks \
+            --stack-name networth-app \
+            --query "Stacks[0].Outputs[?OutputKey=='UserPoolId'].OutputValue" \
+            --output text)
+          echo "user_pool_id=$USER_POOL_ID" >> "$GITHUB_OUTPUT"
+          CLIENT_ID=$(aws cloudformation describe-stacks \
+            --stack-name networth-app \
+            --query "Stacks[0].Outputs[?OutputKey=='UserPoolClientId'].OutputValue" \
+            --output text)
+          echo "client_id=$CLIENT_ID" >> "$GITHUB_OUTPUT"
 
-      - name: Inject API URL into frontend
+      - name: Inject API URL and Cognito config into frontend
         run: |
           sed -i "s#https://REPLACE_ME.execute-api.REGION.amazonaws.com/prod#${{ steps.stack-outputs.outputs.api_url }}#g" frontend/index.html
+          sed -i "s#REPLACE_ME_USER_POOL_ID#${{ steps.stack-outputs.outputs.user_pool_id }}#g" frontend/index.html
+          sed -i "s#REPLACE_ME_CLIENT_ID#${{ steps.stack-outputs.outputs.client_id }}#g" frontend/index.html
 
       - name: Sync frontend to S3
         run: |
