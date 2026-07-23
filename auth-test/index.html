@@ -216,8 +216,15 @@
   }
 
   function showToken(session) {
-    const idToken = session.getIdToken().payload;
-    document.getElementById('tokenOutput').textContent = JSON.stringify(idToken, null, 2);
+    const idToken = session.getIdToken();
+    const rawJwt = idToken.getJwtToken();
+    const claims = idToken.payload;
+    document.getElementById('tokenOutput').innerHTML =
+      '<strong>Raw ID token (paste this into curl):</strong><br>' +
+      `<textarea readonly style="width:100%; height:70px; font-size:10px; margin:6px 0;">${rawJwt}</textarea>` +
+      '<button class="secondary" onclick="navigator.clipboard.writeText(\'' + rawJwt + '\')">Copy raw token</button>' +
+      '<br><br><strong>Decoded claims (for reading, not for curl):</strong><br>' +
+      `<pre>${JSON.stringify(claims, null, 2)}</pre>`;
   }
 
   // restore saved config on load
