@@ -39,6 +39,8 @@ def handler(event, context):
 
         if method == 'GET' and not player_id and params.get('login_identifier'):
             return lookup_email_for_login(params['login_identifier'])
+        if event.get('resource') == '/rename-self' and method == 'PUT':
+            return rename_self(event)
         if method == 'GET' and not player_id:
             return list_players()
         elif method == 'PUT' and player_id:
@@ -95,6 +97,57 @@ def list_players():
         for i in items
     ]
     return _response(200, {'players': players})
+
+
+def _caller_claims(event):
+    return (event.get('requestContext') or {}).get('authorizer', {}).get('claims') or {}
+
+
+def _can_self_rename(claims):
+    """Placeholder gate - the achievement/level system this is meant to
+    require doesn't exist yet, so this always returns True for now. This
+    function is the ONE place to wire in the real condition later (e.g.
+    "has the Court Regular Tier 2 achievement" or "level >= N") - nothing
+    else about this endpoint needs to change when that's ready.
+
+    Deliberately NOT exposed in the frontend UI yet either, precisely
+    because there's no achievement/level system to actually gate it
+    against - the endpoint exists and is tested, but nothing links to it
+    until that's built.
+    """
+    return True
+
+
+def rename_self(event):
+    """Self-service nickname change for the CALLER'S OWN linked player -
+    no CONFIRMATION_CODE needed (that's for admin actions on arbitrary
+    players), just being logged in, linked to a player, and passing the
+    gate above."""
+    claims = _caller_claims(event)
+    if not claims:
+        return _response(403, {'error': 'log in to rename yourself'})
+    player_id = claims.get('custom:player_id')
+    if not player_id:
+        return _response(403, {'error': 'your account is not linked to a player yet'})
+    if not _can_self_rename(claims):
+        return _response(403, {'error': 'renaming is not unlocked for your account yet'})
+
+    body = json.loads(event.get('body') or '{}')
+    new_nickname = (body.get('nickname') or '').strip()
+    if not new_nickname:
+        return _response(400, {'error': 'nickname is required'})
+    new_nickname = sanitize_nickname(new_nickname)
+
+    other_players = table.scan().get('Items', [])
+    if any(p['player_id'] != player_id and p.get('nickname', '').strip().lower() == new_nickname for p in other_players):
+        return _response(400, {'error': f'nickname "{new_nickname}" is already taken - nicknames must be unique'})
+
+    table.update_item(
+        Key={'player_id': player_id},
+        UpdateExpression='SET nickname = :nk',
+        ExpressionAttributeValues={':nk': new_nickname}
+    )
+    return _response(200, {'player_id': player_id, 'nickname': new_nickname})
 
 
 def update_player(player_id, event):

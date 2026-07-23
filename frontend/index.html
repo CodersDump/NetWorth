@@ -321,6 +321,22 @@
     </div>
   </div>
 
+  <!-- Shown automatically on first login for an account with no linked
+       player yet - covers self-signup and any other unlinked case the
+       same way, rather than being tied specifically to the signup form. -->
+  <div id="complete-profile-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:1000; align-items:flex-start; justify-content:center; padding-top:60px;">
+    <div class="card" style="max-width:400px; width:90%;">
+      <h2>Set up your player profile</h2>
+      <p class="card-sub">One more step - this links your login to a player record so your matches and stats are yours.</p>
+      <label>Your name <input type="text" id="complete-profile-name" required></label>
+      <label>Nickname <span style="opacity:0.6; font-weight:normal;">(optional - auto-generated from your name if left blank; lowercase letters, numbers, underscore only)</span>
+        <input type="text" id="complete-profile-nickname">
+      </label>
+      <button type="button" id="complete-profile-submit-btn">Create my profile</button>
+      <div id="complete-profile-status" style="font-size:13px; margin-top:6px;"></div>
+    </div>
+  </div>
+
   <nav class="tab-strip" id="tab-strip">
     <button class="tab-btn active" data-tab="players">Players</button>
     <button class="tab-btn" data-tab="groups">Groups</button>
@@ -3600,12 +3616,73 @@
         { login: 'Log in', newpassword: 'Set new password', signup: 'Sign up', confirm: 'Confirm sign-up', forgot: 'Reset password' }[view];
     }
 
-    function setAuthSession(session) {
+    function setAuthSession(session, user) {
       const idToken = session.getIdToken();
-      authSession = { idToken: idToken.getJwtToken(), claims: idToken.payload };
+      authSession = { idToken: idToken.getJwtToken(), claims: idToken.payload, cognitoUser: user };
       sessionStorage.setItem('nw_auth_token', authSession.idToken);
       updateAuthUI();
       closeAuthModal();
+      // First login on an account with no linked player yet - prompt to
+      // create one, right here rather than tying it to signup
+      // specifically (covers self-signup and any other unlinked-account
+      // case identically).
+      if (!authSession.claims['custom:player_id']) {
+        openCompleteProfileModal();
+      }
+    }
+
+    function openCompleteProfileModal() {
+      document.getElementById('complete-profile-modal').style.display = 'flex';
+    }
+    function closeCompleteProfileModal() {
+      document.getElementById('complete-profile-modal').style.display = 'none';
+    }
+
+    async function submitCompleteProfile() {
+      const name = document.getElementById('complete-profile-name').value.trim();
+      const nickname = document.getElementById('complete-profile-nickname').value.trim();
+      const statusEl = document.getElementById('complete-profile-status');
+      if (!name) { statusEl.textContent = 'Name is required.'; return; }
+      statusEl.textContent = 'Creating your profile...';
+
+      try {
+        const body = { name };
+        if (nickname) body.nickname = nickname;
+        const res = await fetch(`${API_BASE_URL}/register-and-join`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+          body: JSON.stringify(body)
+        });
+        const data = await res.json();
+        if (!res.ok) { statusEl.textContent = `Error: ${data.error}`; return; }
+
+        // Link the new player to this Cognito account. This is a
+        // self-service attribute update (the account is already
+        // authenticated), not an admin action - no confirmation code or
+        // AdminUpdateUserAttributes needed.
+        const cognitoUser = authSession.cognitoUser;
+        if (!cognitoUser) { statusEl.textContent = 'Profile created, but linking failed - please log out and back in.'; return; }
+        cognitoUser.updateAttributes(
+          [new AmazonCognitoIdentity.CognitoUserAttribute({ Name: 'custom:player_id', Value: data.player_id })],
+          (err) => {
+            if (err) { statusEl.textContent = `Profile created, but linking failed: ${err.message}`; return; }
+            // Refresh the session so the new custom:player_id claim shows
+            // up immediately, without asking for the password again.
+            cognitoUser.getSession((sessionErr, session) => {
+              if (!sessionErr && session) {
+                cognitoUser.refreshSession(session.getRefreshToken(), (refreshErr, newSession) => {
+                  if (!refreshErr && newSession) { setAuthSession(newSession, cognitoUser); }
+                });
+              }
+              closeCompleteProfileModal();
+              loadPlayers();
+              loadGroups();
+            });
+          }
+        );
+      } catch (err) {
+        statusEl.textContent = `Request failed: ${err.message}`;
+      }
     }
 
     async function doLogin() {
@@ -3633,7 +3710,7 @@
       const authDetails = new AmazonCognitoIdentity.AuthenticationDetails({ Username: email, Password: password });
       window._pendingAuthUser = user;
       user.authenticateUser(authDetails, {
-        onSuccess: (session) => { window._pendingAuthUser = null; setAuthSession(session); },
+        onSuccess: (session) => { window._pendingAuthUser = null; setAuthSession(session, user); },
         onFailure: (err) => { statusEl.textContent = err.message; },
         newPasswordRequired: () => { showAuthView('newpassword'); }
       });
@@ -3645,7 +3722,7 @@
       if (!user) { statusEl.textContent = 'Session expired, log in again.'; showAuthView('login'); return; }
       const newPassword = document.getElementById('auth-newpassword-input').value;
       user.completeNewPasswordChallenge(newPassword, {}, {
-        onSuccess: (session) => { setAuthSession(session); },
+        onSuccess: (session) => { setAuthSession(session, user); },
         onFailure: (err) => { statusEl.textContent = err.message; }
       });
     }
@@ -3726,6 +3803,7 @@
     document.getElementById('auth-confirm-submit-btn').addEventListener('click', doConfirmSignup);
     document.getElementById('auth-forgot-submit-btn').addEventListener('click', doForgotPassword);
     document.getElementById('auth-forgot-confirm-btn').addEventListener('click', doConfirmForgotPassword);
+    document.getElementById('complete-profile-submit-btn').addEventListener('click', submitCompleteProfile);
 
     restoreSession();
     updateAuthUI();
