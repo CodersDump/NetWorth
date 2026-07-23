@@ -201,8 +201,8 @@ def get_group(group_id):
     for pid in member_ids:
         p = players_table.get_item(Key={'player_id': pid}).get('Item')
         if p:
-            members.append({'player_id': p['player_id'], 'name': p['name'], 'rating': p.get('rating', 1000),
-                             'role': roles.get(pid, 'member')})
+            members.append({'player_id': p['player_id'], 'name': p['name'], 'nickname': p.get('nickname'),
+                             'rating': p.get('rating', 1000), 'role': roles.get(pid, 'member')})
     return _response(200, {
         'group_id': item['group_id'], 'group_name': item['group_name'], 'members': members,
         'roles': roles,

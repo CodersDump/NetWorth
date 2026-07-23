@@ -1246,7 +1246,8 @@
         // it at all, rather than clicking it and getting a confusing 403.
         const removeBtn = (!isLoggedIn() || iCanManage)
           ? `<button onclick="removePlayerFromGroup('${groupId}','${m.player_id}')">Remove</button>` : '';
-        return `<div class="member-row"><span>${m.name} (${m.rating})${roleTag}</span>${removeBtn}</div>`;
+        const displayLabel = m.nickname ? `${m.nickname} (${m.name})` : m.name;
+        return `<div class="member-row"><span>${displayLabel} (${m.rating})${roleTag}</span>${removeBtn}</div>`;
       }).join('');
     }
 
@@ -2113,7 +2114,8 @@
         const sorted = [...rankedPlayers].sort((a, b) => Number(b.rating) - Number(a.rating));
         let html = '<table><tr><th>#</th><th>Player</th><th>Rating</th></tr>';
         sorted.forEach((p, idx) => {
-          html += `<tr><td>${idx + 1}</td><td>${p.name}</td><td class="rating">${p.rating}</td></tr>`;
+          const label = p.nickname ? `${p.nickname} (${p.name})` : p.name;
+          html += `<tr><td>${idx + 1}</td><td>${label}</td><td class="rating">${p.rating}</td></tr>`;
         });
         html += '</table>';
         resultEl.innerHTML = html;
