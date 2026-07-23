@@ -1215,18 +1215,23 @@
 
     function formatPlayerLabel(name, nickname) {
       if (!nickname) return name;
-      return showNicknameFirst ? `${nickname} (${name})` : `${name} (${nickname})`;
+      return showNicknameFirst ? nickname : `${nickname} (${name})`;
     }
 
     function toggleDisplayMode() {
       showNicknameFirst = !showNicknameFirst;
       localStorage.setItem('nw_display_mode', showNicknameFirst ? 'nickname' : 'name');
-      document.getElementById('display-mode-toggle-btn').textContent = `Show: ${showNicknameFirst ? 'Nickname' : 'Name'}`;
-      // Re-render whatever's already loaded - no new fetches needed.
+      document.getElementById('display-mode-toggle-btn').textContent = showNicknameFirst ? 'Show: Nickname only' : 'Show: Nickname + Name';
+      // Re-render everything toggle-aware, unconditionally - not just
+      // "if a group happens to be selected right now" or "if you're on
+      // that tab" - loadGroupMembers/loadVisiblePlayers already no-op
+      // safely with nothing selected / not logged in, so calling them
+      // regardless is what actually makes the toggle reach every view
+      // consistently instead of only the one you're currently looking at.
       if (typeof loadRankings === 'function') loadRankings();
       const groupSel = document.getElementById('group_select');
-      if (groupSel && groupSel.value && typeof loadGroupMembers === 'function') loadGroupMembers(groupSel.value);
-      if (isLoggedIn() && typeof loadVisiblePlayers === 'function') loadVisiblePlayers();
+      if (groupSel && typeof loadGroupMembers === 'function') loadGroupMembers(groupSel.value);
+      if (typeof loadVisiblePlayers === 'function') loadVisiblePlayers();
       if (typeof updateAuthUI === 'function') updateAuthUI();
     }
 
@@ -2270,20 +2275,34 @@
         const labeledVisible = visible.map(p => ({
           ...p, label: `${formatPlayerLabel(p.name, p.nickname)} (${p.rating})`
         }));
+        // Capture whatever's currently selected BEFORE repopulating (e.g.
+        // from a display-mode toggle re-render) so re-populating the
+        // options doesn't silently yank the view back to your own card
+        // if you were deliberately looking at someone else's.
+        const previousSelection = document.getElementById('profile_player_select').value;
         populateSelect(document.getElementById('profile_player_select'), labeledVisible, 'player_id', 'label', null);
         populateSelect(document.getElementById('profile_h2h_opponent_select'), labeledVisible, 'player_id', 'label', null);
         populateSelect(document.getElementById('profile_compare2_select'), labeledVisible, 'player_id', 'label', 'None');
         populateSelect(document.getElementById('profile_compare3_select'), labeledVisible, 'player_id', 'label', 'None');
         populateSelect(document.getElementById('profile_compare4_select'), labeledVisible, 'player_id', 'label', 'None');
-        // Player Card defaults to your own card, not just whatever's
-        // alphabetically first - you're always in the visible list
-        // (viewing your own card is always allowed), so this is safe
-        // whenever the account is linked to a player_id at all.
         const myId = myPlayerId();
-        if (myId && visible.some(p => p.player_id === myId)) {
+        const isFreshLoad = !previousSelection;
+        if (previousSelection && visible.some(p => p.player_id === previousSelection)) {
+          // Keep whoever was already selected (this is a re-render, e.g.
+          // from the display toggle, not the first load) - and since
+          // nothing about WHO is selected changed, there's no need to
+          // re-fetch their profile data either.
+          document.getElementById('profile_player_select').value = previousSelection;
+        } else if (myId && visible.some(p => p.player_id === myId)) {
+          // First load with no prior selection - default to your own card,
+          // not just whatever's alphabetically first.
           document.getElementById('profile_player_select').value = myId;
         }
-        if (visible.length) loadProfile();
+        // Only fetch profile data on a genuine first population - a
+        // toggle-triggered relabel of the SAME already-selected player
+        // must cost zero new API calls, matching the whole point of
+        // this toggle existing.
+        if (isFreshLoad && visible.length) loadProfile();
       } catch (err) { /* silent - profile tab just stays empty until this succeeds */ }
     }
 
@@ -4773,7 +4792,7 @@
       localStorage.setItem('networth_theme', theme);
     }
 
-    document.getElementById('display-mode-toggle-btn').textContent = `Show: ${showNicknameFirst ? 'Nickname' : 'Name'}`;
+    document.getElementById('display-mode-toggle-btn').textContent = showNicknameFirst ? 'Show: Nickname only' : 'Show: Nickname + Name';
     document.getElementById('display-mode-toggle-btn').addEventListener('click', toggleDisplayMode);
 
     document.getElementById('theme-toggle-btn').addEventListener('click', () => {
