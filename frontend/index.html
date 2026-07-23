@@ -1222,7 +1222,7 @@
       const res = await fetch(`${API_BASE_URL}/players`);
       const data = await res.json();
       allPlayers = data.players || [];
-      const labeled = allPlayers.map(p => ({ ...p, label: `${p.name} (${p.rating})` }));
+      const labeled = allPlayers.map(p => ({ ...p, label: `${p.name} (${p.nickname}) (${p.rating})` }));
       // Profile-related selects are populated separately by
       // loadVisiblePlayers(), which is group-scoped server-side.
       renderAddPlayersChecklist();
@@ -3744,7 +3744,7 @@
       const container = document.getElementById('manual-teams-container');
       const isDoubles = document.getElementById('tournament_match_type').value === 'doubles';
       const rowIndex = container.children.length;
-      const labeled = allPlayers.map(p => ({ ...p, label: `${p.name} (${p.rating})` }));
+      const labeled = allPlayers.map(p => ({ ...p, label: `${p.name} (${p.nickname}) (${p.rating})` }));
 
       const row = document.createElement('div');
       row.className = 'row';
@@ -4099,11 +4099,11 @@
 
       const memberOptions = team.members.map(pid => {
         const p = allPlayers.find(pl => pl.player_id === pid);
-        return { player_id: pid, label: p ? p.name : pid };
+        return { player_id: pid, label: p ? `${p.name} (${p.nickname})` : pid };
       });
       populateSelect(document.getElementById('sub_old_player_select'), memberOptions, 'player_id', 'label', null);
 
-      const labeled = allPlayers.map(p => ({ ...p, label: `${p.name} (${p.rating})` }));
+      const labeled = allPlayers.map(p => ({ ...p, label: `${p.name} (${p.nickname}) (${p.rating})` }));
       populateSelect(document.getElementById('sub_new_player_select'), labeled, 'player_id', 'label', null);
     }
 

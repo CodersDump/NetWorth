@@ -106,12 +106,18 @@ def update_player(player_id, event):
     if not name and not skill_level and not nickname_provided:
         return _response(400, {'error': 'provide name, skill_level, and/or nickname to update'})
 
-    if name:
-        other_players = table.scan().get('Items', [])
-        if any(p['player_id'] != player_id and p.get('name', '').strip().lower() == name.lower() for p in other_players):
-            return _response(400, {'error': f'a player named "{name}" already exists - names must be unique'})
-        if name != existing.get('name'):
-            print(f"[AUDIT RENAME] {datetime.now(timezone.utc).isoformat()} - player_id={player_id} old_name=\"{existing.get('name')}\" new_name=\"{name}\"")
+    other_players = table.scan().get('Items', [])
+
+    # Real names are free-form and can duplicate - nickname is the unique
+    # player identifier now, so uniqueness enforcement moved there.
+    if name and name != existing.get('name'):
+        print(f"[AUDIT RENAME] {datetime.now(timezone.utc).isoformat()} - player_id={player_id} old_name=\"{existing.get('name')}\" new_name=\"{name}\"")
+
+    if nickname_provided:
+        if not nickname:
+            return _response(400, {'error': "nickname can't be cleared - it's now this player's unique ID"})
+        if any(p['player_id'] != player_id and p.get('nickname', '').strip().lower() == nickname.lower() for p in other_players):
+            return _response(400, {'error': f'nickname "{nickname}" is already taken - nicknames must be unique'})
 
     update_parts = []
     remove_parts = []
@@ -125,11 +131,8 @@ def update_player(player_id, event):
         update_parts.append('skill_level = :s')
         values[':s'] = skill_level
     if nickname_provided:
-        if nickname:
-            update_parts.append('nickname = :nk')
-            values[':nk'] = nickname
-        else:
-            remove_parts.append('nickname')  # empty string = clear the nickname
+        update_parts.append('nickname = :nk')
+        values[':nk'] = nickname
 
     expr = ''
     if update_parts:

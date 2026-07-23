@@ -30,6 +30,7 @@ caller identity check at all - that's deliberate, staged rollout.
 """
 import json
 import os
+import re
 import uuid
 import boto3
 
@@ -152,14 +153,24 @@ def register_and_join(event):
     body = json.loads(event.get('body') or '{}')
     name = (body.get('name') or '').strip()
     skill_level = body.get('skill_level', 'unrated')
+    nickname = (body.get('nickname') or '').strip()
     group_id = body.get('group_id')
 
     if not name:
         return _response(400, {'error': 'name is required'})
 
     existing_players = players_table.scan().get('Items', [])
-    if any(p.get('name', '').strip().lower() == name.lower() for p in existing_players):
-        return _response(400, {'error': f'a player named "{name}" already exists - names must be unique'})
+    existing_nicknames = {p.get('nickname', '').strip().lower() for p in existing_players if p.get('nickname')}
+
+    if not nickname:
+        base = re.sub(r'\s+', '', name)
+        nickname = base
+        n = 2
+        while nickname.lower() in existing_nicknames:
+            nickname = f"{base}{n}"
+            n += 1
+    elif nickname.lower() in existing_nicknames:
+        return _response(400, {'error': f'nickname "{nickname}" is already taken - nicknames must be unique'})
 
     group = None
     if group_id:
@@ -173,7 +184,7 @@ def register_and_join(event):
 
     player_id = str(uuid.uuid4())
     players_table.put_item(Item={
-        'player_id': player_id, 'name': name, 'skill_level': skill_level, 'rating': 1000
+        'player_id': player_id, 'name': name, 'nickname': nickname, 'skill_level': skill_level, 'rating': 1000
     })
 
     added_to = None

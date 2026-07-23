@@ -11,6 +11,7 @@ Env vars:
 """
 import json
 import os
+import re
 import uuid
 import boto3
 
@@ -23,23 +24,40 @@ def handler(event, context):
         body = json.loads(event.get('body') or '{}')
         name = (body.get('name') or '').strip()
         skill_level = body.get('skill_level', 'unrated')
+        nickname = (body.get('nickname') or '').strip()
 
         if not name:
             return _response(400, {'error': 'name is required'})
 
         existing_players = table.scan().get('Items', [])
-        if any(p.get('name', '').strip().lower() == name.lower() for p in existing_players):
-            return _response(400, {'error': f'a player named "{name}" already exists - names must be unique'})
+        existing_nicknames = {p.get('nickname', '').strip().lower() for p in existing_players if p.get('nickname')}
+
+        if not nickname:
+            # Auto-derive: name with all whitespace stripped, then
+            # de-duplicated with a numeric suffix if that collides -
+            # nickname is now the unique player identifier, so every
+            # player needs one, not just people who opt in to a cosmetic
+            # display name.
+            base = re.sub(r'\s+', '', name)
+            nickname = base
+            n = 2
+            while nickname.lower() in existing_nicknames:
+                nickname = f"{base}{n}"
+                n += 1
+        else:
+            if nickname.lower() in existing_nicknames:
+                return _response(400, {'error': f'nickname "{nickname}" is already taken - nicknames must be unique'})
 
         player_id = str(uuid.uuid4())
         table.put_item(Item={
             'player_id': player_id,
             'name': name,
+            'nickname': nickname,
             'skill_level': skill_level,
             'rating': 1000  # starting Elo rating
         })
 
-        return _response(200, {'player_id': player_id, 'name': name})
+        return _response(200, {'player_id': player_id, 'name': name, 'nickname': nickname})
     except Exception as e:
         return _response(500, {'error': str(e)})
 
