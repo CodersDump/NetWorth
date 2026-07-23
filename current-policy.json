@@ -139,6 +139,26 @@
         "events:ListTagsForResource"
       ],
       "Resource": "arn:aws:events:*:593579469110:rule/networth-*"
+    },
+    {
+      "Sid": "CognitoAccess",
+      "Effect": "Allow",
+      "Action": [
+        "cognito-idp:CreateUserPool",
+        "cognito-idp:DeleteUserPool",
+        "cognito-idp:DescribeUserPool",
+        "cognito-idp:UpdateUserPool",
+        "cognito-idp:TagResource",
+        "cognito-idp:CreateUserPoolClient",
+        "cognito-idp:DeleteUserPoolClient",
+        "cognito-idp:DescribeUserPoolClient",
+        "cognito-idp:UpdateUserPoolClient",
+        "cognito-idp:CreateGroup",
+        "cognito-idp:DeleteGroup",
+        "cognito-idp:GetGroup",
+        "cognito-idp:UpdateGroup"
+      ],
+      "Resource": "*"
     }
   ]
 }
