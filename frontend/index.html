@@ -1146,9 +1146,12 @@
         return;
       }
       const sortedMembers = [...data.members].sort((a, b) => a.name.localeCompare(b.name));
-      membersEl.innerHTML = '<strong>Members:</strong>' + sortedMembers.map(m =>
-        `<div class="member-row"><span>${m.name} (${m.rating})</span><button onclick="removePlayerFromGroup('${groupId}','${m.player_id}')">Remove</button></div>`
-      ).join('');
+      membersEl.innerHTML = '<strong>Members:</strong>' + sortedMembers.map(m => {
+        const roleTag = m.role && m.role !== 'member'
+          ? `<span style="font-size:11px; opacity:0.75; margin-left:6px; border:1px solid var(--border); border-radius:4px; padding:1px 6px;">${m.role}</span>`
+          : '';
+        return `<div class="member-row"><span>${m.name} (${m.rating})${roleTag}</span><button onclick="removePlayerFromGroup('${groupId}','${m.player_id}')">Remove</button></div>`;
+      }).join('');
     }
 
     function applyGroupDefaultsToForm(prefix, settings) {
