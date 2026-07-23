@@ -10,19 +10,23 @@ Routes (via API Gateway {proxy+} on /groups):
     GET    /groups/{group_id}                   -> get group + members + roles
     POST   /groups/{group_id}/players            -> add a player (body: player_id[s], optional role)
     DELETE /groups/{group_id}/players/{player_id} -> remove a player
-    PUT    /groups/{group_id}/roles/{player_id}   -> set a member's role (owner/admin/member)
+    PUT    /group-role/{group_id}/{player_id}     -> set a member's role (owner/admin/member) - see note below
 
 Env vars:
     GROUPS_TABLE  - DynamoDB table name for groups
     PLAYERS_TABLE - DynamoDB table name for players
 
-NOTE on roles (Epic 3 + Epic 4 of the auth backlog): `PUT .../roles/{player_id}`
-is now the FIRST enforced route in the app - it requires a valid Cognito
-token (via a dedicated, non-proxy API Gateway path so this doesn't affect
-any other /groups/* route) and checks the caller is either a SuperAdmin or
-already owner/admin of THIS group before allowing the change. Every other
-route in this file (create/list/get/add/remove) still has no caller
-identity check at all - that's deliberate, staged rollout, not an oversight.
+NOTE on roles (Epic 3 + Epic 4 of the auth backlog): the roles route lives
+at a deliberately separate top-level path, /group-role/{group_id}/{player_id}
+- NOT nested under /groups - because API Gateway forbids a named path
+parameter (like {group_id}) from being a sibling of the existing {proxy+}
+catch-all under the same parent resource. Putting it at the top level
+sidesteps that constraint entirely (same technique as the isolated
+/whoami route). It requires a valid Cognito token and checks the caller
+is either a SuperAdmin or already owner/admin of THIS group before
+allowing the change - the first genuinely enforced route in the app.
+Every other route in this file (create/list/get/add/remove) still has no
+caller identity check at all - that's deliberate, staged rollout.
 """
 import json
 import os
@@ -39,7 +43,17 @@ CONFIRMATION_CODE = os.environ['CONFIRMATION_CODE']  # supplied at deploy time v
 def handler(event, context):
     try:
         method = event.get('httpMethod')
-        proxy = (event.get('pathParameters') or {}).get('proxy', '')
+        path_params = event.get('pathParameters') or {}
+
+        # New isolated route (Epic 4 increment 2, corrected): PUT
+        # /group-role/{group_id}/{player_id}. This arrives with its own
+        # named pathParameters, not the combined 'proxy' string every
+        # other route below uses - checked first, separately, so it can
+        # never collide with the proxy-based dispatch underneath.
+        if 'group_id' in path_params and 'player_id' in path_params and method == 'PUT':
+            return set_role(path_params['group_id'], path_params['player_id'], event)
+
+        proxy = path_params.get('proxy', '')
         parts = [p for p in proxy.split('/') if p] if proxy else []
 
         if not parts:
@@ -60,9 +74,8 @@ def handler(event, context):
         elif len(parts) == 3 and parts[1] == 'players':
             if method == 'DELETE':
                 return remove_player(parts[0], parts[2], event)
-        elif len(parts) == 3 and parts[1] == 'roles':
-            if method == 'PUT':
-                return set_role(parts[0], parts[2], event)
+        # (roles route now lives at the dedicated /group-role/{group_id}/{player_id}
+        # path handled above, not here - see the top of this function)
 
         return _response(404, {'error': 'not found'})
     except Exception as e:
