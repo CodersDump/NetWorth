@@ -45,6 +45,20 @@ groups_table = dynamodb.Table(os.environ['GROUPS_TABLE'])
 history_table = dynamodb.Table(os.environ['PROGRESS_HISTORY_TABLE'])
 
 K_FACTOR = 32
+
+
+def display_name(player_item, fallback=None):
+    """Single source of truth for name formatting: 'Nickname (Real Name)'
+    when a nickname is set, plain name otherwise. Used everywhere a player
+    record needs to become display text, so nickname support can't drift
+    out of sync in one function while another still shows a bare name."""
+    if not player_item:
+        return fallback
+    name = player_item.get('name', fallback)
+    nickname = player_item.get('nickname')
+    return f"{nickname} ({name})" if nickname else name
+
+
 COMEBACK_BONUS_THRESHOLD = 5   # minimum deficit overcome to count as a genuine comeback
 COMEBACK_BONUS_PER_POINT = 0.3
 COMEBACK_BONUS_CAP = 8
@@ -542,7 +556,7 @@ def compute_partnerships(player_id, items):
     result = []
     for pid, stats in partner_stats.items():
         p = players_table.get_item(Key={'player_id': pid}).get('Item')
-        stats['partner_name'] = p['name'] if p else pid
+        stats['partner_name'] = display_name(p, pid)
         stats['win_rate'] = round(stats['wins'] / stats['matches'] * 100, 1) if stats['matches'] else 0
         result.append(stats)
 
@@ -617,7 +631,7 @@ def compute_attendance(items, group_id_filter=None):
                 current_run = 1
         result.append({
             'player_id': pid,
-            'name': p['name'] if p else pid,
+            'name': display_name(p, pid),
             'total_matches': s['total_matches'],
             'sessions_attended': len(s['session_dates']),
             'matches_last_30_days': s['last_30_days'],
@@ -656,10 +670,7 @@ def compute_hall_of_fame(items, group_id_filter=None):
     def resolve_name(pid, fallback=None):
         if pid not in name_cache:
             p = players_table.get_item(Key={'player_id': pid}).get('Item')
-            if p:
-                name_cache[pid] = f"{p['nickname']} ({p['name']})" if p.get('nickname') else p['name']
-            else:
-                name_cache[pid] = fallback or pid
+            name_cache[pid] = display_name(p, fallback or pid)
         return name_cache[pid]
 
     rolling_ratings = {}
@@ -1091,7 +1102,7 @@ def compute_top_opponents(player_id, matches, top_n=15):
         total = rec['wins'] + rec['losses']
         rows.append({
             'opponent_id': opp_id,
-            'opponent_name': p['name'] if p else opp_id,
+            'opponent_name': display_name(p, opp_id),
             'matches': total,
             'wins': rec['wins'],
             'losses': rec['losses'],
@@ -1220,10 +1231,10 @@ def compute_diversity(items, group_id_filter=None):
         top_partner = players_table.get_item(Key={'player_id': top_partner_id}).get('Item')
         result.append({
             'player_id': pid,
-            'name': p['name'] if p else pid,
+            'name': display_name(p, pid),
             'total_matches': total,
             'distinct_partners': len(counts),
-            'top_partner_name': top_partner['name'] if top_partner else top_partner_id,
+            'top_partner_name': display_name(top_partner, top_partner_id),
             'top_partner_pct': round(top_count / total * 100, 1) if total else 0
         })
 
@@ -1327,10 +1338,7 @@ def compute_progress_badges(items, group_id_filter=None):
     def resolve_name(pid):
         if pid not in name_cache:
             p = players_table.get_item(Key={'player_id': pid}).get('Item')
-            if p:
-                name_cache[pid] = f"{p['nickname']} ({p['name']})" if p.get('nickname') else p['name']
-            else:
-                name_cache[pid] = pid
+            name_cache[pid] = display_name(p, pid)
         return name_cache[pid]
 
     result = {}
@@ -1419,7 +1427,7 @@ def compute_partner_distribution(player_id, items, top_n=10):
         tcount = partner_tournament_counts.get(pid, 0)
         result.append({
             'partner_id': pid,
-            'name': p['name'] if p else pid,
+            'name': display_name(p, pid),
             'matches': count,
             'percentage': round(count / total * 100, 1) if total else 0,
             'tournament_matches': tcount,

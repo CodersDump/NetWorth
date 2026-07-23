@@ -42,6 +42,7 @@ jobs:
         run: |
           aws cloudformation deploy \
             --template-file packaged-template.yaml \
+            --s3-bucket "$ARTIFACTS_BUCKET" \
             --stack-name networth-app \
             --capabilities CAPABILITY_NAMED_IAM \
             --parameter-overrides \
