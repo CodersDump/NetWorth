@@ -5,15 +5,24 @@ Mirrors the inline code in infrastructure/template.yaml (GroupsFunction).
 Edit here, then paste into the template's ZipFile block before redeploying.
 
 Routes (via API Gateway {proxy+} on /groups):
-    POST   /groups                              -> create group
+    POST   /groups                              -> create group (optional creator_player_id -> owner)
     GET    /groups                              -> list groups
-    GET    /groups/{group_id}                   -> get group + members
-    POST   /groups/{group_id}/players            -> add a player (body: player_id)
+    GET    /groups/{group_id}                   -> get group + members + roles
+    POST   /groups/{group_id}/players            -> add a player (body: player_id[s], optional role)
     DELETE /groups/{group_id}/players/{player_id} -> remove a player
+    PUT    /groups/{group_id}/roles/{player_id}   -> set a member's role (owner/admin/member)
 
 Env vars:
     GROUPS_TABLE  - DynamoDB table name for groups
     PLAYERS_TABLE - DynamoDB table name for players
+
+NOTE on roles (Epic 3 of the auth backlog): this Lambda now stores and
+returns role data, but does NOT yet enforce it - nothing here checks who is
+calling, because no reliable caller identity exists until the API Gateway
+Cognito Authorizer is wired in Epic 4. Until then, anyone who can reach
+these routes can still set roles, same as every other route today. Do not
+treat `roles` as a security boundary yet - it's the data model the
+boundary will be built on top of.
 """
 import json
 import os
@@ -51,6 +60,9 @@ def handler(event, context):
         elif len(parts) == 3 and parts[1] == 'players':
             if method == 'DELETE':
                 return remove_player(parts[0], parts[2], event)
+        elif len(parts) == 3 and parts[1] == 'roles':
+            if method == 'PUT':
+                return set_role(parts[0], parts[2], event)
 
         return _response(404, {'error': 'not found'})
     except Exception as e:
@@ -62,9 +74,23 @@ def create_group(event):
     group_name = (body.get('group_name') or '').strip()
     if not group_name:
         return _response(400, {'error': 'group_name is required'})
+
     group_id = str(uuid.uuid4())
-    groups_table.put_item(Item={'group_id': group_id, 'group_name': group_name, 'member_ids': []})
-    return _response(200, {'group_id': group_id, 'group_name': group_name})
+    member_ids = []
+    roles = {}
+
+    creator_player_id = body.get('creator_player_id')
+    if creator_player_id:
+        creator = players_table.get_item(Key={'player_id': creator_player_id}).get('Item')
+        if not creator:
+            return _response(400, {'error': f'creator_player_id {creator_player_id} is not a known player'})
+        member_ids = [creator_player_id]
+        roles = {creator_player_id: 'owner'}
+
+    groups_table.put_item(Item={
+        'group_id': group_id, 'group_name': group_name, 'member_ids': member_ids, 'roles': roles
+    })
+    return _response(200, {'group_id': group_id, 'group_name': group_name, 'roles': roles})
 
 
 def list_groups():
@@ -81,13 +107,16 @@ def get_group(group_id):
     if not item:
         return _response(404, {'error': 'group not found'})
     member_ids = item.get('member_ids', [])
+    roles = item.get('roles', {})
     members = []
     for pid in member_ids:
         p = players_table.get_item(Key={'player_id': pid}).get('Item')
         if p:
-            members.append({'player_id': p['player_id'], 'name': p['name'], 'rating': p.get('rating', 1000)})
+            members.append({'player_id': p['player_id'], 'name': p['name'], 'rating': p.get('rating', 1000),
+                             'role': roles.get(pid, 'member')})
     return _response(200, {
         'group_id': item['group_id'], 'group_name': item['group_name'], 'members': members,
+        'roles': roles,
         'default_tournament_settings': item.get('default_tournament_settings')
     })
 
@@ -131,6 +160,7 @@ def add_player(group_id, event):
     body = json.loads(event.get('body') or '{}')
     single_id = body.get('player_id')
     bulk_ids = body.get('player_ids')
+    default_role = body.get('role', 'member')
 
     if bulk_ids:
         requested_ids = bulk_ids
@@ -144,6 +174,7 @@ def add_player(group_id, event):
         return _response(404, {'error': 'group not found'})
 
     member_ids = set(group.get('member_ids', []))
+    roles = dict(group.get('roles', {}))
     added = []
     not_found = []
     for pid in requested_ids:
@@ -152,12 +183,13 @@ def add_player(group_id, event):
             not_found.append(pid)
             continue
         member_ids.add(pid)
+        roles.setdefault(pid, default_role)  # don't clobber an existing role on re-add
         added.append(pid)
 
     groups_table.update_item(
         Key={'group_id': group_id},
-        UpdateExpression='SET member_ids = :m',
-        ExpressionAttributeValues={':m': list(member_ids)}
+        UpdateExpression='SET member_ids = :m, roles = :r',
+        ExpressionAttributeValues={':m': list(member_ids), ':r': roles}
     )
     result = {'group_id': group_id, 'added': added}
     if not_found:
@@ -174,12 +206,47 @@ def remove_player(group_id, player_id, event):
     if not group:
         return _response(404, {'error': 'group not found'})
     member_ids = [m for m in group.get('member_ids', []) if m != player_id]
+    roles = {pid: r for pid, r in group.get('roles', {}).items() if pid != player_id}
     groups_table.update_item(
         Key={'group_id': group_id},
-        UpdateExpression='SET member_ids = :m',
-        ExpressionAttributeValues={':m': member_ids}
+        UpdateExpression='SET member_ids = :m, roles = :r',
+        ExpressionAttributeValues={':m': member_ids, ':r': roles}
     )
     return _response(200, {'group_id': group_id, 'removed': player_id})
+
+
+VALID_ROLES = {'owner', 'admin', 'member'}
+
+
+def set_role(group_id, player_id, event):
+    """Set (or change) a member's role within this group.
+
+    NOT YET ENFORCED - see the module docstring. Right now this will
+    happily let anyone promote anyone to owner, because there is no
+    reliable caller identity to check against. Epic 4 adds the check
+    ("is the caller SuperAdmin, or already owner/admin of this group?")
+    in front of this function - this function itself doesn't change then,
+    only what's allowed to reach it does.
+    """
+    body = json.loads(event.get('body') or '{}')
+    role = body.get('role')
+    if role not in VALID_ROLES:
+        return _response(400, {'error': f"role must be one of {sorted(VALID_ROLES)}"})
+
+    group = groups_table.get_item(Key={'group_id': group_id}).get('Item')
+    if not group:
+        return _response(404, {'error': 'group not found'})
+    if player_id not in group.get('member_ids', []):
+        return _response(400, {'error': 'player is not a member of this group - add them first'})
+
+    roles = dict(group.get('roles', {}))
+    roles[player_id] = role
+    groups_table.update_item(
+        Key={'group_id': group_id},
+        UpdateExpression='SET roles = :r',
+        ExpressionAttributeValues={':r': roles}
+    )
+    return _response(200, {'group_id': group_id, 'player_id': player_id, 'role': role})
 
 
 def _response(status_code, body_dict):
