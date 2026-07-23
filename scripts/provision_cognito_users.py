@@ -170,6 +170,16 @@ def main():
             TemporaryPassword=temp_password,
             MessageAction='SUPPRESS',  # you're distributing the password yourself
         )
+        # Also store the email on the player's own record - this is what
+        # lets the login screen accept a name/nickname/player_id instead
+        # of requiring the email up front (see lookup_email_for_login in
+        # the players Lambda). Cognito's own copy stays the source of
+        # truth for auth; this is purely for that lookup.
+        players_table.update_item(
+            Key={'player_id': player_id},
+            UpdateExpression='SET email = :e',
+            ExpressionAttributeValues={':e': email}
+        )
         print(f"  Created: {name} <{email}>")
 
     print(f"\nDone. Shared temporary password for this batch: {temp_password}")

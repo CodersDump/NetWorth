@@ -27,7 +27,10 @@ def handler(event, context):
     try:
         method = event.get('httpMethod')
         player_id = (event.get('pathParameters') or {}).get('player_id')
+        params = event.get('queryStringParameters') or {}
 
+        if method == 'GET' and not player_id and params.get('login_identifier'):
+            return lookup_email_for_login(params['login_identifier'])
         if method == 'GET' and not player_id:
             return list_players()
         elif method == 'PUT' and player_id:
@@ -37,6 +40,38 @@ def handler(event, context):
         return _response(400, {'error': 'unsupported operation'})
     except Exception as e:
         return _response(500, {'error': str(e)})
+
+
+def lookup_email_for_login(identifier):
+    """Resolves a player_id, exact name, or exact nickname to the email
+    linked to their Cognito account, so the login form can accept a
+    familiar identifier instead of requiring an email address up front.
+
+    Deliberately public (this runs BEFORE login, by definition), and
+    deliberately narrow: exact case-insensitive match only (no partial/
+    fuzzy search), one generic "not found" for every failure case (unknown
+    identifier, known player with no linked account) so this can't be used
+    to enumerate who has an account versus who doesn't. This does still
+    mean anyone who knows a player's name or nickname can learn whether
+    they have a linked account and, if so, their email - the same
+    trade-off as any "log in with username" flow that resolves to an
+    email/Cognito identity behind the scenes.
+    """
+    identifier_norm = (identifier or '').strip().lower()
+    if not identifier_norm:
+        return _response(404, {'error': 'no account found for that identifier'})
+
+    items = table.scan().get('Items', [])
+    for p in items:
+        email = p.get('email')
+        if not email:
+            continue
+        if (p['player_id'] == identifier or
+                p.get('name', '').strip().lower() == identifier_norm or
+                p.get('nickname', '').strip().lower() == identifier_norm):
+            return _response(200, {'email': email})
+
+    return _response(404, {'error': 'no account found for that identifier'})
 
 
 def list_players():

@@ -274,7 +274,7 @@
       </div>
 
       <div id="auth-login-view">
-        <label>Email <input type="email" id="auth-login-email"></label>
+        <label>Email, player name, or nickname <input type="text" id="auth-login-email" placeholder="you@example.com or your name"></label>
         <label>Password <input type="password" id="auth-login-password"></label>
         <button type="button" id="auth-login-submit-btn">Log in</button>
         <p style="font-size:13px; margin-top:10px;">
@@ -1144,6 +1144,39 @@
     // API_BASE_URL above - no manual config needed after each deploy.
     const COGNITO_USER_POOL_ID = 'REPLACE_ME_USER_POOL_ID';
     const COGNITO_CLIENT_ID = 'REPLACE_ME_CLIENT_ID';
+
+    // Core auth state - deliberately placed first in the script, before
+    // anything else, so no top-level code anywhere below can ever run
+    // before these are initialized (that ordering bug is what caused
+    // "Cannot access authSession before initialization" in production).
+    let userPool = null;
+    if (COGNITO_USER_POOL_ID && !COGNITO_USER_POOL_ID.includes('REPLACE_ME')) {
+      userPool = new AmazonCognitoIdentity.CognitoUserPool({
+        UserPoolId: COGNITO_USER_POOL_ID, ClientId: COGNITO_CLIENT_ID
+      });
+    }
+    let authSession = null;   // { idToken (raw string), claims (decoded), _pendingUser (mid-challenge) }
+
+    function getAuthHeaders() {
+      return authSession ? { 'Authorization': `Bearer ${authSession.idToken}` } : {};
+    }
+    function isLoggedIn() { return !!authSession; }
+    function isSuperAdmin() {
+      if (!authSession) return false;
+      const groups = authSession.claims['cognito:groups'] || '';
+      return (Array.isArray(groups) ? groups : groups.split(',')).includes('SuperAdmin');
+    }
+    function myPlayerId() { return authSession ? authSession.claims['custom:player_id'] : null; }
+    function myRoleInGroup(group) {
+      if (isSuperAdmin()) return 'owner';  // SuperAdmin acts with owner-level power everywhere
+      const pid = myPlayerId();
+      if (!pid || !group || !group.roles) return null;
+      return group.roles[pid] || null;
+    }
+    function canManageGroup(group) {
+      const role = myRoleInGroup(group);
+      return role === 'owner' || role === 'admin';
+    }
     // UPI payment card config: set your (ideally secondary) VPA to make the
     // 'Pay the club' card appear on the Finance tab. Leave as REPLACE_ME to
     // keep the card hidden.
@@ -3418,36 +3451,15 @@
     }
 
     // ---------- auth (Cognito login/signup/session) ----------
-    let userPool = null;
-    if (COGNITO_USER_POOL_ID && !COGNITO_USER_POOL_ID.includes('REPLACE_ME')) {
-      userPool = new AmazonCognitoIdentity.CognitoUserPool({
-        UserPoolId: COGNITO_USER_POOL_ID, ClientId: COGNITO_CLIENT_ID
-      });
-    }
-
-    let authSession = null;   // { idToken (raw string), claims (decoded), _pendingUser (mid-challenge) }
-
-    function getAuthHeaders() {
-      return authSession ? { 'Authorization': `Bearer ${authSession.idToken}` } : {};
-    }
-    function isLoggedIn() { return !!authSession; }
-    function isSuperAdmin() {
-      if (!authSession) return false;
-      const groups = authSession.claims['cognito:groups'] || '';
-      return (Array.isArray(groups) ? groups : groups.split(',')).includes('SuperAdmin');
-    }
-    function myPlayerId() { return authSession ? authSession.claims['custom:player_id'] : null; }
-    function myRoleInGroup(group) {
-      if (isSuperAdmin()) return 'owner';  // SuperAdmin acts with owner-level power everywhere
-      const pid = myPlayerId();
-      if (!pid || !group || !group.roles) return null;
-      return group.roles[pid] || null;
-    }
-    function canManageGroup(group) {
-      const role = myRoleInGroup(group);
-      return role === 'owner' || role === 'admin';
-    }
-
+    // NOTE: userPool/authSession + the tiny reader functions below now
+    // live at the very top of the script (right after config) - moved
+    // there to fix a real bug: top-level code elsewhere (e.g. the finance
+    // auto-unlock check) ran BEFORE this section during the script's
+    // normal top-to-bottom execution, throwing "Cannot access authSession
+    // before initialization" (a temporal-dead-zone error on the `let`).
+    // Everything else auth-related (login/signup/logout flows, the modal)
+    // stays here, since those only ever run from event handlers, never
+    // as immediately-executing top-level code.
     function updateAuthUI() {
       const statusEl = document.getElementById('auth-status');
       const loginBtn = document.getElementById('auth-login-btn');
@@ -3508,11 +3520,27 @@
       closeAuthModal();
     }
 
-    function doLogin() {
-      const email = document.getElementById('auth-login-email').value.trim();
+    async function doLogin() {
+      const identifier = document.getElementById('auth-login-email').value.trim();
       const password = document.getElementById('auth-login-password').value;
       const statusEl = document.getElementById('auth-login-status');
       if (!userPool) { statusEl.textContent = 'Login is not configured yet.'; return; }
+
+      let email = identifier;
+      if (!identifier.includes('@')) {
+        statusEl.textContent = 'Looking up your account...';
+        try {
+          const res = await fetch(`${API_BASE_URL}/players?login_identifier=${encodeURIComponent(identifier)}`);
+          const data = await res.json();
+          if (!res.ok) { statusEl.textContent = 'No account found for that name - try your email instead, or check the spelling.'; return; }
+          email = data.email;
+        } catch (err) {
+          statusEl.textContent = 'Lookup failed - try your email instead.';
+          return;
+        }
+      }
+      statusEl.textContent = '';
+
       const user = new AmazonCognitoIdentity.CognitoUser({ Username: email, Pool: userPool });
       const authDetails = new AmazonCognitoIdentity.AuthenticationDetails({ Username: email, Password: password });
       window._pendingAuthUser = user;
