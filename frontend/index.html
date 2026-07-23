@@ -482,7 +482,12 @@
     </div>
 
     <div class="tab-panel" id="tab-matches">
-      <div class="card">
+      <div class="card" id="record-match-guest-notice" style="display:none;">
+        <h2>Record a match</h2>
+        <p class="card-sub">Log in to record a match - this keeps the match log tied to real accounts rather than anyone who happens to open the site.</p>
+        <button type="button" onclick="openAuthModal()">Log in</button>
+      </div>
+      <div class="card" id="record-match-card">
         <h2>Record a match</h2>
         <form id="match-form">
           <div class="row">
@@ -953,7 +958,12 @@
     </div>
 
     <div class="tab-panel" id="tab-tournaments">
-      <div class="card">
+      <div class="card" id="create-tournament-guest-notice" style="display:none;">
+        <h2>Create a tournament</h2>
+        <p class="card-sub">Log in to create a tournament - ties tournament ownership to a real account rather than anyone who happens to open the site.</p>
+        <button type="button" onclick="openAuthModal()">Log in</button>
+      </div>
+      <div class="card" id="create-tournament-card">
         <h2>Create a tournament</h2>
         <form id="create-tournament-form">
           <label>Group
@@ -1937,9 +1947,9 @@
           payload.point_log = livePointLog;
         }
 
-        const res = await fetch(`${API_BASE_URL}/matches`, {
+        const res = await fetch(`${API_BASE_URL}/record-match`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
           body: JSON.stringify(payload)
         });
         const data = await res.json();
@@ -3422,6 +3432,16 @@
       const statusEl = document.getElementById('auth-status');
       const loginBtn = document.getElementById('auth-login-btn');
       const logoutBtn = document.getElementById('auth-logout-btn');
+
+      // Epic 7: guests see a login prompt instead of the match/tournament
+      // creation forms - genuinely enforced server-side too, this is just
+      // the friendly version of that (no filling out a form only to hit
+      // a 403 at the end).
+      const showForms = isLoggedIn();
+      document.getElementById('record-match-guest-notice').style.display = showForms ? 'none' : 'block';
+      document.getElementById('record-match-card').style.display = showForms ? 'block' : 'none';
+      document.getElementById('create-tournament-guest-notice').style.display = showForms ? 'none' : 'block';
+      document.getElementById('create-tournament-card').style.display = showForms ? 'block' : 'none';
       if (authSession) {
         const linkedPlayer = allPlayers.find(p => p.player_id === myPlayerId());
         const identity = linkedPlayer
@@ -3723,9 +3743,9 @@
       const resultEl = document.getElementById('create-tournament-result');
       resultEl.textContent = 'Creating...';
       try {
-        const res = await fetch(`${API_BASE_URL}/tournaments`, {
+        const res = await fetch(`${API_BASE_URL}/create-tournament`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
           body: JSON.stringify(payload)
         });
         const data = await res.json();

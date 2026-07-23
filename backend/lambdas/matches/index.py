@@ -96,12 +96,38 @@ def _is_valid_completed_game(score_a, score_b, target):
     return False
 
 
+def _caller_claims(event):
+    """Claims API Gateway's Cognito Authorizer attaches to the request.
+    Only present on the new isolated /record-match route - Epic 7's guest
+    restriction: recording a match now requires being logged in (any
+    authenticated account, no special role - once you're a known member,
+    you can record matches)."""
+    return (event.get('requestContext') or {}).get('authorizer', {}).get('claims') or {}
+
+
+def record_match_enforced(event):
+    if not _caller_claims(event):
+        return _response(403, {'error': 'log in to record a match'})
+    return record_match(event)
+
+
 def handler(event, context):
     try:
         method = event.get('httpMethod')
         match_id = (event.get('pathParameters') or {}).get('match_id')
+
+        # Epic 7: the only way to record a match now requires a real
+        # Cognito login, via this isolated top-level route (same platform
+        # reason as every other isolated route this session - a specific
+        # path can't sit alongside {proxy+}/ANY at the same parent).
+        if event.get('resource') == '/record-match' and method == 'POST':
+            return record_match_enforced(event)
+
         if method == 'POST':
-            return record_match(event)
+            # The original anonymous path - genuinely closed now, not left
+            # as a guest fallback, since Epic 7 asked for real restriction
+            # here rather than an additive stronger option.
+            return _response(403, {'error': 'log in to record a match - use /record-match'})
         elif method == 'GET':
             return list_matches(event)
         elif method == 'PUT' and match_id:

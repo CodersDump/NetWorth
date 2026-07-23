@@ -117,15 +117,35 @@ def _is_valid_completed_game(score_a, score_b, target):
     return False
 
 
+def _caller_claims(event):
+    """Same pattern as matches lambda - see that file's comment for
+    context. Only present on the new isolated /create-tournament route."""
+    return (event.get('requestContext') or {}).get('authorizer', {}).get('claims') or {}
+
+
+def create_tournament_enforced(event):
+    if not _caller_claims(event):
+        return _response(403, {'error': 'log in to create a tournament'})
+    return create_tournament(event)
+
+
 def handler(event, context):
     try:
         method = event.get('httpMethod')
         proxy = (event.get('pathParameters') or {}).get('proxy', '')
         parts = [p for p in proxy.split('/') if p] if proxy else []
 
+        # Epic 7: creating a tournament now requires a real Cognito login,
+        # via this isolated top-level route (same reasoning as every other
+        # isolated route this session).
+        if event.get('resource') == '/create-tournament' and method == 'POST':
+            return create_tournament_enforced(event)
+
         if not parts:
             if method == 'POST':
-                return create_tournament(event)
+                # Original anonymous path - genuinely closed, not left as
+                # a guest fallback (Epic 7 asked for real restriction here).
+                return _response(403, {'error': 'log in to create a tournament - use /create-tournament'})
             if method == 'GET':
                 return list_tournaments(event)
         elif len(parts) == 1:
