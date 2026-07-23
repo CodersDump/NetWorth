@@ -844,6 +844,119 @@ Resources:
   # access via a '/*/*' wildcard covering every method/path on this API,
   # this new route included.
 
+  # Epic 4 (increment 3): delete_group and remove_player, dual-gated -
+  # both the new Cognito ownership check AND the existing CONFIRMATION_CODE
+  # must pass (see delete_group_enforced/remove_player_enforced). Same
+  # top-level isolation trick as /group-role, for the same platform reason.
+  GroupDeleteResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref RestApi
+      ParentId: !GetAtt RestApi.RootResourceId
+      PathPart: group-delete
+
+  GroupDeleteGroupIdResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref RestApi
+      ParentId: !Ref GroupDeleteResource
+      PathPart: '{group_id}'
+
+  GroupDeleteMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RestApi
+      ResourceId: !Ref GroupDeleteGroupIdResource
+      HttpMethod: DELETE
+      AuthorizationType: COGNITO_USER_POOLS
+      AuthorizerId: !Ref CognitoAuthorizer
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${GroupsFunction.Arn}/invocations'
+
+  GroupDeleteOptionsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RestApi
+      ResourceId: !Ref GroupDeleteGroupIdResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,Authorization'"
+              method.response.header.Access-Control-Allow-Methods: "'OPTIONS,DELETE'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+            method.response.header.Access-Control-Allow-Origin: true
+
+  GroupMemberRemoveResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref RestApi
+      ParentId: !GetAtt RestApi.RootResourceId
+      PathPart: group-member-remove
+
+  GroupMemberRemoveGroupIdResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref RestApi
+      ParentId: !Ref GroupMemberRemoveResource
+      PathPart: '{group_id}'
+
+  GroupMemberRemovePlayerIdResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref RestApi
+      ParentId: !Ref GroupMemberRemoveGroupIdResource
+      PathPart: '{player_id}'
+
+  GroupMemberRemoveMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RestApi
+      ResourceId: !Ref GroupMemberRemovePlayerIdResource
+      HttpMethod: DELETE
+      AuthorizationType: COGNITO_USER_POOLS
+      AuthorizerId: !Ref CognitoAuthorizer
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${GroupsFunction.Arn}/invocations'
+
+  GroupMemberRemoveOptionsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RestApi
+      ResourceId: !Ref GroupMemberRemovePlayerIdResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,Authorization'"
+              method.response.header.Access-Control-Allow-Methods: "'OPTIONS,DELETE'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+            method.response.header.Access-Control-Allow-Origin: true
+
   # /matches
 
   MatchesResource:
@@ -1079,6 +1192,10 @@ Resources:
       - WhoamiOptionsMethod
       - GroupRolePutMethod
       - GroupRoleOptionsMethod
+      - GroupDeleteMethod
+      - GroupDeleteOptionsMethod
+      - GroupMemberRemoveMethod
+      - GroupMemberRemoveOptionsMethod
     Properties:
       RestApiId: !Ref RestApi
       Description: !Sub 'Deployment trigger: ${DeploymentTimestamp}'

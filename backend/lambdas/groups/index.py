@@ -50,8 +50,16 @@ def handler(event, context):
         # named pathParameters, not the combined 'proxy' string every
         # other route below uses - checked first, separately, so it can
         # never collide with the proxy-based dispatch underneath.
+        # New isolated routes (Epic 4 increment 3): all live at their own
+        # top-level paths for the same reason /group-role does - API
+        # Gateway won't allow named path params as siblings of {proxy+}.
+        # Method disambiguates between them since they share a path shape.
         if 'group_id' in path_params and 'player_id' in path_params and method == 'PUT':
             return set_role(path_params['group_id'], path_params['player_id'], event)
+        if 'group_id' in path_params and 'player_id' in path_params and method == 'DELETE':
+            return remove_player_enforced(path_params['group_id'], path_params['player_id'], event)
+        if 'group_id' in path_params and 'player_id' not in path_params and method == 'DELETE':
+            return delete_group_enforced(path_params['group_id'], event)
 
         proxy = path_params.get('proxy', '')
         parts = [p for p in proxy.split('/') if p] if proxy else []
@@ -80,6 +88,42 @@ def handler(event, context):
         return _response(404, {'error': 'not found'})
     except Exception as e:
         return _response(500, {'error': str(e)})
+
+
+def _authorize_group_action(group_id, claims):
+    """Shared check for Epic 4's group-scoped write actions: SuperAdmin, or
+    already owner/admin of THIS group. Returns None if allowed, or an
+    error response if not - callers just do `if denied: return denied`."""
+    if _is_super_admin(claims):
+        return None
+    caller_player_id = claims.get('custom:player_id')
+    group = groups_table.get_item(Key={'group_id': group_id}).get('Item')
+    if not group:
+        return _response(404, {'error': 'group not found'})
+    caller_role = group.get('roles', {}).get(caller_player_id) if caller_player_id else None
+    if caller_role not in ('owner', 'admin'):
+        return _response(403, {'error': 'you must be an owner or admin of this group to do this'})
+    return None
+
+
+def delete_group_enforced(group_id, event):
+    """Dual-gated (Epic 4 increment 3): a valid Cognito identity that's
+    SuperAdmin or owner/admin of this group is now required IN ADDITION
+    TO the existing CONFIRMATION_CODE check inside delete_group() itself -
+    neither check alone is enough, matching the backlog's rule for routes
+    that already had a real gate (unlike set_role, which had none)."""
+    denied = _authorize_group_action(group_id, _caller_claims(event))
+    if denied:
+        return denied
+    return delete_group(group_id, event)
+
+
+def remove_player_enforced(group_id, player_id, event):
+    """Same dual-gate as delete_group_enforced, for member removal."""
+    denied = _authorize_group_action(group_id, _caller_claims(event))
+    if denied:
+        return denied
+    return remove_player(group_id, player_id, event)
 
 
 def create_group(event):
