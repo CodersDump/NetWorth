@@ -519,11 +519,12 @@
 
       <div class="card">
         <h2>Delete a player</h2>
+        <p class="card-sub">Deletions go to an admin for approval. If the player has a login linked to it, that account is removed too, freeing the email address to sign up again.</p>
         <form id="delete-form">
           <label>Player
             <select id="delete_player_id" required></select>
           </label>
-          <button type="submit" class="danger">Delete</button>
+          <button type="submit" class="danger">Request deletion</button>
         </form>
         <div id="delete-result" class="result"></div>
       </div>
@@ -2062,31 +2063,13 @@
       const player = allPlayers.find(p => p.player_id === playerId);
       const label = player ? `${player.name} (${player.nickname})` : playerId;
 
-      // Two paths on purpose. A SuperAdmin is the person who would be
-      // approving the request anyway, so routing them through their own
-      // queue would be pure ceremony. Everyone else asks.
-      if (isSuperAdmin()) {
-        const confirmText = prompt(`Enter the confirmation code to delete ${label}:`);
-        if (!confirmText) { resultEl.textContent = 'Cancelled.'; return; }
-        resultEl.textContent = 'Deleting...';
-        try {
-          const { res, data, error } = await authedFetch(`${API_BASE_URL}/players/${playerId}`, {
-            method: 'DELETE',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ confirm: confirmText })
-          });
-          if (!res.ok) { resultEl.textContent = `Error: ${error}`; return; }
-          resultEl.textContent = data.cognito_removed
-            ? `Deleted ${label}, and removed the linked login (${data.cognito_removed}) so that address can sign up again.`
-            : `Deleted ${label}.`;
-          loadPlayers();
-        } catch (err) {
-          resultEl.textContent = `Request failed: ${err.message}`;
-        }
-        return;
-      }
-
-      const reason = prompt(`Ask an admin to delete ${label}?\n\nGive a brief reason (optional):`);
+      // One path for everyone, including SuperAdmin. Deleting is now
+      // always a request that lands in the approval queue - no
+      // confirmation code is prompted for anywhere. A SuperAdmin's own
+      // request shows up in their own queue for a one-tap approval, which
+      // costs one extra click and buys a complete record of every
+      // deletion, who asked, and who approved it.
+      const reason = prompt(`Request deletion of ${label}?\n\nGive a brief reason (optional):`);
       if (reason === null) { resultEl.textContent = 'Cancelled.'; return; }
       resultEl.textContent = 'Sending request...';
       try {
