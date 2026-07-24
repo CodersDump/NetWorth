@@ -5820,7 +5820,13 @@
             const head = vsCard ? `${tbPrefix}${vsCard}` : `<p>${label}</p>`;
             html += `<div class="fixture">${head}`;
             if (f.played) {
-              html += `<div class="fixture-controls"><strong>${gamesText}</strong> (${f.games_won_a}-${f.games_won_b}) &middot; Done</div>`;
+              // Score and winner are drawn on the card itself, so there's
+              // nothing to repeat underneath it. Multi-game matches keep a
+              // small per-game breakdown, since the card shows only the
+              // decisive one.
+              if (f.games && f.games.length > 1) {
+                html += `<div class="fixture-controls" style="opacity:.75;">${gamesText}</div>`;
+              }
             } else if (!canScore) {
               // Same rule as the Matches tab: recording a result is a
               // members-only action, so guests see the fixture but no inputs.
@@ -5847,64 +5853,88 @@
 
       if (t.status === 'knockout' || t.status === 'completed') {
         t.knockout.rounds.forEach((round, rIdx) => {
-          html += `<h4 style="font-size:14px;">Round ${rIdx + 1}</h4><table><tr><th>Match</th><th>Games</th><th>Action</th></tr>`;
-          round.forEach((m, mIdx) => {
-            const bName = m.player_b ? m.player_b.name : '(bye)';
+          const isFinalRound = rIdx === t.knockout.rounds.length - 1;
+          html += `<h4 style="font-size:14px;">${isFinalRound ? 'Final' : 'Round ' + (rIdx + 1)}</h4>`;
+          round.matches.forEach((m, mIdx) => {
+            const bName = m.player_b ? m.player_b.name : 'BYE';
             const label = `${m.player_a.name} vs ${bName}`;
             const gamesText = formatGames(m.games);
+            const lastGame = (m.games && m.games.length) ? m.games[m.games.length - 1] : null;
+            const card = m.player_b ? renderVsCard(vsSideIds(m.player_a), vsSideIds(m.player_b), {
+              snapshot: t.card_snapshot,
+              // Only the last round's match is the actual final - that's
+              // what earns the cup rather than the VS badge.
+              isFinal: isFinalRound,
+              scoreA: lastGame ? lastGame.a : undefined,
+              scoreB: lastGame ? lastGame.b : undefined,
+              winner: m.played ? (m.games_won_a > m.games_won_b ? 'a' : 'b') : null
+            }) : '';
+            html += `<div class="fixture">${card || `<p>${label}</p>`}`;
             if (m.played) {
-              const scoreText = m.bye ? 'bye' : `${gamesText} (${m.games_won_a}-${m.games_won_b})`;
-              html += `<tr><td>${label}</td><td>${scoreText}</td><td>Done</td></tr>`;
+              if (m.games && m.games.length > 1) {
+                html += `<div class="fixture-controls" style="opacity:.75;">${gamesText}</div>`;
+              }
+            } else if (!m.player_b) {
+              html += `<div class="fixture-controls">${label} &middot; walkover</div>`;
+            } else if (!canScore) {
+              html += `<div class="fixture-controls">Log in to enter a score.</div>`;
             } else {
               const nextGameNum = (m.games ? m.games.length : 0) + 1;
               const progress = gamesText ? `Games so far: ${gamesText} (${m.games_won_a}-${m.games_won_b}) | ` : '';
-              const matchKey = `knockout_${t.tournament_id}_${rIdx}_${mIdx}`;
+              const matchKey = `ko_${t.tournament_id}_${rIdx}_${mIdx}`;
               if (liveMode) {
-                html += `<tr><td>${label}</td><td colspan="2">
-                  ${progress}Game ${nextGameNum}:
-                  ${renderLiveScoreControls(matchKey, target, `finishKnockoutLiveGame('${matchKey}','${t.tournament_id}',${rIdx},${mIdx})`, m.player_a.name, bName)}
-                </td></tr>`;
+                html += `<div class="fixture-controls">${progress}Game ${nextGameNum}:
+                  ${renderLiveScoreControls(matchKey, target, `finishKnockoutLiveGame('${matchKey}','${t.tournament_id}',${rIdx},${mIdx})`, m.player_a.name, bName)}</div>`;
               } else {
-                html += `<tr><td>${label}</td><td colspan="2">
-                  ${progress}Game ${nextGameNum}:
-                  <input type="number" id="ka_${t.tournament_id}_${rIdx}_${mIdx}" style="width:50px;display:inline-block;">
+                html += `<div class="fixture-controls">${progress}Game ${nextGameNum}:
+                  <input type="number" id="ka_${t.tournament_id}_${rIdx}_${mIdx}">
                   -
-                  <input type="number" id="kb_${t.tournament_id}_${rIdx}_${mIdx}" style="width:50px;display:inline-block;">
-                  <button onclick="submitKnockoutScore('${t.tournament_id}',${rIdx},${mIdx})">Submit game ${nextGameNum}</button>
-                </td></tr>`;
+                  <input type="number" id="kb_${t.tournament_id}_${rIdx}_${mIdx}">
+                  <button onclick="submitKnockoutScore('${t.tournament_id}',${rIdx},${mIdx})">Submit game ${nextGameNum}</button></div>`;
               }
             }
+            html += '</div>';
           });
-          html += '</table>';
         });
 
         if (item_has_third_place(t)) {
           const tp = t.knockout.third_place_match;
           const label = `${tp.player_a.name} vs ${tp.player_b.name}`;
           const gamesText = formatGames(tp.games);
-          html += `<h4 style="font-size:14px;">3rd Place Match</h4><table><tr><th>Match</th><th>Games</th><th>Action</th></tr>`;
+          const tpLast = (tp.games && tp.games.length) ? tp.games[tp.games.length - 1] : null;
+          const tpCard = renderVsCard(vsSideIds(tp.player_a), vsSideIds(tp.player_b), {
+            snapshot: t.card_snapshot,
+            // Third place gets the VS badge, not the cup - the cup means
+            // the title, and putting one here would flatten the difference.
+            isFinal: false,
+            scoreA: tpLast ? tpLast.a : undefined,
+            scoreB: tpLast ? tpLast.b : undefined,
+            winner: tp.played ? (tp.games_won_a > tp.games_won_b ? 'a' : 'b') : null
+          });
+          html += `<h4 style="font-size:14px;">3rd Place Match</h4>`;
+          html += `<div class="fixture">${tpCard || `<p>${label}</p>`}`;
           if (tp.played) {
-            html += `<tr><td>${label}</td><td>${gamesText} (${tp.games_won_a}-${tp.games_won_b})</td><td>Done</td></tr>`;
+            if (tp.games && tp.games.length > 1) {
+              html += `<div class="fixture-controls" style="opacity:.75;">${gamesText}</div>`;
+            }
+          } else if (!canScore) {
+            html += `<div class="fixture-controls">Log in to enter a score.</div>`;
           } else {
             const nextGameNum = (tp.games ? tp.games.length : 0) + 1;
             const progress = gamesText ? `Games so far: ${gamesText} (${tp.games_won_a}-${tp.games_won_b}) | ` : '';
             const matchKey = `thirdplace_${t.tournament_id}`;
             if (liveMode) {
-              html += `<tr><td>${label}</td><td colspan="2">
-                ${progress}Game ${nextGameNum}:
-                ${renderLiveScoreControls(matchKey, target, `finishThirdPlaceLiveGame('${matchKey}','${t.tournament_id}')`, tp.player_a.name, tp.player_b.name)}
-              </td></tr>`;
+              html += `<div class="fixture-controls">${progress}Game ${nextGameNum}:
+                ${renderLiveScoreControls(matchKey, target, `finishThirdPlaceLiveGame('${matchKey}','${t.tournament_id}')`, tp.player_a.name, tp.player_b.name)}</div>`;
             } else {
-              html += `<tr><td>${label}</td><td colspan="2">
-                ${progress}Game ${nextGameNum}:
-                <input type="number" id="tpa_${t.tournament_id}" style="width:50px;display:inline-block;">
+              html += `<div class="fixture-controls">${progress}Game ${nextGameNum}:
+                <input type="number" id="tpa_${t.tournament_id}">
                 -
-                <input type="number" id="tpb_${t.tournament_id}" style="width:50px;display:inline-block;">
-                <button onclick="submitThirdPlaceScore('${t.tournament_id}')">Submit game ${nextGameNum}</button>
-              </td></tr>`;
+                <input type="number" id="tpb_${t.tournament_id}">
+                <button onclick="submitThirdPlaceScore('${t.tournament_id}')">Submit game ${nextGameNum}</button></div>`;
             }
           }
-          html += '</table>';
+          html += '</div>';
         }
 
         if (t.status === 'completed') {
