@@ -90,6 +90,22 @@ Resources:
         - AttributeName: record_id
           KeyType: HASH
 
+  # Claim requests: a player asking to be linked to an account, pending a
+  # SuperAdmin decision. Deliberately its own table rather than a field on
+  # the player record - several people can request the same player, and a
+  # decided request is an audit trail worth keeping after the fact.
+  ClaimRequestsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub '${AppName}-claim-requests'
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: request_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: request_id
+          KeyType: HASH
+
   ProgressHistoryTable:
     Type: AWS::DynamoDB::Table
     Properties:
@@ -141,6 +157,16 @@ Resources:
                   - !GetAtt TournamentsTable.Arn
                   - !GetAtt ProgressHistoryTable.Arn
                   - !GetAtt FinanceTable.Arn
+                  - !GetAtt ClaimRequestsTable.Arn
+              # Approving a claim has to write custom:player_id onto the
+              # REQUESTER'S account, which only an admin API can do - the
+              # self-service updateAttributes call needs their session.
+              # Scoped to this pool only, and to the two calls needed.
+              - Effect: Allow
+                Action:
+                  - cognito-idp:AdminUpdateUserAttributes
+                  - cognito-idp:AdminGetUser
+                Resource: !GetAtt UserPool.Arn
 
   # ---------- Cognito (Epic 1 - foundation only, not yet wired to any
   # route or the live frontend. Standalone and isolated by design; nothing
@@ -250,6 +276,8 @@ Resources:
       Environment:
         Variables:
           PLAYERS_TABLE: !Ref PlayersTable
+          CLAIM_REQUESTS_TABLE: !Ref ClaimRequestsTable
+          USER_POOL_ID: !Ref UserPool
           CONFIRMATION_CODE: !Ref ConfirmationCode
       Code: ../backend/lambdas/players
 
@@ -1778,6 +1806,142 @@ Resources:
       Principal: apigateway.amazonaws.com
       SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${RestApi}/*/*'
 
+  # ---------- Claim request / approval flow ----------
+  # All three are flat top-level paths with no {variable} segments, so
+  # they cannot collide with the existing {proxy+} catch-alls.
+
+  ClaimRequestResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref RestApi
+      ParentId: !GetAtt RestApi.RootResourceId
+      PathPart: claim-request
+
+  ClaimRequestMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RestApi
+      ResourceId: !Ref ClaimRequestResource
+      HttpMethod: POST
+      AuthorizationType: COGNITO_USER_POOLS
+      AuthorizerId: !Ref CognitoAuthorizer
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${PlayersFunction.Arn}/invocations'
+
+  ClaimRequestOptionsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RestApi
+      ResourceId: !Ref ClaimRequestResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,Authorization'"
+              method.response.header.Access-Control-Allow-Methods: "'OPTIONS,POST'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+            method.response.header.Access-Control-Allow-Origin: true
+
+  ClaimRequestsListResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref RestApi
+      ParentId: !GetAtt RestApi.RootResourceId
+      PathPart: claim-requests
+
+  ClaimRequestsListMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RestApi
+      ResourceId: !Ref ClaimRequestsListResource
+      HttpMethod: GET
+      AuthorizationType: COGNITO_USER_POOLS
+      AuthorizerId: !Ref CognitoAuthorizer
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${PlayersFunction.Arn}/invocations'
+
+  ClaimRequestsListOptionsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RestApi
+      ResourceId: !Ref ClaimRequestsListResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,Authorization'"
+              method.response.header.Access-Control-Allow-Methods: "'OPTIONS,GET'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+            method.response.header.Access-Control-Allow-Origin: true
+
+  ClaimRequestDecideResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref RestApi
+      ParentId: !GetAtt RestApi.RootResourceId
+      PathPart: claim-request-decide
+
+  ClaimRequestDecideMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RestApi
+      ResourceId: !Ref ClaimRequestDecideResource
+      HttpMethod: POST
+      AuthorizationType: COGNITO_USER_POOLS
+      AuthorizerId: !Ref CognitoAuthorizer
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${PlayersFunction.Arn}/invocations'
+
+  ClaimRequestDecideOptionsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RestApi
+      ResourceId: !Ref ClaimRequestDecideResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,Authorization'"
+              method.response.header.Access-Control-Allow-Methods: "'OPTIONS,POST'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+            method.response.header.Access-Control-Allow-Origin: true
+
   ApiDeployment:
     Type: AWS::ApiGateway::Deployment
     DependsOn:
@@ -1837,6 +2001,12 @@ Resources:
       - UpdateMyCardOptionsMethod
       - ClaimPlayerMethod
       - ClaimPlayerOptionsMethod
+      - ClaimRequestMethod
+      - ClaimRequestOptionsMethod
+      - ClaimRequestsListMethod
+      - ClaimRequestsListOptionsMethod
+      - ClaimRequestDecideMethod
+      - ClaimRequestDecideOptionsMethod
     Properties:
       RestApiId: !Ref RestApi
       Description: !Sub 'Deployment trigger: ${DeploymentTimestamp}'

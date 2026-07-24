@@ -15,11 +15,18 @@ Env vars:
 import json
 import os
 import re
+import uuid
 import boto3
 from datetime import datetime, timezone
 
 dynamodb = boto3.resource('dynamodb')
 table = dynamodb.Table(os.environ['PLAYERS_TABLE'])
+
+# Optional so the module still imports in tests/older stacks that predate
+# the approval flow - the routes that need them fail loudly instead.
+CLAIM_REQUESTS_TABLE = os.environ.get('CLAIM_REQUESTS_TABLE')
+USER_POOL_ID = os.environ.get('USER_POOL_ID')
+claim_requests_table = dynamodb.Table(CLAIM_REQUESTS_TABLE) if CLAIM_REQUESTS_TABLE else None
 
 
 def sanitize_nickname(raw):
@@ -45,6 +52,12 @@ def handler(event, context):
             return update_my_card(event)
         if event.get('resource') == '/claim-player' and method == 'POST':
             return claim_player(event)
+        if event.get('resource') == '/claim-request' and method == 'POST':
+            return create_claim_request(event)
+        if event.get('resource') == '/claim-requests' and method == 'GET':
+            return list_claim_requests(event)
+        if event.get('resource') == '/claim-request-decide' and method == 'POST':
+            return decide_claim_request(event)
         if method == 'GET' and not player_id:
             return list_players()
         elif method == 'PUT' and player_id:
@@ -181,6 +194,145 @@ def claim_player(event):
         ExpressionAttributeValues={':e': claims.get('email')}
     )
     return _response(200, {'player_id': player_id, 'name': player.get('name'), 'nickname': player.get('nickname')})
+
+
+def _is_super_admin(claims):
+    groups = claims.get('cognito:groups') or ''
+    if isinstance(groups, str):
+        groups = [g.strip() for g in groups.split(',')]
+    return 'SuperAdmin' in groups
+
+
+def _linked_player_is_live(claims):
+    """True only if the caller's custom:player_id resolves to a player that
+    still exists. A deleted player leaves a stale claim in the JWT, and
+    treating that as 'already linked' is what locked those accounts out."""
+    pid = claims.get('custom:player_id')
+    if not pid:
+        return False
+    return bool(table.get_item(Key={'player_id': pid}).get('Item'))
+
+
+def create_claim_request(event):
+    """Anyone logged in but not yet linked can ASK to be linked to an
+    existing player. Deliberately requires no confirmation code: the whole
+    point is to stop the destructive-ops code being handed out just so
+    people can register. Nothing is linked until an admin approves."""
+    if not claim_requests_table:
+        return _response(500, {'error': 'claim requests are not configured on this stack'})
+    claims = _caller_claims(event)
+    if not claims:
+        return _response(403, {'error': 'log in to request a profile'})
+    if _linked_player_is_live(claims):
+        return _response(400, {'error': 'your account is already linked to a player'})
+
+    body = json.loads(event.get('body') or '{}')
+    player_id = body.get('player_id')
+    if not player_id:
+        return _response(400, {'error': 'player_id is required'})
+
+    player = table.get_item(Key={'player_id': player_id}).get('Item')
+    if not player:
+        return _response(404, {'error': 'player not found'})
+    if player.get('email'):
+        return _response(400, {'error': 'this player is already linked to an account'})
+
+    email = claims.get('email')
+    existing = claim_requests_table.scan().get('Items', [])
+    if any(r.get('status') == 'pending' and r.get('requester_email') == email for r in existing):
+        return _response(400, {'error': 'you already have a request waiting for approval'})
+
+    request_id = str(uuid.uuid4())
+    claim_requests_table.put_item(Item={
+        'request_id': request_id,
+        'player_id': player_id,
+        'player_name': player.get('name'),
+        'player_nickname': player.get('nickname'),
+        'requester_email': email,
+        # The Cognito username is what AdminUpdateUserAttributes needs at
+        # approval time, and it is not always the same as the email.
+        'requester_username': claims.get('cognito:username') or email,
+        'status': 'pending',
+        'created_at': datetime.now(timezone.utc).isoformat()
+    })
+    return _response(200, {'request_id': request_id, 'status': 'pending'})
+
+
+def list_claim_requests(event):
+    claims = _caller_claims(event)
+    if not _is_super_admin(claims):
+        return _response(403, {'error': 'only a SuperAdmin can review claim requests'})
+    items = claim_requests_table.scan().get('Items', []) if claim_requests_table else []
+    items.sort(key=lambda r: r.get('created_at', ''), reverse=True)
+    pending = [r for r in items if r.get('status') == 'pending']
+    # Recent decisions are worth returning too - it's the only record of
+    # who approved what, and it makes a mistaken approval visible.
+    decided = [r for r in items if r.get('status') != 'pending'][:10]
+    return _response(200, {'pending': pending, 'decided': decided})
+
+
+def decide_claim_request(event):
+    """Approve or reject. On approval this writes the link on BOTH sides:
+    the email onto the player record, and custom:player_id onto the
+    requester's Cognito account. The second half needs the admin API,
+    because the self-service updateAttributes call requires the
+    requester's own session, which we obviously don't have here."""
+    claims = _caller_claims(event)
+    if not _is_super_admin(claims):
+        return _response(403, {'error': 'only a SuperAdmin can decide claim requests'})
+    if not claim_requests_table:
+        return _response(500, {'error': 'claim requests are not configured on this stack'})
+
+    body = json.loads(event.get('body') or '{}')
+    request_id = body.get('request_id')
+    action = body.get('action')
+    if action not in ('approve', 'reject'):
+        return _response(400, {'error': "action must be 'approve' or 'reject'"})
+    if not request_id:
+        return _response(400, {'error': 'request_id is required'})
+
+    req = claim_requests_table.get_item(Key={'request_id': request_id}).get('Item')
+    if not req:
+        return _response(404, {'error': 'request not found'})
+    if req.get('status') != 'pending':
+        return _response(400, {'error': f"this request was already {req.get('status')}"})
+
+    decided = {
+        'status': 'approved' if action == 'approve' else 'rejected',
+        'decided_at': datetime.now(timezone.utc).isoformat(),
+        'decided_by': claims.get('email')
+    }
+
+    if action == 'approve':
+        player = table.get_item(Key={'player_id': req['player_id']}).get('Item')
+        if not player:
+            return _response(404, {'error': 'that player no longer exists'})
+        # Re-check at decision time, not just at request time: someone
+        # else may have been approved for this player in between.
+        if player.get('email'):
+            return _response(400, {'error': 'that player was linked to another account in the meantime'})
+
+        cognito = boto3.client('cognito-idp')
+        cognito.admin_update_user_attributes(
+            UserPoolId=USER_POOL_ID,
+            Username=req['requester_username'],
+            UserAttributes=[{'Name': 'custom:player_id', 'Value': req['player_id']}]
+        )
+        table.update_item(
+            Key={'player_id': req['player_id']},
+            UpdateExpression='SET email = :e',
+            ExpressionAttributeValues={':e': req['requester_email']}
+        )
+
+    claim_requests_table.update_item(
+        Key={'request_id': request_id},
+        UpdateExpression='SET #s = :s, decided_at = :d, decided_by = :b',
+        ExpressionAttributeNames={'#s': 'status'},
+        ExpressionAttributeValues={
+            ':s': decided['status'], ':d': decided['decided_at'], ':b': decided['decided_by']
+        }
+    )
+    return _response(200, {'request_id': request_id, **decided})
 
 
 def update_my_card(event):

@@ -379,10 +379,22 @@
         <label>Which player is you?
           <select id="complete-profile-claim-select"></select>
         </label>
-        <label>Confirmation code <span style="opacity:0.6; font-weight:normal;">(ask your group admin if you don't have it)</span>
-          <input type="text" id="complete-profile-claim-code">
-        </label>
-        <button type="button" id="complete-profile-claim-btn">Claim this profile</button>
+        <p class="card-sub" style="margin-top:4px;">Sending this asks an admin to confirm it's really you. Nothing is linked until they approve.</p>
+        <button type="button" id="complete-profile-request-btn">Request access</button>
+
+        <!-- Kept for the case where an admin is standing right there at a
+             session and wants to link someone on the spot, rather than
+             approving it later from their phone. Collapsed by default so
+             the code isn't the path of least resistance. -->
+        <p style="margin:12px 0 0;">
+          <a href="#" id="claim-code-toggle" style="font-size:12px;">An admin is with me and has the code</a>
+        </p>
+        <div id="claim-code-fields" style="display:none;">
+          <label>Confirmation code
+            <input type="text" id="complete-profile-claim-code">
+          </label>
+          <button type="button" id="complete-profile-claim-btn">Claim this profile</button>
+        </div>
       </div>
 
       <div id="complete-profile-status" style="font-size:13px; margin-top:6px;"></div>
@@ -398,12 +410,25 @@
         <h2>Settings</h2>
         <button class="secondary" onclick="closeSettingsModal()" type="button">&#10005;</button>
       </div>
+      <div id="settings-cosmetics">
       <p class="card-sub">Changes here apply to your own Player Card.</p>
       <p style="font-size:13px; font-weight:600; margin:14px 0 8px;">Avatar</p>
       <div id="settings-avatar-picker" style="display:flex; flex-wrap:wrap; gap:6px; margin-bottom:14px;"></div>
       <p style="font-size:13px; font-weight:600; margin:0 0 8px;">Banner</p>
       <div id="settings-banner-picker" style="display:flex; flex-wrap:wrap; gap:6px;"></div>
+      </div>
       <div id="settings-status" style="font-size:13px; margin-top:10px;"></div>
+
+      <!-- SuperAdmin only. Hidden entirely for everyone else rather than
+           shown-and-disabled: a control you can never use is just noise. -->
+      <div id="settings-requests-section" style="display:none; margin-top:20px; border-top:1px solid var(--border); padding-top:16px;">
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <p style="font-size:13px; font-weight:600; margin:0;">Claim requests</p>
+          <button class="secondary" type="button" style="margin:0; padding:4px 10px; font-size:12px;" onclick="loadClaimRequests()">Refresh</button>
+        </div>
+        <p class="card-sub" style="margin:4px 0 10px;">People asking to be linked to an existing player.</p>
+        <div id="settings-requests-list" style="font-size:13px;"></div>
+      </div>
     </div>
   </div>
 
@@ -581,6 +606,8 @@
         <h2>Finish setting up your account</h2>
         <p class="card-sub">You're logged in, but this account isn't linked to a player profile yet - so it can't record matches. Either claim the profile that already exists for you, or create a new one.</p>
         <button type="button" onclick="openCompleteProfileModal()">Link my profile</button>
+        <button type="button" class="secondary" onclick="checkApprovalStatus()">Check approval status</button>
+        <div id="approval-check-status" style="font-size:13px; margin-top:8px;"></div>
       </div>
       <div class="card" id="record-match-card">
         <h2>Record a match</h2>
@@ -1314,7 +1341,6 @@
           if (err || !session || !session.isValid()) { resolve(false); return; }
           const idToken = session.getIdToken();
           authSession = { idToken: idToken.getJwtToken(), claims: idToken.payload, cognitoUser: user };
-          sessionStorage.setItem('nw_auth_token', authSession.idToken);
           resolve(true);
         });
       });
@@ -2634,6 +2660,12 @@
       document.getElementById('settings-status').textContent = '';
       const me = allPlayers.find(p => p.player_id === myPlayerId());
       renderSettingsPickers(me || {});
+      // No linked player means nothing to customise - update-my-card
+      // would 403 anyway, so don't offer the controls.
+      document.getElementById('settings-cosmetics').style.display = me ? 'block' : 'none';
+      const requestsSection = document.getElementById('settings-requests-section');
+      requestsSection.style.display = isSuperAdmin() ? 'block' : 'none';
+      if (isSuperAdmin()) loadClaimRequests();
     }
     function closeSettingsModal() {
       document.getElementById('settings-modal').style.display = 'none';
@@ -2649,6 +2681,95 @@
       bannerPicker.innerHTML = Object.entries(BANNER_PRESETS).map(([id, gradient]) =>
         `<button type="button" style="width:36px; height:36px; border-radius:6px; border:${player.banner_id === id ? '3px solid var(--text)' : '1px solid var(--border)'}; background:${gradient}; cursor:pointer; padding:0;" title="${id}" onclick="setMyCardField('banner_id','${id}')"></button>`
       ).join('');
+    }
+
+    /** Asks an admin for access instead of linking immediately. */
+    async function submitClaimRequest() {
+      const playerId = document.getElementById('complete-profile-claim-select').value;
+      const statusEl = document.getElementById('complete-profile-status');
+      if (!playerId) { statusEl.textContent = 'Pick which player is you.'; return; }
+      statusEl.textContent = 'Sending your request...';
+      try {
+        const { res, error } = await authedFetch(`${API_BASE_URL}/claim-request`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ player_id: playerId })
+        });
+        if (!res.ok) { statusEl.textContent = `Error: ${error}`; return; }
+        statusEl.textContent = 'Request sent. An admin will approve it - you can close this and check back later.';
+      } catch (err) {
+        statusEl.textContent = `Request failed: ${err.message}`;
+      }
+    }
+
+    /**
+     * After approval, the link lives on the requester's Cognito account -
+     * but their current ID token was minted before that and still says
+     * unlinked. Forcing a refresh mints a new one carrying the attribute,
+     * which is why this is a button rather than something that resolves
+     * on its own.
+     */
+    async function checkApprovalStatus() {
+      const el = document.getElementById('approval-check-status');
+      el.textContent = 'Checking...';
+      const ok = await ensureFreshToken(true);
+      if (!ok) { el.textContent = "Couldn't refresh your session - log out and log back in."; return; }
+      await loadPlayers();
+      if (hasLinkedPlayer()) {
+        el.textContent = 'Approved - you are linked.';
+      } else {
+        el.textContent = 'Not approved yet. Check back once an admin has reviewed it.';
+      }
+    }
+
+    async function loadClaimRequests() {
+      const listEl = document.getElementById('settings-requests-list');
+      listEl.textContent = 'Loading...';
+      try {
+        const { res, data, error } = await authedFetch(`${API_BASE_URL}/claim-requests`);
+        if (!res.ok) { listEl.textContent = `Error: ${error}`; return; }
+        const pending = data.pending || [];
+        if (!pending.length) {
+          listEl.innerHTML = '<p class="card-sub" style="margin:0;">No requests waiting.</p>';
+          return;
+        }
+        listEl.innerHTML = pending.map(r => `
+          <div style="border:1px solid var(--border); border-radius:var(--radius); padding:10px; margin-bottom:8px;">
+            <div style="font-weight:600;">${escapeHtml(r.requester_email)}</div>
+            <div style="color:var(--text-secondary); font-size:12px; margin-bottom:8px;">
+              wants to be ${escapeHtml(r.player_name || '')} (${escapeHtml(r.player_nickname || '')})
+            </div>
+            <button type="button" style="margin:0; padding:5px 12px; font-size:12px;"
+                    onclick="decideClaimRequest('${r.request_id}','approve')">Approve</button>
+            <button type="button" class="secondary" style="margin:0; padding:5px 12px; font-size:12px;"
+                    onclick="decideClaimRequest('${r.request_id}','reject')">Reject</button>
+          </div>`).join('');
+      } catch (err) {
+        listEl.textContent = `Request failed: ${err.message}`;
+      }
+    }
+
+    async function decideClaimRequest(requestId, action) {
+      if (action === 'approve' && !confirm('Approve this request?\n\nThis links their login to that player permanently - their match history and rating become theirs.')) return;
+      try {
+        const { res, error } = await authedFetch(`${API_BASE_URL}/claim-request-decide`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ request_id: requestId, action })
+        });
+        if (!res.ok) { alert(`Error: ${error}`); return; }
+        await loadClaimRequests();
+        await loadPlayers();
+      } catch (err) {
+        alert(`Request failed: ${err.message}`);
+      }
+    }
+
+    /** Request data is user-supplied (email addresses, names), and it is
+     *  rendered into innerHTML above - so it gets escaped on the way in. */
+    function escapeHtml(s) {
+      return String(s == null ? '' : s).replace(/[&<>"']/g,
+        c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
     }
 
     async function setMyCardField(field, value) {
@@ -4108,7 +4229,12 @@
         statusEl.textContent = identity + (isSuperAdmin() ? ' (SuperAdmin)' : '');
         loginBtn.style.display = 'none';
         logoutBtn.style.display = 'inline-block';
-        document.getElementById('open-settings-btn').style.display = linkedPlayer ? 'inline-block' : 'none';
+        // A pure SuperAdmin account (no player of its own) still needs
+        // Settings, because claim approvals live in there. Gating this on
+        // linkedPlayer alone would lock the oversight account out of the
+        // one screen it exists to use.
+        document.getElementById('open-settings-btn').style.display =
+          (linkedPlayer || isSuperAdmin()) ? 'inline-block' : 'none';
       } else {
         statusEl.textContent = 'Guest';
         loginBtn.style.display = 'inline-block';
@@ -4131,17 +4257,16 @@
         { login: 'Log in', newpassword: 'Set new password', signup: 'Sign up', confirm: 'Confirm sign-up', forgot: 'Reset password' }[view];
     }
 
-    function setAuthSession(session, user) {
+    function setAuthSession(session, user, opts = {}) {
       const idToken = session.getIdToken();
       authSession = { idToken: idToken.getJwtToken(), claims: idToken.payload, cognitoUser: user };
-      sessionStorage.setItem('nw_auth_token', authSession.idToken);
       updateAuthUI();
       closeAuthModal();
       // First login on an account with no linked player yet - prompt to
       // create one, right here rather than tying it to signup
       // specifically (covers self-signup and any other unlinked-account
-      // case identically).
-      if (!authSession.claims['custom:player_id']) {
+      // case identically). Skipped on a silent restore.
+      if (!opts.silent && !authSession.claims['custom:player_id']) {
         openCompleteProfileModal();
       }
     }
@@ -4470,7 +4595,7 @@
       } catch (e) { /* signing out of an already-dead session is not an error */ }
 
       authSession = null;
-      sessionStorage.removeItem('nw_auth_token');
+      sessionStorage.removeItem('nw_auth_token');  // legacy key from the old hand-rolled restore - cleared so stale copies can't linger
 
       // The DOM outlives the session. Anything scoped to the person who
       // just left has to be cleared explicitly or the next login inherits
@@ -4485,14 +4610,36 @@
       updateAuthUI();
     }
 
+    /**
+     * Sessions used to be restored from a token kept in sessionStorage,
+     * which is per-tab and destroyed the moment the tab closes - so
+     * closing the tab and reopening a bookmark always landed on "Guest",
+     * and even reopening in the same tab after an hour did too, because
+     * the stored token had simply expired with nothing to renew it.
+     *
+     * The Cognito SDK already persists to localStorage and holds a
+     * refresh token good for ~30 days, so getCurrentUser() survives tab
+     * close and browser restart, and getSession() silently mints a fresh
+     * ID token from it. Letting the SDK own this removes the hand-rolled
+     * copy entirely rather than fixing it in two places.
+     *
+     * getSession is callback-based, so the very first paint may briefly
+     * read "Guest" before this resolves - updateAuthUI() runs again on
+     * completion, and loadPlayers() is re-run so anything gated on
+     * identity renders with the restored session.
+     */
     function restoreSession() {
-      const token = sessionStorage.getItem('nw_auth_token');
-      if (!token) return;
-      try {
-        const payload = JSON.parse(atob(token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
-        if (payload.exp && payload.exp * 1000 < Date.now()) { sessionStorage.removeItem('nw_auth_token'); return; }
-        authSession = { idToken: token, claims: payload };
-      } catch (e) { sessionStorage.removeItem('nw_auth_token'); }
+      if (!userPool) return;
+      const user = userPool.getCurrentUser();
+      if (!user) return;
+      user.getSession((err, session) => {
+        if (err || !session || !session.isValid()) return;
+        // silent: a page load is not the moment to throw a modal at
+        // someone. The unlinked-account notice already tells them what
+        // to do, and it doesn't block the rest of the page.
+        setAuthSession(session, user, { silent: true });
+        loadPlayers();
+      });
     }
 
     document.getElementById('auth-login-btn').addEventListener('click', openAuthModal);
@@ -4505,6 +4652,12 @@
     document.getElementById('auth-forgot-confirm-btn').addEventListener('click', doConfirmForgotPassword);
     document.getElementById('complete-profile-submit-btn').addEventListener('click', submitCompleteProfile);
     document.getElementById('complete-profile-claim-btn').addEventListener('click', submitClaimProfile);
+    document.getElementById('complete-profile-request-btn').addEventListener('click', submitClaimRequest);
+    document.getElementById('claim-code-toggle').addEventListener('click', (e) => {
+      e.preventDefault();
+      const fields = document.getElementById('claim-code-fields');
+      fields.style.display = fields.style.display === 'block' ? 'none' : 'block';
+    });
 
     restoreSession();
     updateAuthUI();
