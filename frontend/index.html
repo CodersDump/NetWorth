@@ -260,6 +260,7 @@
     <div style="display:flex; align-items:center; gap:10px;">
       <span id="auth-status" style="font-size:13px; opacity:0.85;"></span>
       <button class="secondary" id="auth-login-btn" type="button">Log in</button>
+      <button class="secondary" id="open-settings-btn" type="button" style="display:none;" onclick="openSettingsModal()">Settings</button>
       <button class="secondary" id="auth-logout-btn" type="button" style="display:none;">Log out</button>
       <button class="theme-toggle" id="display-mode-toggle-btn" type="button">Show: Nickname</button>
       <button class="theme-toggle" id="theme-toggle-btn" type="button">Dark mode</button>
@@ -352,6 +353,24 @@
       </div>
 
       <div id="complete-profile-status" style="font-size:13px; margin-top:6px;"></div>
+    </div>
+  </div>
+
+  <!-- Settings: cosmetic profile editing lives here, separate from Player
+       Card, which stays a pure viewing surface. Changes made here show up
+       on your own Player Card immediately. -->
+  <div id="settings-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:1000; align-items:flex-start; justify-content:center; padding-top:60px;">
+    <div class="card" style="max-width:420px; width:90%; max-height:85vh; overflow-y:auto;">
+      <div style="display:flex; justify-content:space-between; align-items:center;">
+        <h2>Settings</h2>
+        <button class="secondary" onclick="closeSettingsModal()" type="button">&#10005;</button>
+      </div>
+      <p class="card-sub">Changes here apply to your own Player Card.</p>
+      <p style="font-size:13px; font-weight:600; margin:14px 0 8px;">Avatar</p>
+      <div id="settings-avatar-picker" style="display:flex; flex-wrap:wrap; gap:6px; margin-bottom:14px;"></div>
+      <p style="font-size:13px; font-weight:600; margin:0 0 8px;">Banner</p>
+      <div id="settings-banner-picker" style="display:flex; flex-wrap:wrap; gap:6px;"></div>
+      <div id="settings-status" style="font-size:13px; margin-top:10px;"></div>
     </div>
   </div>
 
@@ -905,13 +924,6 @@
           <div id="profile-banner-strip" style="height:70px; display:flex; align-items:center; padding:0 16px;">
             <span id="profile-avatar-emoji" style="font-size:40px; line-height:1;"></span>
           </div>
-        </div>
-        <div id="profile-customize-section" style="display:none; margin-top:12px; border-top:1px solid var(--border); padding-top:12px;">
-          <p style="font-size:13px; font-weight:600; margin:0 0 8px;">Customize your card</p>
-          <p style="font-size:12px; opacity:0.7; margin:0 0 6px;">Avatar</p>
-          <div id="avatar-picker" style="display:flex; flex-wrap:wrap; gap:6px; margin-bottom:10px;"></div>
-          <p style="font-size:12px; opacity:0.7; margin:0 0 6px;">Banner</p>
-          <div id="banner-picker" style="display:flex; flex-wrap:wrap; gap:6px;"></div>
         </div>
       </div>
 
@@ -2372,24 +2384,31 @@
       emojiEl.textContent = AVATAR_PRESETS[player.avatar_id] || '';
     }
 
-    function renderCustomizeSection(player) {
-      const section = document.getElementById('profile-customize-section');
-      const isSelf = isLoggedIn() && player && player.player_id === myPlayerId();
-      section.style.display = isSelf ? 'block' : 'none';
-      if (!isSelf) return;
+    function openSettingsModal() {
+      document.getElementById('settings-modal').style.display = 'flex';
+      document.getElementById('settings-status').textContent = '';
+      const me = allPlayers.find(p => p.player_id === myPlayerId());
+      renderSettingsPickers(me || {});
+    }
+    function closeSettingsModal() {
+      document.getElementById('settings-modal').style.display = 'none';
+    }
 
-      const avatarPicker = document.getElementById('avatar-picker');
+    function renderSettingsPickers(player) {
+      const avatarPicker = document.getElementById('settings-avatar-picker');
       avatarPicker.innerHTML = Object.entries(AVATAR_PRESETS).map(([id, emoji]) =>
         `<button type="button" class="secondary" style="font-size:22px; padding:6px 10px; ${player.avatar_id === id ? 'border-color:var(--court); border-width:2px;' : ''}" onclick="setMyCardField('avatar_id','${id}')">${emoji}</button>`
       ).join('');
 
-      const bannerPicker = document.getElementById('banner-picker');
+      const bannerPicker = document.getElementById('settings-banner-picker');
       bannerPicker.innerHTML = Object.entries(BANNER_PRESETS).map(([id, gradient]) =>
         `<button type="button" style="width:36px; height:36px; border-radius:6px; border:${player.banner_id === id ? '3px solid var(--text)' : '1px solid var(--border)'}; background:${gradient}; cursor:pointer; padding:0;" title="${id}" onclick="setMyCardField('banner_id','${id}')"></button>`
       ).join('');
     }
 
     async function setMyCardField(field, value) {
+      const statusEl = document.getElementById('settings-status');
+      statusEl.textContent = 'Saving...';
       try {
         const res = await fetch(`${API_BASE_URL}/update-my-card`, {
           method: 'PUT',
@@ -2397,11 +2416,19 @@
           body: JSON.stringify({ [field]: value })
         });
         const data = await res.json();
-        if (!res.ok) { alert('Error: ' + data.error); return; }
+        if (!res.ok) { statusEl.textContent = `Error: ${data.error}`; return; }
+        statusEl.textContent = 'Saved.';
         await loadVisiblePlayers();  // refreshes cached player data with the new avatar/banner
-        loadProfile();
+        const me = allPlayers.find(p => p.player_id === myPlayerId());
+        renderSettingsPickers(me || {});  // re-render picker highlights to reflect the change
+        // If you're currently viewing your own Player Card, refresh its
+        // banner display too - Settings and Player Card show the same
+        // underlying data, just in different places.
+        if (document.getElementById('profile_player_select').value === myPlayerId()) {
+          renderProfileCardBanner(me);
+        }
       } catch (err) {
-        alert('Request failed: ' + err.message);
+        statusEl.textContent = `Request failed: ${err.message}`;
       }
     }
 
@@ -2750,7 +2777,6 @@
 
       const player = allPlayers.find(p => p.player_id === playerId);
       renderProfileCardBanner(player);
-      renderCustomizeSection(player);
 
       showProfileSkeletons();
 
@@ -3788,10 +3814,12 @@
         statusEl.textContent = identity + (isSuperAdmin() ? ' (SuperAdmin)' : '');
         loginBtn.style.display = 'none';
         logoutBtn.style.display = 'inline-block';
+        document.getElementById('open-settings-btn').style.display = linkedPlayer ? 'inline-block' : 'none';
       } else {
         statusEl.textContent = 'Guest';
         loginBtn.style.display = 'inline-block';
         logoutBtn.style.display = 'none';
+        document.getElementById('open-settings-btn').style.display = 'none';
       }
       if (typeof loadGroupMembers === 'function') {
         const sel = document.getElementById('group_select');
