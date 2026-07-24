@@ -717,21 +717,35 @@ def update_my_card(event):
     if avatar_id is not None:
         update_parts.append('avatar_id = :a')
         values[':a'] = avatar_id
+        # A preset and an upload are mutually exclusive - the render picks
+        # the upload when both exist, so choosing a preset has to clear the
+        # upload or it silently does nothing. This is the bug behind "my
+        # photo came back / my preset won't apply".
+        update_parts.append('avatar_url = :au_clear')
+        values[':au_clear'] = None
     if banner_id is not None:
         update_parts.append('banner_id = :b')
         values[':b'] = banner_id
+        update_parts.append('banner_url = :bu_clear')
+        values[':bu_clear'] = None
     if background_id is not None:
         update_parts.append('background_id = :g')
         values[':g'] = background_id
     if avatar_url is not None:
         update_parts.append('avatar_url = :au')
         values[':au'] = avatar_url
+        if avatar_url:  # empty string = "remove photo", don't wipe the fallback preset
+            update_parts.append('avatar_id = :a_clear')
+            values[':a_clear'] = None
         kept = _rotate_uploads(player_id, 'avatar', avatar_url)
         update_parts.append('avatar_uploads = :aup')
         values[':aup'] = kept
     if banner_url is not None:
         update_parts.append('banner_url = :bu')
         values[':bu'] = banner_url
+        if banner_url:
+            update_parts.append('banner_id = :b_clear')
+            values[':b_clear'] = None
         kept = _rotate_uploads(player_id, 'banner', banner_url)
         update_parts.append('banner_uploads = :bup')
         values[':bup'] = kept

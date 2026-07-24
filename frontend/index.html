@@ -526,6 +526,15 @@
         <p class="card-sub" style="margin:4px 0 10px;">People asking to be linked to an existing player.</p>
         <div id="settings-requests-list" style="font-size:13px;"></div>
       </div>
+
+      <div id="settings-finance-section" style="display:none; margin-top:20px; border-top:1px solid var(--border); padding-top:16px;">
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <p style="font-size:13px; font-weight:600; margin:0;">Finance access</p>
+          <button class="secondary" type="button" style="margin:0; padding:4px 10px; font-size:12px;" onclick="loadFinanceAccessList()">Refresh</button>
+        </div>
+        <p class="card-sub" style="margin:4px 0 10px;">Who can view the Finance tab. You always have access.</p>
+        <div id="settings-finance-list" style="font-size:13px;"></div>
+      </div>
     </div>
   </div>
 
@@ -2913,6 +2922,40 @@
       const requestsSection = document.getElementById('settings-requests-section');
       requestsSection.style.display = isSuperAdmin() ? 'block' : 'none';
       if (isSuperAdmin()) loadClaimRequests();
+      document.getElementById('settings-finance-section').style.display = isSuperAdmin() ? 'block' : 'none';
+      if (isSuperAdmin()) loadFinanceAccessList();
+    }
+
+    async function loadFinanceAccessList() {
+      const listEl = document.getElementById('settings-finance-list');
+      listEl.textContent = 'Loading...';
+      try {
+        const { res, data } = await authedFetch(`${API_BASE_URL}/visible-players`);
+        if (!res.ok) { listEl.textContent = 'Could not load players.'; return; }
+        const players = (data.players || []).filter(p => p.claimed)
+          .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+        if (!players.length) { listEl.innerHTML = '<p class="card-sub" style="margin:0;">No linked players yet.</p>'; return; }
+        listEl.innerHTML = players.map(p => `
+          <div style="display:flex; justify-content:space-between; align-items:center; padding:6px 0; border-bottom:1px solid var(--border);">
+            <span>${escapeHtml(p.name)} <span style="color:var(--text-secondary);">(${escapeHtml(p.nickname || '')})</span></span>
+            <button type="button" class="${p.finance_access ? '' : 'secondary'}" style="margin:0; padding:4px 12px; font-size:12px;"
+                    onclick="toggleFinanceAccess('${p.player_id}', ${p.finance_access ? 'false' : 'true'})">
+              ${p.finance_access ? 'Revoke' : 'Grant'}
+            </button>
+          </div>`).join('');
+      } catch (e) { listEl.textContent = 'Could not load players.'; }
+    }
+
+    async function toggleFinanceAccess(playerId, grant) {
+      try {
+        const { res, error } = await authedFetch(`${API_BASE_URL}/finance-access`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ player_id: playerId, grant })
+        });
+        if (!res.ok) { alert(`Error: ${error}`); return; }
+        loadFinanceAccessList();
+      } catch (e) { alert(`Request failed: ${e.message}`); }
     }
     function closeSettingsModal() {
       document.getElementById('settings-modal').style.display = 'none';
@@ -3292,8 +3335,18 @@
         // navigated away and came back.
         const myId = myPlayerId();
         const idx = allPlayers.findIndex(p => p.player_id === myId);
-        if (idx >= 0) allPlayers[idx] = { ...allPlayers[idx], [field]: value };
-        const me = allPlayers[idx] || { [field]: value };
+        // Mirror the server's mutual-exclusion locally so the card
+        // re-renders correctly without a refetch: setting a preset clears
+        // the paired upload, and setting an upload clears the paired
+        // preset. Otherwise the stale one lingers in the cache and the
+        // render picks the wrong layer.
+        const patch = { [field]: value };
+        if (field === 'avatar_id') patch.avatar_url = null;
+        if (field === 'banner_id') patch.banner_url = null;
+        if (field === 'avatar_url' && value) patch.avatar_id = null;
+        if (field === 'banner_url' && value) patch.banner_id = null;
+        if (idx >= 0) allPlayers[idx] = { ...allPlayers[idx], ...patch };
+        const me = allPlayers[idx] || patch;
 
         renderSettingsPickers(me);  // highlight the newly-selected preset
         if (document.getElementById('profile_player_select').value === myId) {
@@ -4173,6 +4226,30 @@
         body: JSON.stringify({ ...bodyObj, view_key: financeKey })
       });
       return { ok: res.ok, data: await res.json() };
+    }
+
+    /**
+     * Before showing the manual key box, ask the server whether this
+     * logged-in user is allowed finance access. If so it returns the view
+     * key and we unlock silently - most people never see or type the
+     * secret again. The manual box stays as a fallback for anyone off the
+     * list who still knows the key.
+     */
+    async function tryAutoFinanceUnlock() {
+      if (!isLoggedIn()) return false;
+      try {
+        const { res, data } = await authedFetch(`${API_BASE_URL}/finance-access`);
+        if (!res.ok || !data.view_key) return false;
+        financeKey = data.view_key;
+        sessionStorage.setItem('nw_finance_key', financeKey);
+        document.getElementById('finance-content').style.display = 'block';
+        const s = await (await fetch(`${financeBaseUrl()}/settings?${finQS()}`, { headers: getAuthHeaders() })).json();
+        document.getElementById('finance_walkins_public').checked = !!s.walkins_public;
+        loadFinanceSummary(); loadFinanceExpenses(); loadFinanceMembers();
+        const lock = document.getElementById('finance-lock-status');
+        if (lock) lock.textContent = 'Unlocked ✓ (you have finance access)';
+        return true;
+      } catch (e) { return false; }
     }
 
     async function financeUnlock() {
@@ -5963,6 +6040,7 @@
           const championName = finalMatch.player_a.player_id === finalMatch.winner_id ? finalMatch.player_a.name : finalMatch.player_b.name;
           html += `<p><strong>Champion: ${championName}</strong></p>`;
           html += `<button type="button" class="secondary" onclick="copyTournamentRecap()">Copy WhatsApp recap</button>`;
+          html += `<button type="button" onclick="downloadTournamentImage()" style="margin-left:8px;">Download share image</button>`;
         }
       }
 
@@ -5987,6 +6065,165 @@
         recap += `3rd place: ${tpWinnerName}\n`;
       }
       return recap;
+    }
+
+    /**
+     * Renders the tournament's final (and semifinals if present) to a PNG
+     * the user can save and share on WhatsApp. Done on a canvas rather than
+     * server-side: WhatsApp can't render our CSS cards, but it happily
+     * attaches a downloaded image, and this needs no new Lambda or S3
+     * round trip. Player photos are drawn when present, falling back to the
+     * preset colour so a card always renders.
+     *
+     * crossOrigin='anonymous' on the images matters: our uploads serve from
+     * CloudFront with permissive CORS, and without it the canvas would be
+     * tainted and toBlob() would throw a security error.
+     */
+    async function downloadTournamentImage() {
+      const t = currentTournamentData;
+      if (!t || !t.knockout || t.status !== 'completed') {
+        alert('This tournament is not completed yet.');
+        return;
+      }
+      const rounds = t.knockout.rounds;
+      const final = rounds[rounds.length - 1][0];
+      const semis = rounds.length >= 2 ? rounds[rounds.length - 2] : [];
+
+      const W = 900, cardH = 200, pad = 40, gap = 24;
+      const rows = 1 + (semis.length ? 1 : 0) + semis.length;
+      const H = pad * 2 + 70 + cardH + (semis.length ? (40 + semis.length * (cardH + gap)) : 0);
+      const canvas = document.createElement('canvas');
+      canvas.width = W; canvas.height = H;
+      const ctx = canvas.getContext('2d');
+
+      ctx.fillStyle = '#0F1B15';
+      ctx.fillRect(0, 0, W, H);
+      ctx.fillStyle = '#fff';
+      ctx.font = "800 34px 'Rajdhani', system-ui, sans-serif";
+      ctx.textBaseline = 'top';
+      ctx.fillText(t.name, pad, pad);
+      ctx.font = "600 16px system-ui, sans-serif";
+      ctx.fillStyle = '#9fb3a8';
+      ctx.fillText('Tournament results', pad, pad + 40);
+
+      const loadImg = (src) => new Promise((res) => {
+        if (!src) { res(null); return; }
+        const img = new Image();
+        img.crossOrigin = 'anonymous';
+        img.onload = () => res(img);
+        img.onerror = () => res(null);
+        img.src = src;
+      });
+
+      // Pre-resolve every avatar image up front so drawing is synchronous.
+      const sideVisuals = (side) => vsSideIds(side).map(id => vsPlayerVisual(id, t.card_snapshot));
+      const allSides = [ [final.player_a, final.player_b], ...semis.map(m => [m.player_a, m.player_b]) ];
+      const imgCache = {};
+      await Promise.all(allSides.flat().flatMap(sideVisuals).map(async v => {
+        if (v.avatarUrl && !(v.avatarUrl in imgCache)) imgCache[v.avatarUrl] = await loadImg(v.avatarUrl);
+      }));
+
+      async function drawCard(x, y, w, match, isFinal) {
+        const a = sideVisuals(match.player_a), b = sideVisuals(match.player_b);
+        const winA = match.winner_id && match.player_a.player_id === match.winner_id;
+        const winB = match.winner_id && match.player_b.player_id === match.winner_id;
+
+        ctx.save();
+        roundRect(ctx, x, y, w, cardH, 14); ctx.clip();
+        // team B fills, team A masked over — approximated here with a hard
+        // split, since canvas gradient masks are heavier than they're worth
+        // for a static export.
+        paintTeam(ctx, x, y, w, cardH, b, '#3a1114');
+        ctx.save();
+        ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + w * 0.52, y);
+        ctx.lineTo(x + w * 0.42, y + cardH); ctx.lineTo(x, y + cardH); ctx.closePath(); ctx.clip();
+        paintTeam(ctx, x, y, w, cardH, a, '#06231c');
+        ctx.restore();
+        ctx.restore();
+
+        drawAvatars(ctx, x + 26, y + 30, a, winA);
+        drawAvatars(ctx, x + w - 26 - a.length * 62, y + cardH - 92, b, winB);
+
+        // centre badge or cup
+        ctx.textAlign = 'center';
+        if (isFinal) {
+          ctx.font = "800 30px system-ui"; ctx.fillStyle = '#F5C542';
+          ctx.fillText('🏆', x + w / 2, y + cardH / 2 - 24);
+          ctx.font = "800 13px 'Rajdhani', sans-serif";
+          ctx.fillText('FINAL', x + w / 2, y + cardH / 2 + 16);
+        } else {
+          ctx.font = "800 italic 34px 'Rajdhani', sans-serif"; ctx.fillStyle = '#fff';
+          ctx.shadowColor = '#00b4d8'; ctx.shadowBlur = 18;
+          ctx.fillText('VS', x + w / 2, y + cardH / 2 - 18);
+          ctx.shadowBlur = 0;
+        }
+        // score
+        const g = match.games && match.games.length ? match.games[match.games.length - 1] : null;
+        if (g) {
+          ctx.font = "800 26px 'Rajdhani', sans-serif";
+          ctx.fillStyle = winA ? '#F5C542' : '#fff'; ctx.textAlign = 'left';
+          ctx.fillText(String(g.score_a), x + 26, y + cardH - 40);
+          ctx.fillStyle = winB ? '#F5C542' : '#fff'; ctx.textAlign = 'right';
+          ctx.fillText(String(g.score_b), x + w - 26, y + 22);
+        }
+        ctx.textAlign = 'left';
+      }
+
+      function drawAvatars(ctx, x, y, side, isWinner) {
+        side.forEach((v, i) => {
+          const cx = x + i * 62 + 26, cy = y + 26, r = 24;
+          ctx.save();
+          ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2);
+          ctx.lineWidth = 3; ctx.strokeStyle = isWinner ? '#F5C542' : 'rgba(255,255,255,.92)'; ctx.stroke();
+          ctx.clip();
+          const img = imgCache[v.avatarUrl];
+          if (img) { ctx.drawImage(img, cx - r, cy - r, r * 2, r * 2); }
+          else { ctx.fillStyle = '#1c2a22'; ctx.fillRect(cx - r, cy - r, r * 2, r * 2);
+                 ctx.fillStyle = '#fff'; ctx.font = '22px system-ui'; ctx.textAlign = 'center';
+                 ctx.fillText(v.avatarEmoji || '', cx, cy - 12); }
+          ctx.restore();
+          ctx.fillStyle = '#fff'; ctx.font = "600 12px system-ui"; ctx.textAlign = 'center';
+          ctx.fillText((v.name || '').slice(0, 10), cx, cy + r + 6);
+          ctx.textAlign = 'left';
+        });
+      }
+
+      function paintTeam(ctx, x, y, w, h, side, fallback) {
+        const g = ctx.createLinearGradient(x, y, x + w, y + h);
+        g.addColorStop(0, fallback); g.addColorStop(1, '#12251d');
+        ctx.fillStyle = g; ctx.fillRect(x, y, w, h);
+      }
+
+      let cursorY = pad + 70;
+      await drawCard(pad, cursorY, W - pad * 2, final, true);
+      cursorY += cardH + 40;
+      if (semis.length) {
+        ctx.fillStyle = '#9fb3a8'; ctx.font = "700 18px 'Rajdhani', sans-serif";
+        ctx.fillText('Semifinals', pad, cursorY - 30);
+        for (const sm of semis) {
+          await drawCard(pad, cursorY, W - pad * 2, sm, false);
+          cursorY += cardH + gap;
+        }
+      }
+
+      canvas.toBlob((blob) => {
+        if (!blob) { alert('Could not generate the image.'); return; }
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url; a.download = `${t.name.replace(/[^a-z0-9]+/gi, '_')}_results.png`;
+        a.click();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+      }, 'image/png');
+    }
+
+    function roundRect(ctx, x, y, w, h, r) {
+      ctx.beginPath();
+      ctx.moveTo(x + r, y);
+      ctx.arcTo(x + w, y, x + w, y + h, r);
+      ctx.arcTo(x + w, y + h, x, y + h, r);
+      ctx.arcTo(x, y + h, x, y, r);
+      ctx.arcTo(x, y, x + w, y, r);
+      ctx.closePath();
     }
 
     function copyTournamentRecap() {
@@ -6178,6 +6415,12 @@
         // tabs doesn't stack up history entries you'd have to click back
         // through one at a time.
         history.replaceState(null, '', `#${btn.dataset.tab}`);
+        // Finance: if the user is on the allowlist, unlock without ever
+        // showing the key box. Only tried when it's still locked.
+        if (btn.dataset.tab === 'finance'
+            && document.getElementById('finance-content').style.display !== 'block') {
+          tryAutoFinanceUnlock();
+        }
         // Leaving the Player Card has to hand the page back to your own
         // background, so this is re-evaluated on every switch rather than
         // only when a card is rendered.

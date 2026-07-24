@@ -85,6 +85,49 @@ def _is_super_admin(claims):
     return 'SuperAdmin' in groups
 
 
+
+def _has_finance_access(claims):
+    if _is_super_admin(claims):
+        return True
+    pid = claims.get('custom:player_id')
+    if not pid:
+        return False
+    p = players_table.get_item(Key={'player_id': pid}).get('Item') or {}
+    return bool(p.get('finance_access'))
+
+
+def finance_key_for_caller(event):
+    """Hands the shared view key to an allowed caller, so the frontend can
+    unlock finance without anyone knowing or typing the secret. The key
+    never leaves the server for anyone not on the list."""
+    claims = _caller_claims(event)
+    if not claims:
+        return _response(403, {'error': 'log in to access finance'})
+    if not _has_finance_access(claims):
+        return _response(403, {'error': 'you do not have finance access - ask an admin'})
+    return _response(200, {'view_key': VIEW_KEY})
+
+
+def set_finance_access(event):
+    """SuperAdmin flips a player's finance access on or off."""
+    claims = _caller_claims(event)
+    if not _is_super_admin(claims):
+        return _response(403, {'error': 'only a SuperAdmin can manage finance access'})
+    body = json.loads(event.get('body') or '{}')
+    player_id = body.get('player_id')
+    grant = bool(body.get('grant'))
+    if not player_id:
+        return _response(400, {'error': 'player_id is required'})
+    if not players_table.get_item(Key={'player_id': player_id}).get('Item'):
+        return _response(404, {'error': 'player not found'})
+    players_table.update_item(
+        Key={'player_id': player_id},
+        UpdateExpression='SET finance_access = :v',
+        ExpressionAttributeValues={':v': grant}
+    )
+    return _response(200, {'player_id': player_id, 'finance_access': grant})
+
+
 def handler(event, context):
     try:
         method = event.get('httpMethod')
@@ -99,6 +142,19 @@ def handler(event, context):
         # API Gateway forbids a named path param as a sibling of {proxy+}.
         if 'record_type' in path_params and 'record_id' in path_params and method == 'DELETE':
             return delete_record_enforced(path_params['record_type'], path_params['record_id'], event)
+
+        # /finance-access : authenticated. GET returns the view key to a
+        # caller who's allowed (SuperAdmin, or a player flagged
+        # finance_access) so they never type it. POST toggles a player's
+        # access - SuperAdmin only. This replaces "everyone shares one
+        # secret" with "an admin decides who can see finance".
+        resource = event.get('resource') or ''
+        if resource.endswith('/finance-access'):
+            if method == 'GET':
+                return finance_key_for_caller(event)
+            if method == 'POST':
+                return set_finance_access(event)
+
 
         # Epic 4 (increment 5): if this request has an 'authorizer' context
         # at all, it arrived via the new /finance-secure/{proxy+} catch-all
