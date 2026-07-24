@@ -83,6 +83,27 @@
     .vsc-badge, .vsc-cup svg { animation:none; }
   }
 
+  /* Full-bleed fixture block: the card was previously crammed into a table
+     cell, which squeezed it to a couple of hundred pixels and overlapped
+     the names with the VS badge. */
+  .vsc { width:100%; height:170px; }
+  .fixture { margin:14px 0; padding-bottom:12px; border-bottom:1px solid var(--border); }
+  .fixture-controls { display:flex; flex-wrap:wrap; align-items:center; gap:8px;
+                      margin-top:10px; font-size:14px; }
+  .fixture-controls input[type=number] { width:64px; display:inline-block; margin:0; }
+  .vsc-score { position:absolute; z-index:6; font-family:'Rajdhani',sans-serif; font-weight:800;
+               font-size:30px; color:#fff; text-shadow:0 2px 8px rgba(0,0,0,.95);
+               padding:1px 10px; border-radius:8px; background:rgba(0,0,0,.34); }
+  .vsc-score-a { left:14px; bottom:14px; }
+  .vsc-score-b { right:14px; top:16px; }
+  /* Winner gets the shuttle-yellow ring rather than a separate tick, so the
+     result reads at a glance without adding another glyph to a busy card. */
+  .vsc-won { color:#F5C542; box-shadow:0 0 0 2px #F5C542, 0 0 14px rgba(245,197,66,.7); }
+  @media (max-width: 600px) {
+    .vsc { height:150px; }
+    .vsc-score { font-size:24px; }
+  }
+
   body {
     font-family: 'Inter', sans-serif;
     background: transparent;
@@ -3160,6 +3181,8 @@
         name: live.nickname || live.name || '',
         avatarUrl: src.avatar_url ? imageSrc(src.avatar_url) : null,
         avatarEmoji: AVATAR_PRESETS[src.avatar_id] || '',
+        hasUpload: !!src.banner_url,
+        hasBanner: !!(src.banner_url || resolveBannerId(src.banner_id)),
         banner: src.banner_url
           ? `center / cover no-repeat url("${imageSrc(src.banner_url)}")`
           : (BANNER_PRESETS[resolveBannerId(src.banner_id)] || BANNER_PRESETS.court)
@@ -3179,25 +3202,41 @@
       <path d="M12 14v3M8.5 20h7l-.8-2.2a1.2 1.2 0 0 0-1.1-.8h-3.2a1.2 1.2 0 0 0-1.1.8L8.5 20Z" stroke="#F5C542" stroke-width="1.6" stroke-linejoin="round"/>
     </svg>`;
 
+    /** A team's banner is whichever member actually set one - preferring an
+     *  uploaded image over a preset. Taking members[0] blindly meant a pair
+     *  fell back to the default whenever the first-listed player happened
+     *  to have no banner, even though their partner had a custom one. */
+    function teamBanner(side) {
+      const uploaded = side.find(v => v.hasUpload);
+      if (uploaded) return uploaded.banner;
+      const chosen = side.find(v => v.hasBanner);
+      return (chosen || side[0]).banner;
+    }
+
     function renderVsCard(idsA, idsB, opts = {}) {
       const snap = opts.snapshot || null;
       const a = (idsA || []).map(id => vsPlayerVisual(id, snap));
       const b = (idsB || []).map(id => vsPlayerVisual(id, snap));
       if (!a.length || !b.length) return '';
+      const won = (side) => opts.winner === side ? ' vsc-won' : '';
+      const scoreHtml = (opts.scoreA === undefined || opts.scoreA === null) ? '' : `
+        <div class="vsc-score vsc-score-a${won('a')}">${escapeHtml(String(opts.scoreA))}</div>
+        <div class="vsc-score vsc-score-b${won('b')}">${escapeHtml(String(opts.scoreB))}</div>`;
       const centre = opts.isFinal
         ? `<div class="vsc-cup">${VS_CUP_SVG}<div class="vsc-cupl">FINAL</div></div>`
         : `<div class="vsc-badge">VS</div>`;
       const goldEdge = opts.isFinal
         ? `<div class="vsc-layer" style="box-shadow:inset 0 0 0 2px rgba(245,197,66,.55); border-radius:var(--radius);"></div>` : '';
       return `<div class="vsc">
-        <div class="vsc-layer" style="background:${b[0].banner};"></div>
-        <div class="vsc-layer" style="background:${a[0].banner};
+        <div class="vsc-layer" style="background:${teamBanner(b)};"></div>
+        <div class="vsc-layer" style="background:${teamBanner(a)};
              -webkit-mask-image:linear-gradient(115deg,#000 36%,transparent 64%);
              mask-image:linear-gradient(115deg,#000 36%,transparent 64%);"></div>
         <div class="vsc-layer" style="background:linear-gradient(115deg,transparent 42%,rgba(0,0,0,.30) 50%,transparent 58%);"></div>
         ${goldEdge}
         <div style="position:absolute; left:14px; top:16px; display:flex; gap:8px; z-index:4;">${a.map(vsAvatarHtml).join('')}</div>
         <div style="position:absolute; right:14px; bottom:16px; display:flex; gap:8px; z-index:4;">${b.map(vsAvatarHtml).join('')}</div>
+        ${scoreHtml}
         ${centre}
       </div>`;
     }
@@ -5749,6 +5788,9 @@
       const el = document.getElementById('tournament-detail');
       const bestOf = t.best_of || 1;
       const liveMode = document.getElementById('tournament_live_toggle').checked;
+      // Guests can watch a tournament but not score it - the same rule the
+      // Matches tab already applies to recording a match.
+      const canScore = isLoggedIn() && hasLinkedPlayer();
       const target = parseInt(t.points_to_win, 10) || 21;
       let html = `<h3 style="font-size:16px;">${t.name} - ${t.status} (games to ${t.points_to_win || 21}, best of ${bestOf})</h3>`;
 
@@ -5763,39 +5805,43 @@
             });
             html += '</table>';
           }
-          html += '<table><tr><th>Match</th><th>Games</th><th>Action</th></tr>';
           sg.fixtures.forEach(f => {
             const tbPrefix = f.tiebreaker ? '<strong>[TIEBREAKER]</strong> ' : '';
             const label = `${tbPrefix}${f.player_a.name} vs ${f.player_b.name}`;
             const gamesText = formatGames(f.games);
-            const vsCard = renderVsCard(vsSideIds(f.player_a), vsSideIds(f.player_b),
-                                        { snapshot: t.card_snapshot, isFinal: false });
-            const matchCell = vsCard
-              ? `${tbPrefix}${vsCard}`
-              : label;  // falls back to the old text row if ids are missing
+            const lastGame = (f.games && f.games.length) ? f.games[f.games.length - 1] : null;
+            const vsCard = renderVsCard(vsSideIds(f.player_a), vsSideIds(f.player_b), {
+              snapshot: t.card_snapshot,
+              isFinal: false,
+              scoreA: lastGame ? lastGame.a : (f.played ? f.games_won_a : undefined),
+              scoreB: lastGame ? lastGame.b : (f.played ? f.games_won_b : undefined),
+              winner: f.played ? (f.games_won_a > f.games_won_b ? 'a' : 'b') : null
+            });
+            const head = vsCard ? `${tbPrefix}${vsCard}` : `<p>${label}</p>`;
+            html += `<div class="fixture">${head}`;
             if (f.played) {
-              html += `<tr><td>${matchCell}</td><td>${gamesText} (${f.games_won_a}-${f.games_won_b})</td><td>Done</td></tr>`;
+              html += `<div class="fixture-controls"><strong>${gamesText}</strong> (${f.games_won_a}-${f.games_won_b}) &middot; Done</div>`;
+            } else if (!canScore) {
+              // Same rule as the Matches tab: recording a result is a
+              // members-only action, so guests see the fixture but no inputs.
+              html += `<div class="fixture-controls">Log in to enter a score.</div>`;
             } else {
               const nextGameNum = (f.games ? f.games.length : 0) + 1;
               const progress = gamesText ? `Games so far: ${gamesText} (${f.games_won_a}-${f.games_won_b}) | ` : '';
               const matchKey = `group_${f.fixture_id}`;
               if (liveMode) {
-                html += `<tr><td>${matchCell}</td><td colspan="2">
-                  ${progress}Game ${nextGameNum}:
-                  ${renderLiveScoreControls(matchKey, target, `finishGroupLiveGame('${matchKey}','${t.tournament_id}','${sgName}','${f.fixture_id}')`, f.player_a.name, f.player_b.name)}
-                </td></tr>`;
+                html += `<div class="fixture-controls">${progress}Game ${nextGameNum}:
+                  ${renderLiveScoreControls(matchKey, target, `finishGroupLiveGame('${matchKey}','${t.tournament_id}','${sgName}','${f.fixture_id}')`, f.player_a.name, f.player_b.name)}</div>`;
               } else {
-                html += `<tr><td>${matchCell}</td><td colspan="2">
-                  ${progress}Game ${nextGameNum}:
-                  <input type="number" id="ga_${f.fixture_id}" style="width:50px;display:inline-block;">
+                html += `<div class="fixture-controls">${progress}Game ${nextGameNum}:
+                  <input type="number" id="ga_${f.fixture_id}">
                   -
-                  <input type="number" id="gb_${f.fixture_id}" style="width:50px;display:inline-block;">
-                  <button onclick="submitGroupScore('${t.tournament_id}','${sgName}','${f.fixture_id}')">Submit game ${nextGameNum}</button>
-                </td></tr>`;
+                  <input type="number" id="gb_${f.fixture_id}">
+                  <button onclick="submitGroupScore('${t.tournament_id}','${sgName}','${f.fixture_id}')">Submit game ${nextGameNum}</button></div>`;
               }
             }
+            html += '</div>';
           });
-          html += '</table>';
         }
       }
 
