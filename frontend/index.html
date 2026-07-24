@@ -275,7 +275,7 @@
       </div>
 
       <div id="auth-login-view">
-        <label>Email, player name, or nickname <input type="text" id="auth-login-email" placeholder="you@example.com or your name"></label>
+        <label>Email or nickname <input type="text" id="auth-login-email" placeholder="you@example.com or your nickname"></label>
         <label>Password <input type="password" id="auth-login-password"></label>
         <button type="button" id="auth-login-submit-btn">Log in</button>
         <p style="font-size:13px; margin-top:10px;">
@@ -883,6 +883,18 @@
         <label>Player
           <select id="profile_player_select"></select>
         </label>
+        <div id="profile-banner-display" style="display:none; margin-top:12px; border-radius:var(--radius); overflow:hidden;">
+          <div id="profile-banner-strip" style="height:70px; display:flex; align-items:center; padding:0 16px;">
+            <span id="profile-avatar-emoji" style="font-size:40px; line-height:1;"></span>
+          </div>
+        </div>
+        <div id="profile-customize-section" style="display:none; margin-top:12px; border-top:1px solid var(--border); padding-top:12px;">
+          <p style="font-size:13px; font-weight:600; margin:0 0 8px;">Customize your card</p>
+          <p style="font-size:12px; opacity:0.7; margin:0 0 6px;">Avatar</p>
+          <div id="avatar-picker" style="display:flex; flex-wrap:wrap; gap:6px; margin-bottom:10px;"></div>
+          <p style="font-size:12px; opacity:0.7; margin:0 0 6px;">Banner</p>
+          <div id="banner-picker" style="display:flex; flex-wrap:wrap; gap:6px;"></div>
+        </div>
       </div>
 
       <div class="card">
@@ -2311,6 +2323,70 @@
       } catch (err) { /* silent - profile tab just stays empty until this succeeds */ }
     }
 
+    // ---------- profile card customization (avatar + banner presets) ----------
+    // Curated presets, not uploaded images - no upload infrastructure yet.
+    // Real photo upload would be a bigger separate step (needs S3
+    // presigned uploads); this delivers visible personalization now with
+    // zero new infra, and could sit alongside real uploads later.
+    const AVATAR_PRESETS = {
+      shuttle: '🏸', trophy: '🏆', lightning: '⚡', fire: '🔥', target: '🎯',
+      eagle: '🦅', tiger: '🐯', lion: '🦁', wolf: '🐺', fox: '🦊',
+      dragon: '🐉', crown: '👑', muscle: '💪', star: '🌟', game: '🎮', racket: '🏓'
+    };
+    const BANNER_PRESETS = {
+      sunset: 'linear-gradient(135deg, #FF512F, #F09819)',
+      ocean: 'linear-gradient(135deg, #2193b0, #6dd5ed)',
+      forest: 'linear-gradient(135deg, #134E5E, #71B280)',
+      fire: 'linear-gradient(135deg, #f12711, #f5af19)',
+      royal: 'linear-gradient(135deg, #141E30, #243B55)',
+      candy: 'linear-gradient(135deg, #ee9ca7, #ffdde1)',
+      midnight: 'linear-gradient(135deg, #232526, #414345)',
+      court: 'linear-gradient(135deg, #1F7A4D, #2FA968)'
+    };
+
+    function renderProfileCardBanner(player) {
+      const displayEl = document.getElementById('profile-banner-display');
+      const stripEl = document.getElementById('profile-banner-strip');
+      const emojiEl = document.getElementById('profile-avatar-emoji');
+      if (!player || (!player.avatar_id && !player.banner_id)) { displayEl.style.display = 'none'; return; }
+      displayEl.style.display = 'block';
+      stripEl.style.background = BANNER_PRESETS[player.banner_id] || BANNER_PRESETS.court;
+      emojiEl.textContent = AVATAR_PRESETS[player.avatar_id] || '';
+    }
+
+    function renderCustomizeSection(player) {
+      const section = document.getElementById('profile-customize-section');
+      const isSelf = isLoggedIn() && player && player.player_id === myPlayerId();
+      section.style.display = isSelf ? 'block' : 'none';
+      if (!isSelf) return;
+
+      const avatarPicker = document.getElementById('avatar-picker');
+      avatarPicker.innerHTML = Object.entries(AVATAR_PRESETS).map(([id, emoji]) =>
+        `<button type="button" class="secondary" style="font-size:22px; padding:6px 10px; ${player.avatar_id === id ? 'border-color:var(--court); border-width:2px;' : ''}" onclick="setMyCardField('avatar_id','${id}')">${emoji}</button>`
+      ).join('');
+
+      const bannerPicker = document.getElementById('banner-picker');
+      bannerPicker.innerHTML = Object.entries(BANNER_PRESETS).map(([id, gradient]) =>
+        `<button type="button" style="width:36px; height:36px; border-radius:6px; border:${player.banner_id === id ? '3px solid var(--text)' : '1px solid var(--border)'}; background:${gradient}; cursor:pointer; padding:0;" title="${id}" onclick="setMyCardField('banner_id','${id}')"></button>`
+      ).join('');
+    }
+
+    async function setMyCardField(field, value) {
+      try {
+        const res = await fetch(`${API_BASE_URL}/update-my-card`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+          body: JSON.stringify({ [field]: value })
+        });
+        const data = await res.json();
+        if (!res.ok) { alert('Error: ' + data.error); return; }
+        await loadVisiblePlayers();  // refreshes cached player data with the new avatar/banner
+        loadProfile();
+      } catch (err) {
+        alert('Request failed: ' + err.message);
+      }
+    }
+
     async function loadProfileBundle(playerId) {
       try {
         const res = await fetch(`${API_BASE_URL}/profile-secure/matches?profile_bundle_for=${playerId}`, { headers: getAuthHeaders() });
@@ -2653,6 +2729,10 @@
     async function loadProfile() {
       const playerId = document.getElementById('profile_player_select').value;
       if (!playerId) return;
+
+      const player = allPlayers.find(p => p.player_id === playerId);
+      renderProfileCardBanner(player);
+      renderCustomizeSection(player);
 
       showProfileSkeletons();
 

@@ -273,7 +273,8 @@ def visible_players_for_caller(event):
             visible = [p for p in all_players if p['player_id'] in visible_ids]
 
     return _response(200, {'players': [
-        {'player_id': p['player_id'], 'name': p['name'], 'nickname': p.get('nickname'), 'rating': p.get('rating', 1000)}
+        {'player_id': p['player_id'], 'name': p['name'], 'nickname': p.get('nickname'), 'rating': p.get('rating', 1000),
+         'avatar_id': p.get('avatar_id'), 'banner_id': p.get('banner_id')}
         for p in visible
     ]})
 

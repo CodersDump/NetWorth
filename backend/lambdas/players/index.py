@@ -41,6 +41,8 @@ def handler(event, context):
             return lookup_email_for_login(params['login_identifier'])
         if event.get('resource') == '/rename-self' and method == 'PUT':
             return rename_self(event)
+        if event.get('resource') == '/update-my-card' and method == 'PUT':
+            return update_my_card(event)
         if method == 'GET' and not player_id:
             return list_players()
         elif method == 'PUT' and player_id:
@@ -76,8 +78,11 @@ def lookup_email_for_login(identifier):
         email = p.get('email')
         if not email:
             continue
+        # Only player_id and nickname are guaranteed unique - real names
+        # can duplicate now, so matching on name here would be genuinely
+        # ambiguous (which "Rahul" did you mean?) rather than just a
+        # convenience shortcut.
         if (p['player_id'] == identifier or
-                p.get('name', '').strip().lower() == identifier_norm or
                 p.get('nickname', '').strip().lower() == identifier_norm):
             return _response(200, {'email': email})
 
@@ -92,7 +97,9 @@ def list_players():
             'name': i['name'],
             'nickname': i.get('nickname'),
             'skill_level': i.get('skill_level'),
-            'rating': i.get('rating', 1000)
+            'rating': i.get('rating', 1000),
+            'avatar_id': i.get('avatar_id'),
+            'banner_id': i.get('banner_id')
         }
         for i in items
     ]
@@ -116,6 +123,52 @@ def _can_self_rename(claims):
     until that's built.
     """
     return True
+
+
+ALLOWED_AVATARS = {'shuttle', 'trophy', 'lightning', 'fire', 'target', 'eagle', 'tiger',
+                   'lion', 'wolf', 'fox', 'dragon', 'crown', 'muscle', 'star', 'game', 'racket'}
+ALLOWED_BANNERS = {'sunset', 'ocean', 'forest', 'fire', 'royal', 'candy', 'midnight', 'court'}
+
+
+def update_my_card(event):
+    """Self-service avatar/banner customization for the CALLER'S OWN
+    player - unlike rename_self, this is NOT gated behind an achievement
+    or level requirement, since it's purely cosmetic rather than an
+    identity change. Any logged-in, linked account can customize freely.
+    Both fields are validated against a fixed preset list (not free text)
+    since there's no image upload yet - just curated emoji/gradient IDs."""
+    claims = _caller_claims(event)
+    if not claims:
+        return _response(403, {'error': 'log in to customize your card'})
+    player_id = claims.get('custom:player_id')
+    if not player_id:
+        return _response(403, {'error': 'your account is not linked to a player yet'})
+
+    body = json.loads(event.get('body') or '{}')
+    avatar_id = body.get('avatar_id')
+    banner_id = body.get('banner_id')
+    if avatar_id is not None and avatar_id not in ALLOWED_AVATARS:
+        return _response(400, {'error': f'unknown avatar_id - choose from {sorted(ALLOWED_AVATARS)}'})
+    if banner_id is not None and banner_id not in ALLOWED_BANNERS:
+        return _response(400, {'error': f'unknown banner_id - choose from {sorted(ALLOWED_BANNERS)}'})
+    if avatar_id is None and banner_id is None:
+        return _response(400, {'error': 'provide avatar_id and/or banner_id'})
+
+    update_parts = []
+    values = {}
+    if avatar_id is not None:
+        update_parts.append('avatar_id = :a')
+        values[':a'] = avatar_id
+    if banner_id is not None:
+        update_parts.append('banner_id = :b')
+        values[':b'] = banner_id
+
+    table.update_item(
+        Key={'player_id': player_id},
+        UpdateExpression='SET ' + ', '.join(update_parts),
+        ExpressionAttributeValues=values
+    )
+    return _response(200, {'player_id': player_id, 'avatar_id': avatar_id, 'banner_id': banner_id})
 
 
 def rename_self(event):
