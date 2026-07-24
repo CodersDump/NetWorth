@@ -438,16 +438,13 @@
       <p class="card-sub" style="margin:0 0 8px;">Upload a photo, or pick a preset below. Photos are cropped square and resized before uploading.</p>
       <input type="file" accept="image/*" id="upload-avatar-input" style="margin-bottom:8px; font-size:12px;"
              onchange="uploadCardImage('avatar', this)">
-      <div id="settings-avatar-preview" style="display:none; align-items:center; gap:8px; margin-bottom:10px;">
-        <div id="settings-avatar-thumb" style="width:44px; height:44px; border-radius:50%; border:2px solid var(--border);"></div>
-        <button type="button" class="secondary" style="margin:0; padding:4px 10px; font-size:12px;"
-                onclick="setMyCardField('avatar_url','')">Remove photo</button>
-      </div>
+      <div id="settings-avatar-uploads" style="margin-bottom:10px;"></div>
       <div id="settings-avatar-picker" style="display:flex; flex-wrap:wrap; gap:6px; margin-bottom:14px;"></div>
       <p style="font-size:13px; font-weight:600; margin:0 0 4px;">Banner</p>
       <p class="card-sub" style="margin:0 0 8px;">The strip across the top of your Player Card. Upload your own, or pick a pattern.</p>
       <input type="file" accept="image/*" id="upload-banner-input" style="margin-bottom:8px; font-size:12px;"
              onchange="uploadCardImage('banner', this)">
+      <div id="settings-banner-uploads" style="margin-bottom:10px;"></div>
       <div id="settings-banner-picker" style="display:flex; flex-wrap:wrap; gap:6px; margin-bottom:14px;"></div>
       <p style="font-size:13px; font-weight:600; margin:0 0 4px;">Background</p>
       <p class="card-sub" style="margin:0 0 8px;">Sits behind the whole page. Shown to anyone viewing your card.</p>
@@ -2878,14 +2875,11 @@
 
       // Show the current photo so "did my upload work?" is answerable
       // without leaving Settings.
-      const preview = document.getElementById('settings-avatar-preview');
-      if (player.avatar_url) {
-        preview.style.display = 'flex';
-        document.getElementById('settings-avatar-thumb').style.background =
-          `center / cover no-repeat url("${imageSrc(player.avatar_url)}")`;
-      } else {
-        preview.style.display = 'none';
-      }
+      // Your kept uploads, newest first, as a switchable strip. Selecting
+      // one is free - it's already stored, so it costs no upload and
+      // doesn't push anything off the list.
+      renderUploadStrip('avatar', player);
+      renderUploadStrip('banner', player);
 
       document.getElementById('settings-background-picker').innerHTML =
         Object.entries(BACKGROUND_PRESETS).map(([id, css]) =>
@@ -3052,10 +3046,18 @@
         const blob = await resizeImage(file, kind);
 
         statusEl.textContent = 'Getting upload permission...';
+        // Content hash, not a random id. Re-uploading the same photo
+        // produces the same key, so it overwrites itself instead of
+        // filling the player's slots with copies of one image - and the
+        // rotation list treats it as a reselect rather than a new upload.
+        const digest = await crypto.subtle.digest('SHA-256', await blob.arrayBuffer());
+        const hash = Array.from(new Uint8Array(digest)).slice(0, 16)
+          .map(b => b.toString(16).padStart(2, '0')).join('');
+
         const { res: urlRes, data: urlData, error } = await authedFetch(`${API_BASE_URL}/upload-url`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ kind, content_type: 'image/jpeg' })
+          body: JSON.stringify({ kind, content_type: 'image/jpeg', fingerprint: hash })
         });
         if (!urlRes.ok) { statusEl.textContent = `Error: ${error}`; return; }
 
@@ -3080,6 +3082,28 @@
      *  through CloudFront, so no absolute domain is baked into the data. */
     function imageSrc(key) { return key ? `/${key}` : null; }
 
+
+    /** Renders a player's kept custom uploads as a small switcher. */
+    function renderUploadStrip(kind, player) {
+      const el = document.getElementById(`settings-${kind}-uploads`);
+      const keys = (player[`${kind}_uploads`] || []).filter(Boolean);
+      const current = player[`${kind}_url`];
+      if (!keys.length) { el.innerHTML = ''; return; }
+      const shape = kind === 'avatar'
+        ? 'width:44px; height:44px; border-radius:50%;'
+        : 'width:72px; height:40px; border-radius:6px;';
+      el.innerHTML =
+        `<p class="card-sub" style="margin:0 0 6px;">Your uploads (${keys.length} of 3 kept - a fourth replaces the oldest)</p>` +
+        keys.map(k =>
+          `<button type="button" title="Use this"
+             style="${shape} padding:0; margin:0 6px 6px 0; cursor:pointer;
+                    border:${k === current ? '3px solid var(--court)' : '1px solid var(--border)'};
+                    background:center / cover no-repeat url('${imageSrc(k)}');"
+             onclick="setMyCardField('${kind}_url','${k}')"></button>`
+        ).join('') +
+        `<button type="button" class="secondary" style="margin:0 0 6px; padding:4px 10px; font-size:12px; vertical-align:top;"
+           onclick="setMyCardField('${kind}_url','')">Use a preset instead</button>`;
+    }
 
     async function setMyCardField(field, value) {
       const statusEl = document.getElementById('settings-status');

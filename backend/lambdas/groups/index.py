@@ -308,7 +308,9 @@ def visible_players_for_caller(event):
         row = {'player_id': p['player_id'], 'name': p['name'], 'nickname': p.get('nickname'),
                'rating': p.get('rating', 1000), 'avatar_id': p.get('avatar_id'),
                'banner_id': p.get('banner_id'), 'background_id': p.get('background_id'),
-               'avatar_url': p.get('avatar_url'), 'banner_url': p.get('banner_url')}
+               'avatar_url': p.get('avatar_url'), 'banner_url': p.get('banner_url'),
+               'avatar_uploads': p.get('avatar_uploads') or [],
+               'banner_uploads': p.get('banner_uploads') or []}
         if show_audit:
             row['created_by'] = p.get('created_by')
             row['created_at'] = p.get('created_at')

@@ -123,6 +123,8 @@ def list_players():
             'background_id': i.get('background_id'),
             'avatar_url': i.get('avatar_url'),
             'banner_url': i.get('banner_url'),
+            'avatar_uploads': i.get('avatar_uploads') or [],
+            'banner_uploads': i.get('banner_uploads') or [],
             'claimed': bool(i.get('email'))  # signal only, never the actual email - that stays private
         }
         for i in items
@@ -606,7 +608,14 @@ def create_upload_url(event):
     # The player_id is taken from the token, never the request body, so a
     # presigned URL can only ever write into the caller's own folder.
     ext = ALLOWED_UPLOAD_TYPES[content_type]
-    key = f'uploads/{kind}s/{player_id}/{uuid.uuid4()}.{ext}'
+    # The client sends a hash of the processed image so the same picture
+    # always maps to the same key. Validated rather than trusted - it goes
+    # into an S3 path, so anything but plain hex is rejected. Falls back to
+    # a random id if absent, which keeps older clients working.
+    fingerprint = (body.get('fingerprint') or '').lower()
+    if not re.fullmatch(r'[0-9a-f]{8,64}', fingerprint):
+        fingerprint = uuid.uuid4().hex
+    key = f'uploads/{kind}s/{player_id}/{fingerprint}.{ext}'
 
     s3 = boto3.client('s3')
     url = s3.generate_presigned_url(
@@ -629,6 +638,45 @@ def _valid_upload_key(value, player_id, kind):
     if value in (None, ''):
         return True
     return isinstance(value, str) and value.startswith(f'uploads/{kind}s/{player_id}/')
+
+
+
+# How many custom uploads a player may keep per slot. Small on purpose:
+# these are cosmetic, and an unbounded history is just storage nobody
+# asked for. Presets are unaffected - they cost nothing to keep.
+MAX_UPLOADS_PER_KIND = 3
+
+
+def _rotate_uploads(player_id, kind, new_key):
+    """Maintains the player's short list of custom images, newest first,
+    and hard-deletes anything that falls off the end.
+
+    Selecting an image they already have is a REORDER, not a new upload -
+    otherwise re-picking an old photo would evict a different one and the
+    list would churn for no reason.
+    """
+    player = table.get_item(Key={'player_id': player_id}).get('Item') or {}
+    field = f'{kind}_uploads'
+    existing = [k for k in (player.get(field) or []) if k]
+
+    if new_key in existing:
+        existing.remove(new_key)
+    kept = ([new_key] + existing) if new_key else existing
+    evicted = kept[MAX_UPLOADS_PER_KIND:]
+    kept = kept[:MAX_UPLOADS_PER_KIND]
+
+    if evicted and UPLOADS_BUCKET:
+        try:
+            boto3.client('s3').delete_objects(
+                Bucket=UPLOADS_BUCKET,
+                Delete={'Objects': [{'Key': k} for k in evicted], 'Quiet': True}
+            )
+        except Exception as e:
+            # Losing the delete is untidy, not broken - the key is already
+            # off the player's list either way, so it just leaves an
+            # orphan object rather than failing the user's save.
+            print(json.dumps({'warn': 'upload eviction failed', 'keys': evicted, 'detail': str(e)}))
+    return kept
 
 
 def update_my_card(event):
@@ -678,9 +726,15 @@ def update_my_card(event):
     if avatar_url is not None:
         update_parts.append('avatar_url = :au')
         values[':au'] = avatar_url
+        kept = _rotate_uploads(player_id, 'avatar', avatar_url)
+        update_parts.append('avatar_uploads = :aup')
+        values[':aup'] = kept
     if banner_url is not None:
         update_parts.append('banner_url = :bu')
         values[':bu'] = banner_url
+        kept = _rotate_uploads(player_id, 'banner', banner_url)
+        update_parts.append('banner_uploads = :bup')
+        values[':bup'] = kept
 
     table.update_item(
         Key={'player_id': player_id},

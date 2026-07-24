@@ -176,7 +176,12 @@ Resources:
               # out presigned PUTs; it never needs to read or delete, and it
               # must not be able to touch index.html in the same bucket.
               - Effect: Allow
-                Action: s3:PutObject
+                Action:
+                  - s3:PutObject
+                  # Needed to evict a player's oldest custom image once
+                  # they go past the keep-limit. Still confined to
+                  # uploads/, so index.html in the same bucket is safe.
+                  - s3:DeleteObject
                 Resource: !Sub '${WebsiteBucket.Arn}/uploads/*'
 
   # ---------- Cognito (Epic 1 - foundation only, not yet wired to any
