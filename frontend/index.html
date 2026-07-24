@@ -2058,26 +2058,46 @@
       const playerId = document.getElementById('delete_player_id').value.trim();
       const resultEl = document.getElementById('delete-result');
 
-      const confirmText = prompt('Enter the confirmation code to delete this player:');
-      if (!confirmText) {
-        resultEl.textContent = 'Cancelled.';
+      if (!isLoggedIn()) { resultEl.textContent = 'Log in to delete a player.'; return; }
+      const player = allPlayers.find(p => p.player_id === playerId);
+      const label = player ? `${player.name} (${player.nickname})` : playerId;
+
+      // Two paths on purpose. A SuperAdmin is the person who would be
+      // approving the request anyway, so routing them through their own
+      // queue would be pure ceremony. Everyone else asks.
+      if (isSuperAdmin()) {
+        const confirmText = prompt(`Enter the confirmation code to delete ${label}:`);
+        if (!confirmText) { resultEl.textContent = 'Cancelled.'; return; }
+        resultEl.textContent = 'Deleting...';
+        try {
+          const { res, data, error } = await authedFetch(`${API_BASE_URL}/players/${playerId}`, {
+            method: 'DELETE',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ confirm: confirmText })
+          });
+          if (!res.ok) { resultEl.textContent = `Error: ${error}`; return; }
+          resultEl.textContent = data.cognito_removed
+            ? `Deleted ${label}, and removed the linked login (${data.cognito_removed}) so that address can sign up again.`
+            : `Deleted ${label}.`;
+          loadPlayers();
+        } catch (err) {
+          resultEl.textContent = `Request failed: ${err.message}`;
+        }
         return;
       }
 
-      resultEl.textContent = 'Deleting...';
+      const reason = prompt(`Ask an admin to delete ${label}?\n\nGive a brief reason (optional):`);
+      if (reason === null) { resultEl.textContent = 'Cancelled.'; return; }
+      resultEl.textContent = 'Sending request...';
       try {
-        const res = await fetch(`${API_BASE_URL}/players/${playerId}`, {
-          method: 'DELETE',
+        const { res, error } = await authedFetch(`${API_BASE_URL}/action-request`, {
+          method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ confirm: confirmText })
+          body: JSON.stringify({ type: 'delete_player', player_id: playerId, reason })
         });
-        const data = await res.json();
-        if (res.ok) {
-          resultEl.textContent = `Deleted player: ${data.deleted}`;
-          loadPlayers();
-        } else {
-          resultEl.textContent = `Error: ${data.error}`;
-        }
+        resultEl.textContent = res.ok
+          ? `Request sent. An admin will review deleting ${label}.`
+          : `Error: ${error}`;
       } catch (err) {
         resultEl.textContent = `Request failed: ${err.message}`;
       }
@@ -2891,24 +2911,35 @@
           listEl.innerHTML = '<p class="card-sub" style="margin:0;">No requests waiting.</p>';
           return;
         }
-        listEl.innerHTML = pending.map(r => `
+        listEl.innerHTML = pending.map(r => {
+          const target = `${escapeHtml(r.player_name || '')} (${escapeHtml(r.player_nickname || '')})`;
+          const isDelete = r.type === 'delete_player';
+          const what = isDelete
+            ? `wants to <strong style="color:var(--smash);">delete</strong> ${target}`
+            : `wants to be ${target}`;
+          const reason = r.reason ? `<div style="color:var(--text-secondary); font-size:12px; font-style:italic;">"${escapeHtml(r.reason)}"</div>` : '';
+          return `
           <div style="border:1px solid var(--border); border-radius:var(--radius); padding:10px; margin-bottom:8px;">
             <div style="font-weight:600;">${escapeHtml(r.requester_email)}</div>
-            <div style="color:var(--text-secondary); font-size:12px; margin-bottom:8px;">
-              wants to be ${escapeHtml(r.player_name || '')} (${escapeHtml(r.player_nickname || '')})
-            </div>
+            <div style="color:var(--text-secondary); font-size:12px; margin-bottom:8px;">${what}</div>
+            ${reason}
             <button type="button" style="margin:0; padding:5px 12px; font-size:12px;"
-                    onclick="decideClaimRequest('${r.request_id}','approve')">Approve</button>
+                    onclick="decideClaimRequest('${r.request_id}','approve','${r.type || 'claim'}')">Approve</button>
             <button type="button" class="secondary" style="margin:0; padding:5px 12px; font-size:12px;"
                     onclick="decideClaimRequest('${r.request_id}','reject')">Reject</button>
-          </div>`).join('');
+          </div>`; }).join('');
       } catch (err) {
         listEl.textContent = `Request failed: ${err.message}`;
       }
     }
 
-    async function decideClaimRequest(requestId, action) {
-      if (action === 'approve' && !confirm('Approve this request?\n\nThis links their login to that player permanently - their match history and rating become theirs.')) return;
+    async function decideClaimRequest(requestId, action, requestType) {
+      if (action === 'approve') {
+        const msg = requestType === 'delete_player'
+          ? 'Approve this deletion?\n\nThe player record and any login linked to it are removed permanently. Their match history stays, but the player is gone.'
+          : 'Approve this request?\n\nThis links their login to that player permanently - their match history and rating become theirs.';
+        if (!confirm(msg)) return;
+      }
       try {
         const { res, error } = await authedFetch(`${API_BASE_URL}/claim-request-decide`, {
           method: 'POST',

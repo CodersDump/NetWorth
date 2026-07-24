@@ -54,6 +54,8 @@ def handler(event, context):
             return claim_player(event)
         if event.get('resource') == '/claim-request' and method == 'POST':
             return create_claim_request(event)
+        if event.get('resource') == '/action-request' and method == 'POST':
+            return create_action_request(event)
         if event.get('resource') == '/claim-requests' and method == 'GET':
             return list_claim_requests(event)
         if event.get('resource') == '/claim-request-decide' and method == 'POST':
@@ -258,6 +260,7 @@ def create_claim_request(event):
         # The Cognito username is what AdminUpdateUserAttributes needs at
         # approval time, and it is not always the same as the email.
         'requester_username': claims.get('cognito:username') or email,
+        'type': 'claim',
         'status': 'pending',
         'created_at': datetime.now(timezone.utc).isoformat()
     })
@@ -275,6 +278,55 @@ def list_claim_requests(event):
     # who approved what, and it makes a mistaken approval visible.
     decided = [r for r in items if r.get('status') != 'pending'][:10]
     return _response(200, {'pending': pending, 'decided': decided})
+
+
+def create_action_request(event):
+    """A non-SuperAdmin asking for a destructive action instead of doing
+    it. Currently only player deletion - the queue is typed so other
+    actions can join later without another table or another route.
+
+    Edits deliberately do NOT come through here. They're attributed and
+    reversible, so gating a typo fix behind an approval would just mean
+    approving things blind to unblock people mid-session."""
+    if not claim_requests_table:
+        return _response(500, {'error': 'requests are not configured on this stack'})
+    claims = _caller_claims(event)
+    if not claims:
+        return _response(403, {'error': 'log in to request this'})
+
+    body = json.loads(event.get('body') or '{}')
+    action_type = body.get('type')
+    if action_type != 'delete_player':
+        return _response(400, {'error': "type must be 'delete_player'"})
+
+    player_id = body.get('player_id')
+    reason = (body.get('reason') or '').strip()
+    if not player_id:
+        return _response(400, {'error': 'player_id is required'})
+
+    player = table.get_item(Key={'player_id': player_id}).get('Item')
+    if not player:
+        return _response(404, {'error': 'player not found'})
+
+    existing = claim_requests_table.scan().get('Items', [])
+    if any(r.get('status') == 'pending' and r.get('type') == 'delete_player'
+           and r.get('player_id') == player_id for r in existing):
+        return _response(400, {'error': 'a deletion request for this player is already waiting'})
+
+    request_id = str(uuid.uuid4())
+    claim_requests_table.put_item(Item={
+        'request_id': request_id,
+        'type': 'delete_player',
+        'player_id': player_id,
+        'player_name': player.get('name'),
+        'player_nickname': player.get('nickname'),
+        'requester_email': claims.get('email'),
+        'requester_username': claims.get('cognito:username') or claims.get('email'),
+        'reason': reason,
+        'status': 'pending',
+        'created_at': datetime.now(timezone.utc).isoformat()
+    })
+    return _response(200, {'request_id': request_id, 'status': 'pending'})
 
 
 def decide_claim_request(event):
@@ -309,7 +361,19 @@ def decide_claim_request(event):
         'decided_by': claims.get('email')
     }
 
-    if action == 'approve':
+    if action == 'approve' and req.get('type') == 'delete_player':
+        # Reuse the real handler rather than re-implementing deletion here,
+        # so the Cognito cleanup and audit logging can't drift apart from
+        # the direct-delete path.
+        forged = {
+            'body': json.dumps({'confirm': CONFIRMATION_CODE}),
+            'requestContext': {'authorizer': {'claims': claims}}
+        }
+        result = delete_player(req['player_id'], forged)
+        if result['statusCode'] != 200:
+            return result
+
+    elif action == 'approve':
         player = table.get_item(Key={'player_id': req['player_id']}).get('Item')
         if not player:
             return _response(404, {'error': 'that player no longer exists'})
@@ -496,6 +560,14 @@ def delete_player(player_id, event):
     claims = _caller_claims(event)
     if not claims:
         return _response(403, {'error': 'log in to delete a player'})
+    # Direct deletion is SuperAdmin-only. Without this the approval queue
+    # would be advisory: any logged-in user who knew the confirmation code
+    # could still delete outright, and routing them through requests in the
+    # UI would just be a suggestion rather than a control.
+    # decide_claim_request calls this with the APPROVING admin's claims, so
+    # the approved path satisfies the same check rather than bypassing it.
+    if not _is_super_admin(claims):
+        return _response(403, {'error': 'only a SuperAdmin can delete a player directly - submit a deletion request instead'})
     body = json.loads(event.get('body') or '{}')
     if body.get('confirm') != CONFIRMATION_CODE:
         return _response(400, {'error': "confirmation code is missing or incorrect"})
@@ -504,11 +576,41 @@ def delete_player(player_id, event):
     if not existing:
         return _response(404, {'error': 'player not found'})
     table.delete_item(Key={'player_id': player_id})
+
+    # Deleting the player used to leave the Cognito account orphaned, which
+    # is worse than it sounds: the address stays registered, so when that
+    # person tries to sign up again they're told the user already exists,
+    # while the account they still have points at a player that's gone.
+    # Removing both halves together is what makes "delete and start over"
+    # actually work.
+    cognito_removed = None
+    linked_email = existing.get('email')
+    if linked_email and USER_POOL_ID:
+        try:
+            cognito = boto3.client('cognito-idp')
+            username = _cognito_username_for_email(cognito, linked_email)
+            if username:
+                cognito.admin_delete_user(UserPoolId=USER_POOL_ID, Username=username)
+                cognito_removed = linked_email
+        except Exception as e:
+            # The player is already gone; failing the whole call here would
+            # be misleading. Surfaced in the response so it's not silent.
+            print(json.dumps({'warn': 'cognito delete failed', 'email': linked_email, 'detail': str(e)}))
+
     # The record is gone, so the only surviving trace of who removed it is
     # this log line. Worth having when a player disappears mid-season.
     print(json.dumps({'action': 'delete_player', 'player_id': player_id,
-                      'name': existing.get('name'), 'by': claims.get('email')}))
-    return _response(200, {'deleted': player_id})
+                      'name': existing.get('name'), 'by': claims.get('email'),
+                      'cognito_removed': cognito_removed}))
+    return _response(200, {'deleted': player_id, 'cognito_removed': cognito_removed})
+
+
+def _cognito_username_for_email(cognito, email):
+    """The username is not always the email, so it has to be looked up.
+    Filter syntax is Cognito's own, and the quotes are required."""
+    resp = cognito.list_users(UserPoolId=USER_POOL_ID, Filter=f'email = "{email}"', Limit=1)
+    users = resp.get('Users', [])
+    return users[0]['Username'] if users else None
 
 
 def _response(status_code, body_dict):
