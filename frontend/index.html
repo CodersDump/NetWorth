@@ -1268,7 +1268,17 @@
       return new Promise((resolve) => {
         if (!authSession) { resolve(false); return; }
         if (!force && tokenSecondsRemaining() > TOKEN_REFRESH_MARGIN_SEC) { resolve(true); return; }
-        const user = authSession.cognitoUser || (userPool && userPool.getCurrentUser());
+        let user = authSession.cognitoUser;
+        if (!user && userPool) {
+          // Restored-from-sessionStorage sessions have no cognitoUser
+          // attached, so fall back to whoever the SDK has stored - but
+          // ONLY if it is the same person. On a shared device these can
+          // legitimately differ, and silently refreshing into someone
+          // else's identity would be far worse than not refreshing.
+          const stored = userPool.getCurrentUser();
+          const expected = authSession.claims['cognito:username'] || authSession.claims.email;
+          if (stored && expected && stored.getUsername() === expected) user = stored;
+        }
         if (!user) { resolve(false); return; }
         user.getSession((err, session) => {
           if (err || !session || !session.isValid()) { resolve(false); return; }
@@ -1426,6 +1436,10 @@
 
     let allPlayers = [];
     let allGroups = [];
+    // Which account the current Player Card selection belongs to. Compared
+    // against myPlayerId() so a selection made by a previous login in the
+    // same tab is discarded rather than inherited.
+    let profileSelectionOwner = null;
 
     // ---------- helpers ----------
 
@@ -2486,14 +2500,19 @@
         // options doesn't silently yank the view back to your own card
         // if you were deliberately looking at someone else's.
         const previousSelection = document.getElementById('profile_player_select').value;
+        // ...but only if it was made by THIS account. The DOM survives a
+        // logout/login in the same tab, so without the ownership check a
+        // second person logging in inherits the first person's selected
+        // card and never sees their own by default.
+        const selectionIsMine = profileSelectionOwner === myPlayerId();
         populateSelect(document.getElementById('profile_player_select'), labeledVisible, 'player_id', 'label', null);
         populateSelect(document.getElementById('profile_h2h_opponent_select'), labeledVisible, 'player_id', 'label', null);
         populateSelect(document.getElementById('profile_compare2_select'), labeledVisible, 'player_id', 'label', 'None');
         populateSelect(document.getElementById('profile_compare3_select'), labeledVisible, 'player_id', 'label', 'None');
         populateSelect(document.getElementById('profile_compare4_select'), labeledVisible, 'player_id', 'label', 'None');
         const myId = myPlayerId();
-        const isFreshLoad = !previousSelection;
-        if (previousSelection && visible.some(p => p.player_id === previousSelection)) {
+        const isFreshLoad = !previousSelection || !selectionIsMine;
+        if (previousSelection && selectionIsMine && visible.some(p => p.player_id === previousSelection)) {
           // Keep whoever was already selected (this is a re-render, e.g.
           // from the display toggle, not the first load) - and since
           // nothing about WHO is selected changed, there's no need to
@@ -2504,6 +2523,7 @@
           // not just whatever's alphabetically first.
           document.getElementById('profile_player_select').value = myId;
         }
+        profileSelectionOwner = myId;
         // Only fetch profile data on a genuine first population - a
         // toggle-triggered relabel of the SAME already-selected player
         // must cost zero new API calls, matching the whole point of
@@ -4393,8 +4413,28 @@
     }
 
     function doLogout() {
+      // signOut() matters: without it the Cognito SDK leaves this user's
+      // refresh token sitting in localStorage, so getCurrentUser() keeps
+      // returning them after logout - on a shared phone that is somebody
+      // else's session waiting to be picked back up.
+      try {
+        const user = (authSession && authSession.cognitoUser) || (userPool && userPool.getCurrentUser());
+        if (user) user.signOut();
+      } catch (e) { /* signing out of an already-dead session is not an error */ }
+
       authSession = null;
       sessionStorage.removeItem('nw_auth_token');
+
+      // The DOM outlives the session. Anything scoped to the person who
+      // just left has to be cleared explicitly or the next login inherits
+      // it - which is exactly how one account ended up showing another
+      // account's Player Card by default.
+      profileSelectionOwner = null;
+      ['profile_player_select', 'profile_h2h_opponent_select',
+       'profile_compare2_select', 'profile_compare3_select', 'profile_compare4_select']
+        .forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+      renderProfileCardBanner(null);
+
       updateAuthUI();
     }
 
