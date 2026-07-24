@@ -438,6 +438,11 @@
       <p class="card-sub" style="margin:0 0 8px;">Upload a photo, or pick a preset below. Photos are cropped square and resized before uploading.</p>
       <input type="file" accept="image/*" id="upload-avatar-input" style="margin-bottom:8px; font-size:12px;"
              onchange="uploadCardImage('avatar', this)">
+      <div id="settings-avatar-preview" style="display:none; align-items:center; gap:8px; margin-bottom:10px;">
+        <div id="settings-avatar-thumb" style="width:44px; height:44px; border-radius:50%; border:2px solid var(--border);"></div>
+        <button type="button" class="secondary" style="margin:0; padding:4px 10px; font-size:12px;"
+                onclick="setMyCardField('avatar_url','')">Remove photo</button>
+      </div>
       <div id="settings-avatar-picker" style="display:flex; flex-wrap:wrap; gap:6px; margin-bottom:14px;"></div>
       <p style="font-size:13px; font-weight:600; margin:0 0 4px;">Banner</p>
       <p class="card-sub" style="margin:0 0 8px;">The strip across the top of your Player Card. Upload your own, or pick a pattern.</p>
@@ -2802,8 +2807,20 @@
       // behind it, so the circle is either a face or a glyph, never both.
       if (player.avatar_url) {
         emojiEl.textContent = '';
+        // The span is normally sized by its emoji glyph. With the text
+        // removed it collapses to 0x0, so a background image would have
+        // nothing to paint on - it has to be given the circle's size
+        // explicitly before it can show a photo.
+        emojiEl.style.display = 'block';
+        emojiEl.style.width = '100%';
+        emojiEl.style.height = '100%';
+        emojiEl.style.borderRadius = '50%';
         emojiEl.style.background = `center / cover no-repeat url("${imageSrc(player.avatar_url)}")`;
       } else {
+        emojiEl.style.display = '';
+        emojiEl.style.width = '';
+        emojiEl.style.height = '';
+        emojiEl.style.borderRadius = '';
         emojiEl.style.background = '';
         emojiEl.textContent = AVATAR_PRESETS[player.avatar_id] || '';
       }
@@ -2858,6 +2875,17 @@
       document.getElementById('settings-banner-picker').innerHTML =
         Object.entries(BANNER_PRESETS).map(([id, css]) =>
           swatch('banner_id', id, css, resolveBannerId(player.banner_id) === id)).join('');
+
+      // Show the current photo so "did my upload work?" is answerable
+      // without leaving Settings.
+      const preview = document.getElementById('settings-avatar-preview');
+      if (player.avatar_url) {
+        preview.style.display = 'flex';
+        document.getElementById('settings-avatar-thumb').style.background =
+          `center / cover no-repeat url("${imageSrc(player.avatar_url)}")`;
+      } else {
+        preview.style.display = 'none';
+      }
 
       document.getElementById('settings-background-picker').innerHTML =
         Object.entries(BACKGROUND_PRESETS).map(([id, css]) =>
