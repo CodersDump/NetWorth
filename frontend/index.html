@@ -47,6 +47,42 @@
   }
   * { box-sizing: border-box; }
   html { background: var(--bg); }
+  /* ---------- VS match card ---------- */
+  .vsc { position:relative; height:150px; border-radius:var(--radius); overflow:hidden; margin:6px 0; }
+  .vsc-layer { position:absolute; inset:0; background-size:cover; background-position:center; }
+  .vsc-av { width:52px; height:52px; border-radius:50%; border:3px solid rgba(255,255,255,.92);
+            background-size:cover; background-position:center; box-shadow:0 2px 10px rgba(0,0,0,.55);
+            display:flex; align-items:center; justify-content:center; font-size:22px; }
+  .vsc-nm { color:#fff; font-size:11px; font-weight:600; text-shadow:0 1px 4px rgba(0,0,0,.9);
+            margin-top:3px; text-align:center; max-width:66px; overflow:hidden;
+            text-overflow:ellipsis; white-space:nowrap; }
+  .vsc-pl { display:flex; flex-direction:column; align-items:center; }
+  /* Electric: a cyan/white core with layered coloured glows, plus a fast
+     flicker. Built from text-shadow rather than a filter so it stays crisp
+     at any size and costs nothing to animate. */
+  .vsc-badge { position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); z-index:5;
+    font-family:'Rajdhani',sans-serif; font-weight:800; font-style:italic; font-size:30px;
+    letter-spacing:2px; color:#fff;
+    text-shadow:0 0 4px #fff, 0 0 10px #7df9ff, 0 0 22px #00b4d8, 0 0 40px #0077b6, 0 2px 6px rgba(0,0,0,.9);
+    animation:vsc-arc 2.4s infinite; }
+  @keyframes vsc-arc {
+    0%,100% { opacity:1; }
+    42% { opacity:1; }
+    45% { opacity:.55; text-shadow:0 0 2px #fff, 0 0 6px #7df9ff, 0 0 12px #00b4d8; }
+    47% { opacity:1; }
+    52% { opacity:.7; }
+    54% { opacity:1; }
+  }
+  .vsc-cup { position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); z-index:5;
+             display:flex; flex-direction:column; align-items:center; gap:1px; }
+  .vsc-cup svg { filter:drop-shadow(0 0 6px #F5C542) drop-shadow(0 2px 6px rgba(0,0,0,.9));
+                 animation:vsc-arc 2.4s infinite; }
+  .vsc-cupl { font-family:'Rajdhani',sans-serif; font-size:10px; font-weight:800; letter-spacing:3px;
+              color:#F5C542; text-shadow:0 0 8px #F5C542, 0 1px 5px rgba(0,0,0,.95); }
+  @media (prefers-reduced-motion: reduce) {
+    .vsc-badge, .vsc-cup svg { animation:none; }
+  }
+
   body {
     font-family: 'Inter', sans-serif;
     background: transparent;
@@ -3103,6 +3139,74 @@
         ).join('') +
         `<button type="button" class="secondary" style="margin:0 0 6px; padding:4px 10px; font-size:12px; vertical-align:top;"
            onclick="setMyCardField('${kind}_url','')">Use a preset instead</button>`;
+    }
+
+    /**
+     * The VS card. Two banners diffused into each other with a mask
+     * gradient rather than a hard clip, so they genuinely blend at the
+     * seam instead of butting against a cut edge.
+     *
+     * Reads a SNAPSHOT when the fixture carries one: a tournament records
+     * each player's avatar and banner at creation time, so a bracket keeps
+     * the look it had on the day even if someone changes their photo
+     * afterwards. Falls back to live player data, then to presets, so it
+     * always renders something.
+     */
+    function vsPlayerVisual(pid, snapshot) {
+      const snap = (snapshot && snapshot[pid]) || null;
+      const live = allPlayers.find(p => p.player_id === pid) || {};
+      const src = snap || live;
+      return {
+        name: live.nickname || live.name || '',
+        avatarUrl: src.avatar_url ? imageSrc(src.avatar_url) : null,
+        avatarEmoji: AVATAR_PRESETS[src.avatar_id] || '',
+        banner: src.banner_url
+          ? `center / cover no-repeat url("${imageSrc(src.banner_url)}")`
+          : (BANNER_PRESETS[resolveBannerId(src.banner_id)] || BANNER_PRESETS.court)
+      };
+    }
+
+    function vsAvatarHtml(v) {
+      const bg = v.avatarUrl ? `background-image:url('${v.avatarUrl}');` : '';
+      return `<div class="vsc-pl">
+        <div class="vsc-av" style="${bg}">${v.avatarUrl ? '' : escapeHtml(v.avatarEmoji)}</div>
+        <div class="vsc-nm">${escapeHtml(v.name)}</div></div>`;
+    }
+
+    const VS_CUP_SVG = `<svg width="34" height="34" viewBox="0 0 24 24" fill="none">
+      <path d="M6 3h12v5a6 6 0 0 1-12 0V3Z" fill="#F5C542"/>
+      <path d="M6 4H3.5v1.5A3.5 3.5 0 0 0 7 9M18 4h2.5v1.5A3.5 3.5 0 0 1 17 9" stroke="#F5C542" stroke-width="1.6" stroke-linecap="round"/>
+      <path d="M12 14v3M8.5 20h7l-.8-2.2a1.2 1.2 0 0 0-1.1-.8h-3.2a1.2 1.2 0 0 0-1.1.8L8.5 20Z" stroke="#F5C542" stroke-width="1.6" stroke-linejoin="round"/>
+    </svg>`;
+
+    function renderVsCard(idsA, idsB, opts = {}) {
+      const snap = opts.snapshot || null;
+      const a = (idsA || []).map(id => vsPlayerVisual(id, snap));
+      const b = (idsB || []).map(id => vsPlayerVisual(id, snap));
+      if (!a.length || !b.length) return '';
+      const centre = opts.isFinal
+        ? `<div class="vsc-cup">${VS_CUP_SVG}<div class="vsc-cupl">FINAL</div></div>`
+        : `<div class="vsc-badge">VS</div>`;
+      const goldEdge = opts.isFinal
+        ? `<div class="vsc-layer" style="box-shadow:inset 0 0 0 2px rgba(245,197,66,.55); border-radius:var(--radius);"></div>` : '';
+      return `<div class="vsc">
+        <div class="vsc-layer" style="background:${b[0].banner};"></div>
+        <div class="vsc-layer" style="background:${a[0].banner};
+             -webkit-mask-image:linear-gradient(115deg,#000 36%,transparent 64%);
+             mask-image:linear-gradient(115deg,#000 36%,transparent 64%);"></div>
+        <div class="vsc-layer" style="background:linear-gradient(115deg,transparent 42%,rgba(0,0,0,.30) 50%,transparent 58%);"></div>
+        ${goldEdge}
+        <div style="position:absolute; left:14px; top:16px; display:flex; gap:8px; z-index:4;">${a.map(vsAvatarHtml).join('')}</div>
+        <div style="position:absolute; right:14px; bottom:16px; display:flex; gap:8px; z-index:4;">${b.map(vsAvatarHtml).join('')}</div>
+        ${centre}
+      </div>`;
+    }
+
+    /** Fixture sides may carry a single id or a doubles pair, depending on
+     *  the format - normalise so callers don't have to care. */
+    function vsSideIds(side) {
+      if (!side) return [];
+      return side.player_ids || side.ids || (side.player_id ? [side.player_id] : []);
     }
 
     async function setMyCardField(field, value) {
