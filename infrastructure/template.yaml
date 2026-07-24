@@ -171,13 +171,13 @@ Resources:
                   # stuck as an orphaned account.
                   - cognito-idp:AdminDeleteUser
                   - cognito-idp:ListUsers
+                Resource: !GetAtt UserPool.Arn
               # Only the uploads/ prefix, and only writes. The Lambda hands
               # out presigned PUTs; it never needs to read or delete, and it
               # must not be able to touch index.html in the same bucket.
               - Effect: Allow
                 Action: s3:PutObject
                 Resource: !Sub '${WebsiteBucket.Arn}/uploads/*'
-                Resource: !GetAtt UserPool.Arn
 
   # ---------- Cognito (Epic 1 - foundation only, not yet wired to any
   # route or the live frontend. Standalone and isolated by design; nothing
