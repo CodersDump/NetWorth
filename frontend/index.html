@@ -368,21 +368,36 @@
   <div id="complete-profile-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:1000; align-items:flex-start; justify-content:center; padding-top:60px;">
     <div class="card" style="max-width:400px; width:90%;">
       <h2>Set up your player profile</h2>
-      <p class="card-sub">One more step - this links your login to a player record so your matches and stats are yours.</p>
-      <p style="font-size:13px; margin-bottom:10px;">
-        <a href="#" id="complete-profile-mode-create-link" onclick="showCompleteProfileMode('create'); return false;">Create a new profile</a> ·
-        <a href="#" id="complete-profile-mode-claim-link" onclick="showCompleteProfileMode('claim'); return false;">I've played before, claim my existing profile</a>
-      </p>
+      <p class="card-sub">This links your login to a player record so your matches and stats are yours. Both options need an admin to approve them.</p>
 
-      <div id="complete-profile-create-view">
+      <!-- Two full-width buttons, not a line of hyperlinks. The link
+           version was routinely missed, so returning players created a
+           duplicate profile instead of claiming their own, then had no way
+           back once they dismissed the modal. -->
+      <div id="complete-profile-chooser">
+        <button type="button" style="width:100%; text-align:left; padding:14px;"
+                onclick="showCompleteProfileMode('claim')">
+          I've played here before<br>
+          <span style="font-weight:normal; font-size:12px; opacity:0.85;">Claim the profile that already has my matches and rating</span>
+        </button>
+        <button type="button" class="secondary" style="width:100%; text-align:left; padding:14px; margin-top:8px;"
+                onclick="showCompleteProfileMode('create')">
+          I'm new here<br>
+          <span style="font-weight:normal; font-size:12px; opacity:0.85;">Create a brand new player profile</span>
+        </button>
+      </div>
+
+      <div id="complete-profile-create-view" style="display:none;">
+        <p style="font-size:12px; margin:0 0 10px;"><a href="#" onclick="showCompleteProfileMode('chooser'); return false;">&larr; Back</a></p>
         <label>Your name <input type="text" id="complete-profile-name" required></label>
-        <label>Nickname <span style="opacity:0.6; font-weight:normal;">(optional - auto-generated from your name if left blank; lowercase letters, numbers, underscore only)</span>
-          <input type="text" id="complete-profile-nickname">
+        <label>Nickname <span style="opacity:0.6; font-weight:normal;">(lowercase letters, numbers and underscore only)</span>
+          <input type="text" id="complete-profile-nickname" required>
         </label>
-        <button type="button" id="complete-profile-submit-btn">Create my profile</button>
+        <button type="button" id="complete-profile-submit-btn">Request my profile</button>
       </div>
 
       <div id="complete-profile-claim-view" style="display:none;">
+        <p style="font-size:12px; margin:0 0 10px;"><a href="#" onclick="showCompleteProfileMode('chooser'); return false;">&larr; Back</a></p>
         <label>Which player is you?
           <select id="complete-profile-claim-select"></select>
         </label>
@@ -419,10 +434,15 @@
       </div>
       <div id="settings-cosmetics">
       <p class="card-sub">Changes here apply to your own Player Card.</p>
-      <p style="font-size:13px; font-weight:600; margin:14px 0 8px;">Avatar</p>
+      <p style="font-size:13px; font-weight:600; margin:14px 0 4px;">Avatar</p>
+      <p class="card-sub" style="margin:0 0 8px;">Upload a photo, or pick a preset below. Photos are cropped square and resized before uploading.</p>
+      <input type="file" accept="image/*" id="upload-avatar-input" style="margin-bottom:8px; font-size:12px;"
+             onchange="uploadCardImage('avatar', this)">
       <div id="settings-avatar-picker" style="display:flex; flex-wrap:wrap; gap:6px; margin-bottom:14px;"></div>
       <p style="font-size:13px; font-weight:600; margin:0 0 4px;">Banner</p>
-      <p class="card-sub" style="margin:0 0 8px;">The strip across the top of your Player Card.</p>
+      <p class="card-sub" style="margin:0 0 8px;">The strip across the top of your Player Card. Upload your own, or pick a pattern.</p>
+      <input type="file" accept="image/*" id="upload-banner-input" style="margin-bottom:8px; font-size:12px;"
+             onchange="uploadCardImage('banner', this)">
       <div id="settings-banner-picker" style="display:flex; flex-wrap:wrap; gap:6px; margin-bottom:14px;"></div>
       <p style="font-size:13px; font-weight:600; margin:0 0 4px;">Background</p>
       <p class="card-sub" style="margin:0 0 8px;">Sits behind the whole page. Shown to anyone viewing your card.</p>
@@ -500,19 +520,19 @@
       </div>
 
       <div class="card">
-        <h2>Edit a player's name</h2>
-        <p class="card-sub">Nickname shows as "Nickname (Real Name)" across Stats, Hall of Fame, and Profile. Match and tournament creation always use the real name only, so new players and teammates aren't confused about who's who.</p>
+        <h2>Edit my name</h2>
+        <p class="card-sub">You can only change your own name and nickname, and the change goes to an admin for approval. Nickname shows as "Nickname (Real Name)" across Stats, Hall of Fame and Profile.</p>
+        <div id="edit-player-locked" style="display:none;">
+          <p class="card-sub">Log in and link your profile to edit your name.</p>
+        </div>
         <form id="edit-player-form">
-          <label>Player
-            <select id="edit_player_select" required></select>
+          <label>Name
+            <input type="text" id="edit_player_name" required>
           </label>
-          <label>New name <span style="opacity:0.6; font-weight:normal;">(leave blank to only change the nickname)</span>
-            <input type="text" id="edit_player_name">
+          <label>Nickname <span style="opacity:0.6; font-weight:normal;">(lowercase letters, numbers and underscore only)</span>
+            <input type="text" id="edit_player_nickname" required>
           </label>
-          <label>Nickname <span style="opacity:0.6; font-weight:normal;">(optional - blank clears it)</span>
-            <input type="text" id="edit_player_nickname" placeholder="optional, e.g. a gamer tag or short name">
-          </label>
-          <button type="submit" class="secondary">Save</button>
+          <button type="submit" class="secondary">Request change</button>
         </form>
         <div id="edit-player-result" class="result"></div>
       </div>
@@ -1544,7 +1564,6 @@
       // loadVisiblePlayers(), which is group-scoped server-side.
       renderAddPlayersChecklist();
       populateSelect(document.getElementById('delete_player_id'), labeled, 'player_id', 'label', null);
-      populateSelect(document.getElementById('edit_player_select'), labeled, 'player_id', 'label', null);
       populateSelect(document.getElementById('log_player_filter'), labeled, 'player_id', 'label', 'All players');
       // Profile-related selects are populated by loadVisiblePlayers()
       // instead (group-scoped server-side) - not here, which would show
@@ -2086,52 +2105,41 @@
       }
     });
 
-    document.getElementById('edit_player_select').addEventListener('change', (e) => {
-      const player = allPlayers.find(p => p.player_id === e.target.value);
-      const nicknameInput = document.getElementById('edit_player_nickname');
-      nicknameInput.value = (player && player.nickname) || '';
-      nicknameInput.dataset.touched = 'false';
-    });
-    document.getElementById('edit_player_nickname').addEventListener('input', (e) => {
-      e.target.dataset.touched = 'true';
-    });
+    /**
+     * Renaming is self-only now. The old form let you pick ANY player from
+     * a dropdown and rename them using the shared code - both a
+     * permissions hole and a way for a name to change with nobody
+     * accountable. The target is now implicit (it's you) and the change
+     * goes through the approval queue.
+     */
+    function prefillEditForm() {
+      const me = allPlayers.find(p => p.player_id === myPlayerId());
+      const form = document.getElementById('edit-player-form');
+      const locked = document.getElementById('edit-player-locked');
+      form.style.display = me ? 'block' : 'none';
+      locked.style.display = me ? 'none' : 'block';
+      if (!me) return;
+      document.getElementById('edit_player_name').value = me.name || '';
+      document.getElementById('edit_player_nickname').value = me.nickname || '';
+    }
 
     document.getElementById('edit-player-form').addEventListener('submit', async (e) => {
       e.preventDefault();
-      const playerId = document.getElementById('edit_player_select').value;
-      const newName = document.getElementById('edit_player_name').value.trim();
-      const nicknameInput = document.getElementById('edit_player_nickname');
-      const nickname = nicknameInput.value.trim();
+      const name = document.getElementById('edit_player_name').value.trim();
+      const nickname = document.getElementById('edit_player_nickname').value.trim();
       const resultEl = document.getElementById('edit-player-result');
-      if (!playerId) { resultEl.textContent = 'Select a player.'; return; }
-      if (!newName && nicknameInput.dataset.touched !== 'true') {
-        resultEl.textContent = 'Enter a new name, or change the nickname field, then save.';
-        return;
-      }
-
-      const confirmText = prompt('Enter the confirmation code to update this player:');
-      if (!confirmText) { resultEl.textContent = 'Cancelled.'; return; }
-
-      resultEl.textContent = 'Saving...';
+      if (!name) { resultEl.textContent = 'Name is required.'; return; }
+      if (!nickname) { resultEl.textContent = 'Nickname is required.'; return; }
+      resultEl.textContent = 'Sending request...';
       try {
-        const body = { confirm: confirmText };
-        if (newName) body.name = newName;
-        if (nicknameInput.dataset.touched === 'true') body.nickname = nickname;  // '' clears it
-        const res = await fetch(`${API_BASE_URL}/players/${playerId}`, {
-          method: 'PUT',
+        const { res, error } = await authedFetch(`${API_BASE_URL}/action-request`, {
+          method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body)
+          body: JSON.stringify({ type: 'edit_own_name', name, nickname })
         });
-        const data = await res.json();
-        if (res.ok) {
-          resultEl.textContent = 'Updated.';
-          document.getElementById('edit_player_name').value = '';
-          nicknameInput.value = '';
-          nicknameInput.dataset.touched = 'false';
-          loadPlayers();
-        } else {
-          resultEl.textContent = `Error: ${data.error}`;
-        }
+        resultEl.textContent = res.ok
+          ? 'Request sent. An admin will review your name change.'
+          : `Error: ${error}`;
       } catch (err) {
         resultEl.textContent = `Request failed: ${err.message}`;
       }
@@ -2767,6 +2775,7 @@
     function applyPageBackground(player) {
       viewedProfileBackgroundId = player ? (player.background_id || null) : null;
       updatePageBackground();
+      prefillEditForm();
     }
 
     function renderProfileCardBanner(player) {
@@ -2780,12 +2789,24 @@
       const stripEl = document.getElementById('profile-banner-strip');
       const emojiEl = document.getElementById('profile-avatar-emoji');
       const nameEl = document.getElementById('profile-banner-name');
-      if (!player || (!player.avatar_id && !player.banner_id)) { displayEl.style.display = 'none'; return; }
+      if (!player || (!player.avatar_id && !player.banner_id && !player.avatar_url && !player.banner_url)) {
+        displayEl.style.display = 'none'; return;
+      }
       // background_id deliberately not in that test - a background with no
       // banner or avatar still themes the page, it just has no card strip.
       displayEl.style.display = 'block';
-      stripEl.style.background = BANNER_PRESETS[resolveBannerId(player.banner_id)] || BANNER_PRESETS.court;
-      emojiEl.textContent = AVATAR_PRESETS[player.avatar_id] || '';
+      stripEl.style.background = player.banner_url
+        ? `center / cover no-repeat url("${imageSrc(player.banner_url)}")`
+        : (BANNER_PRESETS[resolveBannerId(player.banner_id)] || BANNER_PRESETS.court);
+      // An uploaded photo replaces the emoji entirely rather than sitting
+      // behind it, so the circle is either a face or a glyph, never both.
+      if (player.avatar_url) {
+        emojiEl.textContent = '';
+        emojiEl.style.background = `center / cover no-repeat url("${imageSrc(player.avatar_url)}")`;
+      } else {
+        emojiEl.style.background = '';
+        emojiEl.textContent = AVATAR_PRESETS[player.avatar_id] || '';
+      }
       nameEl.textContent = formatPlayerLabel(player.name, player.nickname);
     }
 
@@ -2857,7 +2878,7 @@
           body: JSON.stringify({ player_id: playerId })
         });
         if (!res.ok) { statusEl.textContent = `Error: ${error}`; return; }
-        statusEl.textContent = 'Request sent. An admin will approve it - you can close this and check back later.';
+        finishRequestAndSignOut('Your request to claim that profile has been sent to the admin.');
       } catch (err) {
         statusEl.textContent = `Request failed: ${err.message}`;
       }
@@ -2896,10 +2917,12 @@
         }
         listEl.innerHTML = pending.map(r => {
           const target = `${escapeHtml(r.player_name || '')} (${escapeHtml(r.player_nickname || '')})`;
-          const isDelete = r.type === 'delete_player';
-          const what = isDelete
-            ? `wants to <strong style="color:var(--smash);">delete</strong> ${target}`
-            : `wants to be ${target}`;
+          const what = {
+            delete_player: `wants to <strong style="color:var(--smash);">delete</strong> ${target}`,
+            new_profile:   `wants a <strong>new profile</strong>: ${target}`,
+            edit_own_name: `wants to rename ${target} to <strong>${escapeHtml(r.new_name || '')} (${escapeHtml(r.new_nickname || '')})</strong>`,
+            claim:         `wants to be ${target}`
+          }[r.type || 'claim'];
           const reason = r.reason ? `<div style="color:var(--text-secondary); font-size:12px; font-style:italic;">"${escapeHtml(r.reason)}"</div>` : '';
           return `
           <div style="border:1px solid var(--border); border-radius:var(--radius); padding:10px; margin-bottom:8px;">
@@ -2909,7 +2932,7 @@
             <button type="button" style="margin:0; padding:5px 12px; font-size:12px;"
                     onclick="decideClaimRequest('${r.request_id}','approve','${r.type || 'claim'}')">Approve</button>
             <button type="button" class="secondary" style="margin:0; padding:5px 12px; font-size:12px;"
-                    onclick="decideClaimRequest('${r.request_id}','reject')">Reject</button>
+                    onclick="decideClaimRequest('${r.request_id}','reject','${r.type || 'claim'}')">Reject</button>
           </div>`; }).join('');
       } catch (err) {
         listEl.textContent = `Request failed: ${err.message}`;
@@ -2918,9 +2941,12 @@
 
     async function decideClaimRequest(requestId, action, requestType) {
       if (action === 'approve') {
-        const msg = requestType === 'delete_player'
-          ? 'Approve this deletion?\n\nThe player record and any login linked to it are removed permanently. Their match history stays, but the player is gone.'
-          : 'Approve this request?\n\nThis links their login to that player permanently - their match history and rating become theirs.';
+        const msg = {
+          delete_player: 'Approve this deletion?\n\nThe player record and any login linked to it are removed permanently. Their match history stays, but the player is gone.',
+          new_profile:   'Approve this new profile?\n\nA new player is created and linked to their login. They become a full member and can add players and record matches.',
+          edit_own_name: 'Approve this rename?\n\nTheir display name and nickname change everywhere, including past matches.',
+          claim:         'Approve this request?\n\nThis links their login to that player permanently - their match history and rating become theirs.'
+        }[requestType || 'claim'];
         if (!confirm(msg)) return;
       }
       try {
@@ -2930,6 +2956,9 @@
           body: JSON.stringify({ request_id: requestId, action })
         });
         if (!res.ok) { alert(`Error: ${error}`); return; }
+        if (action === 'reject' && (requestType === 'claim' || requestType === 'new_profile')) {
+          alert('Rejected. Their login has been removed, so that email address is free to sign up again.');
+        }
         await loadClaimRequests();
         await loadPlayers();
       } catch (err) {
@@ -2943,6 +2972,86 @@
       return String(s == null ? '' : s).replace(/[&<>"']/g,
         c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
     }
+
+    // ---------- image uploads ----------
+
+    /**
+     * Resize and re-encode in the browser BEFORE uploading. A modern phone
+     * camera produces 4-12MB files; an avatar is displayed at 96px and a
+     * banner at roughly 1200px wide. Uploading the original would waste
+     * storage, waste everyone's mobile data on every page load, and take
+     * far longer on court wifi - for pixels nobody ever sees.
+     *
+     * Avatars are centre-cropped square, because they render as circles and
+     * a letterboxed portrait looks broken in one.
+     */
+    function resizeImage(file, kind) {
+      const MAX = kind === 'avatar' ? 512 : 1400;
+      return new Promise((resolve, reject) => {
+        const img = new Image();
+        const url = URL.createObjectURL(file);
+        img.onload = () => {
+          URL.revokeObjectURL(url);
+          const canvas = document.createElement('canvas');
+          const ctx = canvas.getContext('2d');
+          if (kind === 'avatar') {
+            const side = Math.min(img.width, img.height);   // centre crop to square
+            canvas.width = canvas.height = Math.min(side, MAX);
+            ctx.drawImage(img, (img.width - side) / 2, (img.height - side) / 2, side, side,
+                          0, 0, canvas.width, canvas.height);
+          } else {
+            const scale = Math.min(1, MAX / img.width);
+            canvas.width = Math.round(img.width * scale);
+            canvas.height = Math.round(img.height * scale);
+            ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+          }
+          canvas.toBlob(b => b ? resolve(b) : reject(new Error('could not process that image')),
+                        'image/jpeg', 0.85);
+        };
+        img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('that file is not a readable image')); };
+        img.src = url;
+      });
+    }
+
+    async function uploadCardImage(kind, fileInput) {
+      const statusEl = document.getElementById('settings-status');
+      const file = fileInput.files && fileInput.files[0];
+      if (!file) return;
+      if (!/^image\//.test(file.type)) { statusEl.textContent = 'Pick an image file.'; return; }
+
+      try {
+        statusEl.textContent = 'Processing image...';
+        const blob = await resizeImage(file, kind);
+
+        statusEl.textContent = 'Getting upload permission...';
+        const { res: urlRes, data: urlData, error } = await authedFetch(`${API_BASE_URL}/upload-url`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ kind, content_type: 'image/jpeg' })
+        });
+        if (!urlRes.ok) { statusEl.textContent = `Error: ${error}`; return; }
+
+        statusEl.textContent = 'Uploading...';
+        // Straight to S3, not through our API. Content-Type must match what
+        // the presigned URL was signed for or S3 rejects the signature.
+        const putRes = await fetch(urlData.upload_url, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'image/jpeg' },
+          body: blob
+        });
+        if (!putRes.ok) { statusEl.textContent = `Upload failed (HTTP ${putRes.status}).`; return; }
+
+        await setMyCardField(kind === 'avatar' ? 'avatar_url' : 'banner_url', urlData.key);
+        fileInput.value = '';
+      } catch (err) {
+        statusEl.textContent = err.message;
+      }
+    }
+
+    /** Uploaded images beat presets. Stored as a key, served same-origin
+     *  through CloudFront, so no absolute domain is baked into the data. */
+    function imageSrc(key) { return key ? `/${key}` : null; }
+
 
     async function setMyCardField(field, value) {
       const statusEl = document.getElementById('settings-status');
@@ -4453,10 +4562,14 @@
 
     function openCompleteProfileModal() {
       document.getElementById('complete-profile-modal').style.display = 'flex';
-      showCompleteProfileMode('create');
+      // Always land on the chooser. Defaulting to 'create' was half the
+      // problem - returning players were dropped straight into the
+      // new-profile form without being asked which they were.
+      showCompleteProfileMode('chooser');
     }
 
     function showCompleteProfileMode(mode, preselectPlayerId) {
+      document.getElementById('complete-profile-chooser').style.display = mode === 'chooser' ? 'block' : 'none';
       document.getElementById('complete-profile-create-view').style.display = mode === 'create' ? 'block' : 'none';
       document.getElementById('complete-profile-claim-view').style.display = mode === 'claim' ? 'block' : 'none';
       document.getElementById('complete-profile-status').textContent = '';
@@ -4626,48 +4739,38 @@
       // that actually happened: an existing player "mayank" and a signup
       // typing "maya". Different strings, no collision, brand new second
       // profile for the same human - and all their history split in two.
+      if (!nickname) { statusEl.textContent = 'Nickname is required.'; return; }
+
       const proceed = await checkForExistingPlayer(name, nickname, statusEl);
       if (!proceed) return;
 
-      statusEl.textContent = 'Creating your profile...';
+      statusEl.textContent = 'Sending your request...';
 
       try {
-        const body = { name };
-        if (nickname) body.nickname = nickname;
-        const { res, data, error } = await authedFetch(`${API_BASE_URL}/register-and-join`, {
+        const { res, error } = await authedFetch(`${API_BASE_URL}/action-request`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body)
+          body: JSON.stringify({ type: 'new_profile', name, nickname })
         });
         if (!res.ok) { statusEl.textContent = `Error: ${error}`; return; }
-
-        // Link the new player to this Cognito account. This is a
-        // self-service attribute update (the account is already
-        // authenticated), not an admin action - no confirmation code or
-        // AdminUpdateUserAttributes needed.
-        const cognitoUser = authSession.cognitoUser;
-        if (!cognitoUser) { statusEl.textContent = 'Profile created, but linking failed - please log out and back in.'; return; }
-        cognitoUser.updateAttributes(
-          [new AmazonCognitoIdentity.CognitoUserAttribute({ Name: 'custom:player_id', Value: data.player_id })],
-          (err) => {
-            if (err) { statusEl.textContent = `Profile created, but linking failed: ${err.message}`; return; }
-            // Refresh the session so the new custom:player_id claim shows
-            // up immediately, without asking for the password again.
-            cognitoUser.getSession((sessionErr, session) => {
-              if (!sessionErr && session) {
-                cognitoUser.refreshSession(session.getRefreshToken(), (refreshErr, newSession) => {
-                  if (!refreshErr && newSession) { setAuthSession(newSession, cognitoUser); }
-                });
-              }
-              closeCompleteProfileModal();
-              loadPlayers();
-              loadGroups();
-            });
-          }
-        );
+        finishRequestAndSignOut(`Thanks ${name} - your profile request has been sent to the admin.`);
+        return;
       } catch (err) {
         statusEl.textContent = `Request failed: ${err.message}`;
       }
+    }
+
+    /**
+     * A pending request leaves the account in limbo: logged in, but unable
+     * to do anything until an admin acts. Leaving people sitting in that
+     * state made them think it had failed, so they'd try again or get
+     * stuck. Signing them back out to guest makes the state honest - come
+     * back and log in once it's approved.
+     */
+    function finishRequestAndSignOut(message) {
+      closeCompleteProfileModal();
+      doLogout();
+      alert(`${message}\n\nYou'll be able to log in properly once it's approved. If it's rejected, you can sign up again with the same email.`);
     }
 
     async function doLogin() {

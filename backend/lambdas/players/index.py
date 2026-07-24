@@ -26,6 +26,7 @@ table = dynamodb.Table(os.environ['PLAYERS_TABLE'])
 # the approval flow - the routes that need them fail loudly instead.
 CLAIM_REQUESTS_TABLE = os.environ.get('CLAIM_REQUESTS_TABLE')
 USER_POOL_ID = os.environ.get('USER_POOL_ID')
+UPLOADS_BUCKET = os.environ.get('UPLOADS_BUCKET')
 claim_requests_table = dynamodb.Table(CLAIM_REQUESTS_TABLE) if CLAIM_REQUESTS_TABLE else None
 
 
@@ -56,6 +57,8 @@ def handler(event, context):
             return create_claim_request(event)
         if event.get('resource') == '/action-request' and method == 'POST':
             return create_action_request(event)
+        if event.get('resource') == '/upload-url' and method == 'POST':
+            return create_upload_url(event)
         if event.get('resource') == '/claim-requests' and method == 'GET':
             return list_claim_requests(event)
         if event.get('resource') == '/claim-request-decide' and method == 'POST':
@@ -118,6 +121,8 @@ def list_players():
             'avatar_id': i.get('avatar_id'),
             'banner_id': i.get('banner_id'),
             'background_id': i.get('background_id'),
+            'avatar_url': i.get('avatar_url'),
+            'banner_url': i.get('banner_url'),
             'claimed': bool(i.get('email'))  # signal only, never the actual email - that stays private
         }
         for i in items
@@ -296,8 +301,21 @@ def create_action_request(event):
 
     body = json.loads(event.get('body') or '{}')
     action_type = body.get('type')
-    if action_type != 'delete_player':
-        return _response(400, {'error': "type must be 'delete_player'"})
+    if action_type not in ('delete_player', 'new_profile', 'edit_own_name'):
+        return _response(400, {'error': "type must be 'delete_player', 'new_profile' or 'edit_own_name'"})
+
+    # new_profile is the one request an unlinked account SHOULD be able to
+    # make - it's how someone with no player becomes a member at all.
+    # Everything else needs an existing membership, so a bare signup can't
+    # fill the admin queue with requests about other people's players.
+    if action_type != 'new_profile':
+        if not _is_super_admin(claims) and not _linked_player_is_live(claims):
+            return _response(403, {'error': 'claim your own profile before requesting changes to others'})
+
+    if action_type == 'new_profile':
+        return _create_new_profile_request(claims, body)
+    if action_type == 'edit_own_name':
+        return _create_edit_name_request(claims, body)
 
     player_id = body.get('player_id')
     reason = (body.get('reason') or '').strip()
@@ -327,6 +345,134 @@ def create_action_request(event):
         'created_at': datetime.now(timezone.utc).isoformat()
     })
     return _response(200, {'request_id': request_id, 'status': 'pending'})
+
+
+def _create_new_profile_request(claims, body):
+    """Self-signup used to create a player outright, which instantly made
+    the signer-upper a 'member' - so gating anything on membership was
+    circular. Creating a brand new profile is now a request like any
+    other, and an account stays inert until someone approves it."""
+    if _linked_player_is_live(claims):
+        return _response(400, {'error': 'your account is already linked to a player'})
+
+    name = (body.get('name') or '').strip()
+    if not name:
+        return _response(400, {'error': 'name is required'})
+    nickname = sanitize_nickname(body.get('nickname') or '') or sanitize_nickname(name)
+
+    existing = table.scan().get('Items', [])
+    if any((p.get('nickname') or '').strip().lower() == nickname for p in existing):
+        return _response(400, {'error': f'nickname "{nickname}" is already taken - pick another, or claim that profile instead'})
+
+    pending = claim_requests_table.scan().get('Items', [])
+    if any(r.get('status') == 'pending' and r.get('requester_email') == claims.get('email') for r in pending):
+        return _response(400, {'error': 'you already have a request waiting for approval'})
+
+    request_id = str(uuid.uuid4())
+    claim_requests_table.put_item(Item={
+        'request_id': request_id,
+        'type': 'new_profile',
+        'player_name': name,
+        'player_nickname': nickname,
+        'requester_email': claims.get('email'),
+        'requester_username': claims.get('cognito:username') or claims.get('email'),
+        'status': 'pending',
+        'created_at': datetime.now(timezone.utc).isoformat()
+    })
+    return _response(200, {'request_id': request_id, 'status': 'pending'})
+
+
+def _create_edit_name_request(claims, body):
+    """Renaming is now self-service-only: the target is always the
+    caller's OWN player, taken from their token rather than from the
+    request body. Previously the edit form let you pick anyone from a
+    dropdown, which meant any member could rename any other member."""
+    player_id = claims.get('custom:player_id')
+    player = table.get_item(Key={'player_id': player_id}).get('Item') if player_id else None
+    if not player:
+        return _response(403, {'error': 'you need a linked profile before you can edit it'})
+
+    name = (body.get('name') or '').strip()
+    nickname = sanitize_nickname(body.get('nickname') or '')
+    if not name:
+        return _response(400, {'error': 'name is required'})
+    if not nickname:
+        return _response(400, {'error': 'nickname is required'})
+
+    if name == player.get('name') and nickname == (player.get('nickname') or ''):
+        return _response(400, {'error': 'that is already your name and nickname'})
+
+    others = [p for p in table.scan().get('Items', []) if p['player_id'] != player_id]
+    if any((p.get('nickname') or '').strip().lower() == nickname for p in others):
+        return _response(400, {'error': f'nickname "{nickname}" is already taken'})
+
+    pending = claim_requests_table.scan().get('Items', [])
+    if any(r.get('status') == 'pending' and r.get('type') == 'edit_own_name'
+           and r.get('player_id') == player_id for r in pending):
+        return _response(400, {'error': 'you already have a name change waiting for approval'})
+
+    request_id = str(uuid.uuid4())
+    claim_requests_table.put_item(Item={
+        'request_id': request_id,
+        'type': 'edit_own_name',
+        'player_id': player_id,
+        'player_name': player.get('name'),
+        'player_nickname': player.get('nickname'),
+        'new_name': name,
+        'new_nickname': nickname,
+        'requester_email': claims.get('email'),
+        'requester_username': claims.get('cognito:username') or claims.get('email'),
+        'status': 'pending',
+        'created_at': datetime.now(timezone.utc).isoformat()
+    })
+    return _response(200, {'request_id': request_id, 'status': 'pending'})
+
+
+def _approve_edit_name(req, claims):
+    others = [p for p in table.scan().get('Items', []) if p['player_id'] != req['player_id']]
+    if any((p.get('nickname') or '').strip().lower() == req['new_nickname'] for p in others):
+        return _response(400, {'error': 'that nickname was taken while this request was waiting'})
+    table.update_item(
+        Key={'player_id': req['player_id']},
+        UpdateExpression='SET #n = :n, nickname = :nk, last_edited_by = :leb, last_edited_at = :lea',
+        ExpressionAttributeNames={'#n': 'name'},
+        ExpressionAttributeValues={
+            ':n': req['new_name'], ':nk': req['new_nickname'],
+            ':leb': claims.get('email'), ':lea': datetime.now(timezone.utc).isoformat()
+        }
+    )
+    return None
+
+
+def _approve_new_profile(req, claims):
+    """Creates the player only at approval time, and links it to the
+    requester in the same step - so nothing exists until someone said yes."""
+    nickname = req.get('player_nickname')
+    existing = table.scan().get('Items', [])
+    # Re-check at decision time: the nickname may have been taken while
+    # the request sat in the queue.
+    if any((p.get('nickname') or '').strip().lower() == nickname for p in existing):
+        return _response(400, {'error': f'nickname "{nickname}" was taken while this request was waiting'})
+
+    player_id = str(uuid.uuid4())
+    table.put_item(Item={
+        'player_id': player_id,
+        'name': req.get('player_name'),
+        'nickname': nickname,
+        'skill_level': 'unrated',
+        'rating': 1000,
+        'email': req.get('requester_email'),
+        'created_by': req.get('requester_email'),
+        'created_at': datetime.now(timezone.utc).isoformat(),
+        'approved_by': claims.get('email')
+    })
+    cognito = boto3.client('cognito-idp')
+    cognito.admin_update_user_attributes(
+        UserPoolId=USER_POOL_ID,
+        Username=req['requester_username'],
+        UserAttributes=[{'Name': 'custom:player_id', 'Value': player_id}]
+    )
+    return None
 
 
 def decide_claim_request(event):
@@ -361,7 +507,17 @@ def decide_claim_request(event):
         'decided_by': claims.get('email')
     }
 
-    if action == 'approve' and req.get('type') == 'delete_player':
+    if action == 'approve' and req.get('type') == 'edit_own_name':
+        failed = _approve_edit_name(req, claims)
+        if failed:
+            return failed
+
+    elif action == 'approve' and req.get('type') == 'new_profile':
+        failed = _approve_new_profile(req, claims)
+        if failed:
+            return failed
+
+    elif action == 'approve' and req.get('type') == 'delete_player':
         # Reuse the real handler rather than re-implementing deletion here,
         # so the Cognito cleanup and audit logging can't drift apart from
         # the direct-delete path.
@@ -394,6 +550,19 @@ def decide_claim_request(event):
             ExpressionAttributeValues={':e': req['requester_email']}
         )
 
+    if action == 'reject' and req.get('type') in ('claim', 'new_profile') and USER_POOL_ID:
+        # Rejecting used to leave the account stranded: it can't claim
+        # anything, can't create anything, and can't sign up again because
+        # Cognito says the address is taken - a dead end with no way out
+        # from the user's side. Removing the account frees the address so
+        # they can start over, which is the only sane meaning of "no".
+        try:
+            cognito = boto3.client('cognito-idp')
+            cognito.admin_delete_user(UserPoolId=USER_POOL_ID, Username=req['requester_username'])
+        except Exception as e:
+            print(json.dumps({'warn': 'cognito delete on reject failed',
+                              'user': req.get('requester_username'), 'detail': str(e)}))
+
     claim_requests_table.update_item(
         Key={'request_id': request_id},
         UpdateExpression='SET #s = :s, decided_at = :d, decided_by = :b',
@@ -403,6 +572,63 @@ def decide_claim_request(event):
         }
     )
     return _response(200, {'request_id': request_id, **decided})
+
+
+# Deliberately narrow. SVG is excluded on purpose: it's an image format
+# that can carry script, and these files are served from the same origin
+# as the app, so an uploaded SVG would be stored XSS.
+ALLOWED_UPLOAD_TYPES = {'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp'}
+UPLOAD_KINDS = {'avatar', 'banner'}
+
+
+def create_upload_url(event):
+    """Hands back a short-lived presigned PUT. The browser uploads straight
+    to S3 rather than through the Lambda - a 5MB body through API Gateway
+    would hit its 10MB payload ceiling and cost Lambda time for what is
+    just a byte pipe."""
+    claims = _caller_claims(event)
+    if not claims:
+        return _response(403, {'error': 'log in to upload an image'})
+    player_id = claims.get('custom:player_id')
+    if not player_id or not table.get_item(Key={'player_id': player_id}).get('Item'):
+        return _response(403, {'error': 'link your profile before uploading images'})
+    if not UPLOADS_BUCKET:
+        return _response(500, {'error': 'uploads are not configured on this stack'})
+
+    body = json.loads(event.get('body') or '{}')
+    kind = body.get('kind')
+    content_type = body.get('content_type')
+    if kind not in UPLOAD_KINDS:
+        return _response(400, {'error': "kind must be 'avatar' or 'banner'"})
+    if content_type not in ALLOWED_UPLOAD_TYPES:
+        return _response(400, {'error': 'only JPEG, PNG and WebP images are allowed'})
+
+    # The player_id is taken from the token, never the request body, so a
+    # presigned URL can only ever write into the caller's own folder.
+    ext = ALLOWED_UPLOAD_TYPES[content_type]
+    key = f'uploads/{kind}s/{player_id}/{uuid.uuid4()}.{ext}'
+
+    s3 = boto3.client('s3')
+    url = s3.generate_presigned_url(
+        'put_object',
+        Params={'Bucket': UPLOADS_BUCKET, 'Key': key, 'ContentType': content_type},
+        ExpiresIn=300,
+        HttpMethod='PUT'
+    )
+    # Only the key is returned for storage. Served back through CloudFront
+    # as a same-origin path, so no absolute domain has to be baked in - it
+    # keeps working if the distribution or a custom domain ever changes.
+    return _response(200, {'upload_url': url, 'key': key})
+
+
+def _valid_upload_key(value, player_id, kind):
+    """An uploaded image is referenced by key, and the key is checked
+    against the caller before it's stored. Without this, update_my_card
+    would happily accept an arbitrary string - letting someone point their
+    avatar at another player's file, or at an external URL entirely."""
+    if value in (None, ''):
+        return True
+    return isinstance(value, str) and value.startswith(f'uploads/{kind}s/{player_id}/')
 
 
 def update_my_card(event):
@@ -423,14 +649,20 @@ def update_my_card(event):
     avatar_id = body.get('avatar_id')
     banner_id = body.get('banner_id')
     background_id = body.get('background_id')
+    avatar_url = body.get('avatar_url')
+    banner_url = body.get('banner_url')
+    if not _valid_upload_key(avatar_url, player_id, 'avatar'):
+        return _response(400, {'error': 'invalid avatar image reference'})
+    if not _valid_upload_key(banner_url, player_id, 'banner'):
+        return _response(400, {'error': 'invalid banner image reference'})
     if avatar_id is not None and avatar_id not in ALLOWED_AVATARS:
         return _response(400, {'error': f'unknown avatar_id - choose from {sorted(ALLOWED_AVATARS)}'})
     if banner_id is not None and banner_id not in ALLOWED_BANNERS:
         return _response(400, {'error': f'unknown banner_id - choose from {sorted(ALLOWED_BANNERS)}'})
     if background_id is not None and background_id not in ALLOWED_BACKGROUNDS:
         return _response(400, {'error': f'unknown background_id - choose from {sorted(ALLOWED_BACKGROUNDS)}'})
-    if avatar_id is None and banner_id is None and background_id is None:
-        return _response(400, {'error': 'provide avatar_id, banner_id and/or background_id'})
+    if all(v is None for v in (avatar_id, banner_id, background_id, avatar_url, banner_url)):
+        return _response(400, {'error': 'nothing to update'})
 
     update_parts = []
     values = {}
@@ -443,6 +675,12 @@ def update_my_card(event):
     if background_id is not None:
         update_parts.append('background_id = :g')
         values[':g'] = background_id
+    if avatar_url is not None:
+        update_parts.append('avatar_url = :au')
+        values[':au'] = avatar_url
+    if banner_url is not None:
+        update_parts.append('banner_url = :bu')
+        values[':bu'] = banner_url
 
     table.update_item(
         Key={'player_id': player_id},

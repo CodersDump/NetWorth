@@ -127,9 +127,36 @@ def _can_view_profile(claims, target_player_id):
     return False
 
 
+def _requires_linked_member(claims):
+    """Signing up is not the same as being a member. Cognito self-signup is
+    open to anyone with a working inbox - including disposable ones - so a
+    bare session proves only that someone controls an email address. It
+    proves nothing about belonging to this club.
+
+    The real membership signal is a custom:player_id that resolves to a
+    LIVE player row, because that is only ever set by an approved claim or
+    by an admin. Anything that creates or mutates shared data checks this,
+    not merely "is logged in".
+
+    Returns an error response, or None when the caller is a real member.
+    """
+    if _is_super_admin(claims):
+        return None
+    player_id = claims.get('custom:player_id')
+    if not player_id:
+        return _response(403, {'error': 'your account is not linked to a player yet - claim your profile first'})
+    if not players_table.get_item(Key={'player_id': player_id}).get('Item'):
+        return _response(403, {'error': 'the player linked to your account no longer exists - claim your profile again'})
+    return None
+
+
 def record_match_enforced(event):
-    if not _caller_claims(event):
+    claims = _caller_claims(event)
+    if not claims:
         return _response(403, {'error': 'log in to record a match'})
+    not_member = _requires_linked_member(claims)
+    if not_member:
+        return not_member
     return record_match(event)
 
 

@@ -143,6 +143,29 @@ def remove_player_enforced(group_id, player_id, event):
     return remove_player(group_id, player_id, event)
 
 
+def _requires_linked_member(claims):
+    """Signing up is not the same as being a member. Cognito self-signup is
+    open to anyone with a working inbox - including disposable ones - so a
+    bare session proves only that someone controls an email address. It
+    proves nothing about belonging to this club.
+
+    The real membership signal is a custom:player_id that resolves to a
+    LIVE player row, because that is only ever set by an approved claim or
+    by an admin. Anything that creates or mutates shared data checks this,
+    not merely "is logged in".
+
+    Returns an error response, or None when the caller is a real member.
+    """
+    if _is_super_admin(claims):
+        return None
+    player_id = claims.get('custom:player_id')
+    if not player_id:
+        return _response(403, {'error': 'your account is not linked to a player yet - claim your profile first'})
+    if not players_table.get_item(Key={'player_id': player_id}).get('Item'):
+        return _response(403, {'error': 'the player linked to your account no longer exists - claim your profile again'})
+    return None
+
+
 def register_and_join(event):
     """Combined 'register a friend' + 'quick-add during match setup'
     capability - one new player record, optionally linked into a group
@@ -157,6 +180,9 @@ def register_and_join(event):
     claims = _caller_claims(event)
     if not claims:
         return _response(403, {'error': 'log in to register a new player'})
+    not_member = _requires_linked_member(claims)
+    if not_member:
+        return not_member
 
     body = json.loads(event.get('body') or '{}')
     name = (body.get('name') or '').strip()
@@ -281,7 +307,8 @@ def visible_players_for_caller(event):
     def shape(p):
         row = {'player_id': p['player_id'], 'name': p['name'], 'nickname': p.get('nickname'),
                'rating': p.get('rating', 1000), 'avatar_id': p.get('avatar_id'),
-               'banner_id': p.get('banner_id'), 'background_id': p.get('background_id')}
+               'banner_id': p.get('banner_id'), 'background_id': p.get('background_id'),
+               'avatar_url': p.get('avatar_url'), 'banner_url': p.get('banner_url')}
         if show_audit:
             row['created_by'] = p.get('created_by')
             row['created_at'] = p.get('created_at')
