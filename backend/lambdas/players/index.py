@@ -149,8 +149,17 @@ def claim_player(event):
     claims = _caller_claims(event)
     if not claims:
         return _response(403, {'error': 'log in to claim a profile'})
-    if claims.get('custom:player_id'):
-        return _response(400, {'error': 'your account is already linked to a player'})
+    # An account can carry a custom:player_id that points at a player who
+    # has since been DELETED. The JWT claim is baked in at login and knows
+    # nothing about the deletion, so the old unconditional check here left
+    # those accounts permanently stuck: not linked to anything real, yet
+    # refused permission to link to anything else. Only block when the
+    # existing link still resolves to a live player.
+    existing_link = claims.get('custom:player_id')
+    if existing_link:
+        still_exists = table.get_item(Key={'player_id': existing_link}).get('Item')
+        if still_exists:
+            return _response(400, {'error': 'your account is already linked to a player'})
 
     body = json.loads(event.get('body') or '{}')
     player_id = body.get('player_id')

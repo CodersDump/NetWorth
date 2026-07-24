@@ -547,6 +547,11 @@
         <p class="card-sub">Log in to record a match - this keeps the match log tied to real accounts rather than anyone who happens to open the site.</p>
         <button type="button" onclick="openAuthModal()">Log in</button>
       </div>
+      <div class="card" id="record-match-unlinked-notice" style="display:none;">
+        <h2>Finish setting up your account</h2>
+        <p class="card-sub">You're logged in, but this account isn't linked to a player profile yet - so it can't record matches. Either claim the profile that already exists for you, or create a new one.</p>
+        <button type="button" onclick="openCompleteProfileModal()">Link my profile</button>
+      </div>
       <div class="card" id="record-match-card">
         <h2>Record a match</h2>
         <form id="match-form">
@@ -920,9 +925,16 @@
       <div class="card">
         <h2>Player Card</h2>
         <p class="card-sub">A single player's rating history, partnerships, and mix, all in one place. Defaults to your own card.</p>
-        <label>Player
-          <select id="profile_player_select"></select>
-        </label>
+        <div style="display:flex; align-items:flex-end; gap:8px;">
+          <label style="flex:1; margin-bottom:0;">Player
+            <select id="profile_player_select"></select>
+          </label>
+          <button type="button" class="secondary" id="profile-refresh-btn" title="Reload this player's stats"
+                  style="margin:0; padding:8px 12px; font-size:16px; line-height:1;" onclick="refreshProfile()">&#8635;</button>
+        </div>
+        <div id="profile-stale-notice" style="display:none; font-size:12px; margin-top:6px; color:var(--shuttle);">
+          New matches have been recorded - tap &#8635; to refresh.
+        </div>
         <div id="profile-banner-display" style="display:none; margin-top:12px; border-radius:var(--radius); overflow:visible; padding-bottom:34px;">
           <div id="profile-banner-strip" style="height:110px; border-radius:var(--radius); position:relative; box-shadow:inset 0 0 40px rgba(0,0,0,0.15);">
             <div style="position:absolute; bottom:-30px; left:20px; width:76px; height:76px; border-radius:50%; background:var(--surface); border:4px solid var(--surface); box-shadow:0 2px 8px rgba(0,0,0,0.3); display:flex; align-items:center; justify-content:center;">
@@ -1232,12 +1244,121 @@
       return authSession ? { 'Authorization': `Bearer ${authSession.idToken}` } : {};
     }
     function isLoggedIn() { return !!authSession; }
+
+    // ---------- token freshness ----------
+    // Cognito ID tokens expire after 1 hour. Before this existed, the
+    // token captured at login was reused verbatim forever, so a session
+    // that started at the beginning of a tournament was already dead by
+    // the time later matches got recorded - the Authorizer returned 401
+    // and the UI reported it in a quiet one-line message that is very
+    // easy to miss on a phone mid-game. THIS is why a match "didn't
+    // register" and then went through fine later from a fresh session.
+    //
+    // getSession() from amazon-cognito-identity-js transparently uses the
+    // stored refresh token (valid ~30 days) to mint a new ID token when
+    // the current one is expired, so this costs nothing on the happy path.
+    const TOKEN_REFRESH_MARGIN_SEC = 300;  // refresh when under 5 minutes remain, not at the moment of expiry
+
+    function tokenSecondsRemaining() {
+      if (!authSession || !authSession.claims || !authSession.claims.exp) return 0;
+      return authSession.claims.exp - Math.floor(Date.now() / 1000);
+    }
+
+    function ensureFreshToken(force = false) {
+      return new Promise((resolve) => {
+        if (!authSession) { resolve(false); return; }
+        if (!force && tokenSecondsRemaining() > TOKEN_REFRESH_MARGIN_SEC) { resolve(true); return; }
+        const user = authSession.cognitoUser || (userPool && userPool.getCurrentUser());
+        if (!user) { resolve(false); return; }
+        user.getSession((err, session) => {
+          if (err || !session || !session.isValid()) { resolve(false); return; }
+          const idToken = session.getIdToken();
+          authSession = { idToken: idToken.getJwtToken(), claims: idToken.payload, cognitoUser: user };
+          sessionStorage.setItem('nw_auth_token', authSession.idToken);
+          resolve(true);
+        });
+      });
+    }
+
+    /**
+     * Every authenticated call should go through this rather than raw
+     * fetch. It refreshes a near-expired token first, and if the server
+     * still rejects with 401/403 it forces one more refresh and retries
+     * exactly once before giving up - so a stale token costs a retry,
+     * never a silently lost match.
+     * Returns { res, data, error } where error is an already-readable
+     * string (never "undefined") when something went wrong.
+     */
+    async function authedFetch(url, options = {}) {
+      const send = async () => {
+        const headers = { ...(options.headers || {}), ...getAuthHeaders() };
+        const res = await fetch(url, { ...options, headers });
+        let data = null;
+        try { data = await res.json(); } catch (_) { data = null; }
+        return { res, data };
+      };
+
+      await ensureFreshToken();
+      let { res, data } = await send();
+
+      if ((res.status === 401 || res.status === 403) && authSession) {
+        const refreshed = await ensureFreshToken(true);
+        if (refreshed) ({ res, data } = await send());
+      }
+
+      return { res, data, error: res.ok ? null : describeApiError(res, data) };
+    }
+
+    /** Turns any failure shape into something a human can act on. The old
+     *  code read `data.error` unconditionally, but API Gateway's own
+     *  Authorizer rejections use `message`, and 401s often have no body at
+     *  all - both rendered the literal text "Error: undefined". */
+    // Belt and braces on top of the per-request refresh: keep the token
+    // warm in the background so it is almost never stale at the moment
+    // you actually need it. The visibilitychange hook matters most in
+    // practice - a phone locked in a bag between games is exactly how a
+    // session goes cold, and this refreshes the instant it wakes up.
+    setInterval(() => { if (authSession) ensureFreshToken(); }, 10 * 60 * 1000);
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible' && authSession) ensureFreshToken();
+    });
+
+    function describeApiError(res, data) {
+      if (data && (data.error || data.message)) return data.error || data.message;
+      if (res.status === 401 || res.status === 403) {
+        return 'Your session expired. Log out and log back in, then try again.';
+      }
+      return `Request failed (HTTP ${res.status})`;
+    }
     function isSuperAdmin() {
       if (!authSession) return false;
       const groups = authSession.claims['cognito:groups'] || '';
       return (Array.isArray(groups) ? groups : groups.split(',')).includes('SuperAdmin');
     }
     function myPlayerId() { return authSession ? authSession.claims['custom:player_id'] : null; }
+
+    /**
+     * "Logged in" and "usable account" are NOT the same thing, and
+     * conflating them is what let a half-registered account still see the
+     * match-recording form. Two distinct broken states exist:
+     *   1. Signed up but never completed a profile  -> no custom:player_id
+     *   2. Had a profile, but that player record was later DELETED -> the
+     *      claim still sits in the JWT (claims are baked in at login and
+     *      don't notice a deletion), pointing at a player that is gone.
+     * Case 2 is the one that bit Mayank's friend. Both now resolve to
+     * "not linked", and every write-capable form gates on this instead of
+     * on isLoggedIn().
+     */
+    function hasLinkedPlayer() {
+      if (!authSession) return false;
+      const pid = myPlayerId();
+      if (!pid) return false;
+      // Don't punish a slow roster fetch: until /players has answered
+      // once, assume the link is fine rather than flashing the "not
+      // linked" notice at everyone on every page load.
+      if (!allPlayers.length) return true;
+      return allPlayers.some(p => p.player_id === pid);
+    }
     function myRoleInGroup(group) {
       if (isSuperAdmin()) return 'owner';  // SuperAdmin acts with owner-level power everywhere
       const pid = myPlayerId();
@@ -2062,13 +2183,12 @@
       const groupId = document.getElementById('match_group_select').value;
       const body = { name: name.trim(), skill_level: 'intermediate' };
       if (groupId) body.group_id = groupId;
-      const res = await fetch(`${API_BASE_URL}/register-and-join`, {
+      const { res, data, error } = await authedFetch(`${API_BASE_URL}/register-and-join`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body)
       });
-      const data = await res.json();
-      if (!res.ok) { alert('Error: ' + data.error); return; }
+      if (!res.ok) { alert('Error: ' + error); return; }
       await loadPlayers();  // refreshes allPlayers + every team-select dropdown
       alert(`${name.trim()} is registered${data.added_to_group ? ' and added to ' + data.added_to_group : ''} - pick them from the team dropdowns below.`);
     });
@@ -2120,30 +2240,52 @@
           payload.point_log = livePointLog;
         }
 
-        const res = await fetch(`${API_BASE_URL}/record-match`, {
+        const { res, data, error } = await authedFetch(`${API_BASE_URL}/record-match`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload)
         });
-        const data = await res.json();
         if (res.ok) {
           let msg = `Match recorded: ${data.team_a_names.join(' & ')} vs ${data.team_b_names.join(' & ')} (${data.score_a}-${data.score_b})`;
           if (data.momentum && data.momentum.winner_overcame_deficit > 0) {
             msg += ` - came back from a ${data.momentum.winner_overcame_deficit}-point deficit!`;
           }
-          resultEl.textContent = msg;
+          showMatchOutcome(true, msg);
           document.getElementById('score_a').value = '';
           document.getElementById('score_b').value = '';
           livePointLog = [];
           if (useLive) updateLiveScoreDisplay();
           loadPlayers();
+          // If the Player Card happens to be showing someone who just
+          // played, its numbers are now stale - refresh it in place
+          // rather than making you switch players and switch back.
+          refreshProfileIfShowing([...team_a, ...team_b]);
         } else {
-          resultEl.textContent = `Error: ${data.error}`;
+          showMatchOutcome(false, error);
         }
       } catch (err) {
-        resultEl.textContent = `Request failed: ${err.message}`;
+        showMatchOutcome(false, `Request failed: ${err.message} - check your connection and try again.`);
       }
     });
+
+    /**
+     * A failed match submission used to be a plain grey sentence in an
+     * element that is often scrolled off-screen on a phone, which is how
+     * a match got lost during a live game without anyone noticing. Now a
+     * failure is coloured, scrolled into view, AND blocks on an alert -
+     * you cannot walk away from a failed save thinking it saved.
+     */
+    function showMatchOutcome(ok, message) {
+      const el = document.getElementById('match-result');
+      el.textContent = message;
+      el.style.padding = '10px 12px';
+      el.style.borderRadius = 'var(--radius)';
+      el.style.fontWeight = '600';
+      el.style.borderLeft = `4px solid ${ok ? 'var(--court)' : 'var(--smash)'}`;
+      el.style.background = ok ? 'rgba(47,169,104,0.12)' : 'rgba(214,64,64,0.12)';
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      if (!ok) alert(`Match NOT recorded\n\n${message}`);
+    }
 
     // ---------- game log ----------
 
@@ -2320,13 +2462,22 @@
 
     let profileRatingChart = null;
 
-    async function loadVisiblePlayers() {
+    async function loadVisiblePlayers(opts = {}) {
       if (!isLoggedIn()) return;
       try {
-        const res = await fetch(`${API_BASE_URL}/visible-players`, { headers: getAuthHeaders() });
-        const data = await res.json();
+        const { res, data } = await authedFetch(`${API_BASE_URL}/visible-players`);
         if (!res.ok) return;
         const visible = data.players || [];
+        // Keep the shared roster cache in step with what just came back.
+        // Without this, /visible-players data (fresh ratings, avatar and
+        // banner ids) never reached allPlayers, which is the cache the
+        // Player Card banner and the Settings pickers actually read from
+        // - so a cosmetic change saved fine server-side and then appeared
+        // not to have happened.
+        visible.forEach(vp => {
+          const idx = allPlayers.findIndex(p => p.player_id === vp.player_id);
+          if (idx >= 0) allPlayers[idx] = { ...allPlayers[idx], ...vp };
+        });
         const labeledVisible = visible.map(p => ({
           ...p, label: `${formatPlayerLabel(p.name, p.nickname)} (${p.rating})`
         }));
@@ -2357,7 +2508,10 @@
         // toggle-triggered relabel of the SAME already-selected player
         // must cost zero new API calls, matching the whole point of
         // this toggle existing.
-        if (isFreshLoad && visible.length) loadProfile();
+        // opts.keepSelection means refreshProfile() is driving this and
+        // will call loadProfile() itself straight after - firing it here
+        // too would double every request on a manual refresh.
+        if (isFreshLoad && visible.length && !opts.keepSelection) loadProfile();
       } catch (err) { /* silent - profile tab just stays empty until this succeeds */ }
     }
 
@@ -2434,22 +2588,30 @@
       const statusEl = document.getElementById('settings-status');
       statusEl.textContent = 'Saving...';
       try {
-        const res = await fetch(`${API_BASE_URL}/update-my-card`, {
+        const { res, error } = await authedFetch(`${API_BASE_URL}/update-my-card`, {
           method: 'PUT',
-          headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ [field]: value })
         });
-        const data = await res.json();
-        if (!res.ok) { statusEl.textContent = `Error: ${data.error}`; return; }
+        if (!res.ok) { statusEl.textContent = `Error: ${error}`; return; }
         statusEl.textContent = 'Saved.';
-        await loadVisiblePlayers();  // refreshes cached player data with the new avatar/banner
-        const me = allPlayers.find(p => p.player_id === myPlayerId());
-        renderSettingsPickers(me || {});  // re-render picker highlights to reflect the change
-        // If you're currently viewing your own Player Card, refresh its
-        // banner display too - Settings and Player Card show the same
-        // underlying data, just in different places.
-        if (document.getElementById('profile_player_select').value === myPlayerId()) {
-          renderProfileCardBanner(me);
+
+        // Purely cosmetic, and already confirmed saved server-side - so
+        // patch the local cache and re-render from it instead of going
+        // back to the network. The old code called loadVisiblePlayers()
+        // here, which both cost a round trip for data we already knew AND
+        // didn't work: it never wrote back into allPlayers, which is the
+        // cache the picker and the banner actually read from. That's why
+        // a saved avatar/banner appeared to do nothing until you
+        // navigated away and came back.
+        const myId = myPlayerId();
+        const idx = allPlayers.findIndex(p => p.player_id === myId);
+        if (idx >= 0) allPlayers[idx] = { ...allPlayers[idx], [field]: value };
+        const me = allPlayers[idx] || { [field]: value };
+
+        renderSettingsPickers(me);  // highlight the newly-selected preset
+        if (document.getElementById('profile_player_select').value === myId) {
+          renderProfileCardBanner(me);  // instant, no fetch
         }
       } catch (err) {
         statusEl.textContent = `Request failed: ${err.message}`;
@@ -2814,6 +2976,39 @@
         loadProfileHeadToHead(playerId)
       ]);
     }
+    /** Manual reload of whoever is currently selected. Before this, the
+     *  only way to see updated numbers was to select a different player
+     *  and then select yourself again - loadProfile() only ever fires on
+     *  a `change` event, and re-picking the same option is not a change. */
+    async function refreshProfile() {
+      const btn = document.getElementById('profile-refresh-btn');
+      const notice = document.getElementById('profile-stale-notice');
+      btn.disabled = true;
+      btn.style.opacity = '0.5';
+      try {
+        await loadVisiblePlayers({ keepSelection: true });  // picks up rating/avatar/banner changes
+        await loadProfile();
+        notice.style.display = 'none';
+      } finally {
+        btn.disabled = false;
+        btn.style.opacity = '1';
+      }
+    }
+
+    /** Called after a match is saved: if the card on screen belongs to
+     *  someone who just played, quietly reload it. */
+    function refreshProfileIfShowing(affectedPlayerIds) {
+      const selected = document.getElementById('profile_player_select').value;
+      if (!selected) return;
+      if (affectedPlayerIds.includes(selected)) {
+        refreshProfile();
+      } else {
+        // Someone else's card is up, but the rankings behind it moved -
+        // flag it rather than firing a fetch nobody asked for.
+        document.getElementById('profile-stale-notice').style.display = 'block';
+      }
+    }
+
     document.getElementById('profile_player_select').addEventListener('change', loadProfile);
     document.getElementById('profile_h2h_opponent_select').addEventListener('change', loadProfile);
     ['profile_compare2_select', 'profile_compare3_select', 'profile_compare4_select', 'profile_xaxis_mode',
@@ -3725,12 +3920,12 @@
         // New triple-gated route: SuperAdmin identity + view_key + confirm
         // code, all required. Falls back to the old view_key-only route
         // below if not logged in as SuperAdmin, unchanged for now.
-        const res = await fetch(`${API_BASE_URL}/finance-delete/${recordType}/${recordId}`, {
+        const r = await authedFetch(`${API_BASE_URL}/finance-delete/${recordType}/${recordId}`, {
           method: 'DELETE',
-          headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ view_key: financeKey, confirm: code })
         });
-        ok = res.ok; data = await res.json();
+        ok = r.res.ok; data = r.data || { error: r.error };
       } else {
         ({ ok, data } = await finPost(`${kind}/${recordId}`, 'DELETE', { confirm: code }));
       }
@@ -3814,8 +4009,16 @@
       // creation forms - genuinely enforced server-side too, this is just
       // the friendly version of that (no filling out a form only to hit
       // a 403 at the end).
-      const showForms = isLoggedIn();
-      document.getElementById('record-match-guest-notice').style.display = showForms ? 'none' : 'block';
+      // Three states now, not two. "Guest" (no session at all) and
+      // "logged in but not linked to a player" are different problems
+      // with different fixes, and showing the guest's Log-in button to
+      // someone who is already logged in is exactly the dead end that
+      // came up during the last session.
+      const loggedIn = isLoggedIn();
+      const linked = hasLinkedPlayer();
+      const showForms = loggedIn && linked;
+      document.getElementById('record-match-guest-notice').style.display = loggedIn ? 'none' : 'block';
+      document.getElementById('record-match-unlinked-notice').style.display = (loggedIn && !linked) ? 'block' : 'none';
       document.getElementById('record-match-card').style.display = showForms ? 'block' : 'none';
       document.getElementById('match-quick-add-player-btn').style.display = showForms ? 'inline-block' : 'none';
       document.getElementById('create-tournament-guest-notice').style.display = showForms ? 'none' : 'block';
@@ -3834,7 +4037,7 @@
         const linkedPlayer = allPlayers.find(p => p.player_id === myPlayerId());
         const identity = linkedPlayer
           ? formatPlayerLabel(linkedPlayer.name, linkedPlayer.nickname)
-          : authSession.claims.email;
+          : `${authSession.claims.email} (no profile linked)`;
         statusEl.textContent = identity + (isSuperAdmin() ? ' (SuperAdmin)' : '');
         loginBtn.style.display = 'none';
         logoutBtn.style.display = 'inline-block';
@@ -3881,14 +4084,14 @@
       showCompleteProfileMode('create');
     }
 
-    function showCompleteProfileMode(mode) {
+    function showCompleteProfileMode(mode, preselectPlayerId) {
       document.getElementById('complete-profile-create-view').style.display = mode === 'create' ? 'block' : 'none';
       document.getElementById('complete-profile-claim-view').style.display = mode === 'claim' ? 'block' : 'none';
       document.getElementById('complete-profile-status').textContent = '';
-      if (mode === 'claim') populateClaimPicker();
+      if (mode === 'claim') populateClaimPicker(preselectPlayerId);
     }
 
-    async function populateClaimPicker() {
+    async function populateClaimPicker(preselectPlayerId) {
       const select = document.getElementById('complete-profile-claim-select');
       select.innerHTML = '<option value="">Loading...</option>';
       try {
@@ -3901,6 +4104,12 @@
         }
         const labeled = unclaimed.map(p => ({ ...p, label: `${p.name} (${p.nickname})` }));
         populateSelect(select, labeled, 'player_id', 'label', null);
+        // Arriving here from a nickname-collision prompt: land directly
+        // on the player we think you are, rather than making you hunt
+        // for them again in a list you already answered a question about.
+        if (preselectPlayerId && unclaimed.some(p => p.player_id === preselectPlayerId)) {
+          select.value = preselectPlayerId;
+        }
       } catch (err) {
         select.innerHTML = '<option value="">Failed to load</option>';
       }
@@ -3915,13 +4124,12 @@
       statusEl.textContent = 'Claiming your profile...';
 
       try {
-        const res = await fetch(`${API_BASE_URL}/claim-player`, {
+        const { res, data, error } = await authedFetch(`${API_BASE_URL}/claim-player`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ player_id: playerId, confirm })
         });
-        const data = await res.json();
-        if (!res.ok) { statusEl.textContent = `Error: ${data.error}`; return; }
+        if (!res.ok) { statusEl.textContent = `Error: ${error}`; return; }
 
         // Same self-service linking dance as the create-new path.
         const cognitoUser = authSession.cognitoUser;
@@ -3951,23 +4159,115 @@
       document.getElementById('complete-profile-modal').style.display = 'none';
     }
 
+    /** Same rule the two backend Lambdas apply, mirrored client-side so
+     *  what we compare against is what would actually be stored. */
+    function sanitizeNickname(raw) {
+      return (raw || '').toLowerCase().replace(/[^a-z0-9_]/g, '');
+    }
+
+    /** Classic Levenshtein - small strings only, so the naive version is fine. */
+    function editDistance(a, b) {
+      const dp = Array.from({ length: a.length + 1 }, (_, i) => [i, ...Array(b.length).fill(0)]);
+      for (let j = 0; j <= b.length; j++) dp[0][j] = j;
+      for (let i = 1; i <= a.length; i++) {
+        for (let j = 1; j <= b.length; j++) {
+          dp[i][j] = a[i - 1] === b[j - 1]
+            ? dp[i - 1][j - 1]
+            : 1 + Math.min(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1]);
+        }
+      }
+      return dp[a.length][b.length];
+    }
+
+    /**
+     * Returns true if it's safe to create a NEW player, false if the flow
+     * was diverted into claiming an existing one (or cancelled).
+     *
+     * Three tiers, deliberately different in how hard they push:
+     *   exact nickname match -> hard stop, you cannot create a duplicate
+     *   near nickname / same real name -> ask, defaulting to "that's me"
+     *   nothing similar -> straight through, no friction
+     */
+    async function checkForExistingPlayer(name, typedNickname, statusEl) {
+      statusEl.textContent = 'Checking for an existing profile...';
+      let players = [];
+      try {
+        const res = await fetch(`${API_BASE_URL}/players`);
+        const data = await res.json();
+        players = data.players || [];
+      } catch (err) {
+        // Never block registration because a lookup failed - the backend
+        // still enforces exact-nickname uniqueness as a backstop.
+        return true;
+      }
+      statusEl.textContent = '';
+
+      // If no nickname was typed, the backend derives one from the real
+      // name - so check what WOULD be generated, not an empty string.
+      const candidate = sanitizeNickname(typedNickname) || sanitizeNickname(name);
+      if (!candidate) return true;
+
+      const exact = players.find(p => sanitizeNickname(p.nickname) === candidate);
+      if (exact) {
+        const claimable = !exact.claimed;
+        const msg = `The nickname "${candidate}" already belongs to ${exact.name}.\n\n` +
+          (claimable
+            ? 'If that is you, link this login to that existing profile so your match history and rating stay in one place.\n\nOK = link me to that profile\nCancel = go back and pick a different nickname'
+            : 'That profile is already linked to another account, so you will need a different nickname.');
+        if (!claimable) { alert(msg); return false; }
+        if (confirm(msg)) { showCompleteProfileMode('claim', exact.player_id); return false; }
+        return false;  // either way, do NOT create a duplicate under a colliding nickname
+      }
+
+      // Near misses: shortenings ("maya" for "mayank"), typos, or the
+      // exact same real name already on the roster.
+      const nameNorm = name.trim().toLowerCase();
+      const near = players.filter(p => {
+        if (p.claimed) return false;
+        const nk = sanitizeNickname(p.nickname);
+        if (!nk) return false;
+        if (nk.startsWith(candidate) || candidate.startsWith(nk)) return true;
+        if (editDistance(nk, candidate) <= 2) return true;
+        return (p.name || '').trim().toLowerCase() === nameNorm;
+      });
+      if (!near.length) return true;
+
+      const list = near.slice(0, 5).map(p => `  - ${p.name} (${p.nickname})`).join('\n');
+      const answer = confirm(
+        `We already have ${near.length === 1 ? 'a player' : 'players'} who might be you:\n\n${list}\n\n` +
+        'Creating a second profile splits your ratings and match history in two.\n\n' +
+        'OK = one of these is me, link my account to it\n' +
+        'Cancel = these are other people, create me a new profile'
+      );
+      if (answer) { showCompleteProfileMode('claim', near[0].player_id); return false; }
+      return true;
+    }
+
     async function submitCompleteProfile() {
       const name = document.getElementById('complete-profile-name').value.trim();
       const nickname = document.getElementById('complete-profile-nickname').value.trim();
       const statusEl = document.getElementById('complete-profile-status');
       if (!name) { statusEl.textContent = 'Name is required.'; return; }
+
+      // Duplicate-person check BEFORE creating anything. The backend only
+      // rejects an exact nickname collision, which is no help in the case
+      // that actually happened: an existing player "mayank" and a signup
+      // typing "maya". Different strings, no collision, brand new second
+      // profile for the same human - and all their history split in two.
+      const proceed = await checkForExistingPlayer(name, nickname, statusEl);
+      if (!proceed) return;
+
       statusEl.textContent = 'Creating your profile...';
 
       try {
         const body = { name };
         if (nickname) body.nickname = nickname;
-        const res = await fetch(`${API_BASE_URL}/register-and-join`, {
+        const { res, data, error } = await authedFetch(`${API_BASE_URL}/register-and-join`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(body)
         });
-        const data = await res.json();
-        if (!res.ok) { statusEl.textContent = `Error: ${data.error}`; return; }
+        if (!res.ok) { statusEl.textContent = `Error: ${error}`; return; }
 
         // Link the new player to this Cognito account. This is a
         // self-service attribute update (the account is already
@@ -4280,12 +4580,11 @@
       const resultEl = document.getElementById('create-tournament-result');
       resultEl.textContent = 'Creating...';
       try {
-        const res = await fetch(`${API_BASE_URL}/create-tournament`, {
+        const { res, data, error } = await authedFetch(`${API_BASE_URL}/create-tournament`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload)
         });
-        const data = await res.json();
         if (res.ok) {
           resultEl.textContent = `Created tournament: ${data.name}`;
           document.getElementById('tournament_name').value = '';
@@ -4295,7 +4594,8 @@
           renderTeamCompositionBars(data, 'team-composition-preview');
           renderTournament(data);
         } else {
-          resultEl.textContent = `Error: ${data.error}`;
+          resultEl.textContent = `Error: ${error}`;
+          alert(`Tournament NOT created\n\n${error}`);
         }
       } catch (err) {
         resultEl.textContent = `Request failed: ${err.message}`;
