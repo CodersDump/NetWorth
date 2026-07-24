@@ -260,6 +260,14 @@ Resources:
       Runtime: python3.12
       Handler: index.handler
       Role: !GetAtt LambdaExecutionRole.Arn
+      # Default is 128 MB, which left only ~30 MB of headroom on the
+      # full-table scans (attendance, diversity, hall of fame,
+      # progress history). Going over kills the runtime, and that
+      # surfaces as a gateway 500 with no CORS headers rather than
+      # as a Lambda error - which is why nothing showed in the logs.
+      # Lambda scales CPU with memory too, so this also cuts the
+      # multi-second calls right down for near-identical cost.
+      MemorySize: 512
       Timeout: 10
       Code: ../backend/lambdas/whoami
       # No env vars needed - this function only echoes token claims, it
@@ -275,6 +283,14 @@ Resources:
       Runtime: python3.12
       Handler: index.handler
       Role: !GetAtt LambdaExecutionRole.Arn
+      # Default is 128 MB, which left only ~30 MB of headroom on the
+      # full-table scans (attendance, diversity, hall of fame,
+      # progress history). Going over kills the runtime, and that
+      # surfaces as a gateway 500 with no CORS headers rather than
+      # as a Lambda error - which is why nothing showed in the logs.
+      # Lambda scales CPU with memory too, so this also cuts the
+      # multi-second calls right down for near-identical cost.
+      MemorySize: 512
       Timeout: 10
       Environment:
         Variables:
@@ -288,6 +304,14 @@ Resources:
       Runtime: python3.12
       Handler: index.handler
       Role: !GetAtt LambdaExecutionRole.Arn
+      # Default is 128 MB, which left only ~30 MB of headroom on the
+      # full-table scans (attendance, diversity, hall of fame,
+      # progress history). Going over kills the runtime, and that
+      # surfaces as a gateway 500 with no CORS headers rather than
+      # as a Lambda error - which is why nothing showed in the logs.
+      # Lambda scales CPU with memory too, so this also cuts the
+      # multi-second calls right down for near-identical cost.
+      MemorySize: 512
       Timeout: 10
       Environment:
         Variables:
@@ -305,6 +329,14 @@ Resources:
       Runtime: python3.12
       Handler: index.handler
       Role: !GetAtt LambdaExecutionRole.Arn
+      # Default is 128 MB, which left only ~30 MB of headroom on the
+      # full-table scans (attendance, diversity, hall of fame,
+      # progress history). Going over kills the runtime, and that
+      # surfaces as a gateway 500 with no CORS headers rather than
+      # as a Lambda error - which is why nothing showed in the logs.
+      # Lambda scales CPU with memory too, so this also cuts the
+      # multi-second calls right down for near-identical cost.
+      MemorySize: 512
       Timeout: 10
       Environment:
         Variables:
@@ -320,6 +352,14 @@ Resources:
       Runtime: python3.12
       Handler: index.handler
       Role: !GetAtt LambdaExecutionRole.Arn
+      # Default is 128 MB, which left only ~30 MB of headroom on the
+      # full-table scans (attendance, diversity, hall of fame,
+      # progress history). Going over kills the runtime, and that
+      # surfaces as a gateway 500 with no CORS headers rather than
+      # as a Lambda error - which is why nothing showed in the logs.
+      # Lambda scales CPU with memory too, so this also cuts the
+      # multi-second calls right down for near-identical cost.
+      MemorySize: 512
       Timeout: 10
       Environment:
         Variables:
@@ -337,6 +377,14 @@ Resources:
       Runtime: python3.12
       Handler: index.handler
       Role: !GetAtt LambdaExecutionRole.Arn
+      # Default is 128 MB, which left only ~30 MB of headroom on the
+      # full-table scans (attendance, diversity, hall of fame,
+      # progress history). Going over kills the runtime, and that
+      # surfaces as a gateway 500 with no CORS headers rather than
+      # as a Lambda error - which is why nothing showed in the logs.
+      # Lambda scales CPU with memory too, so this also cuts the
+      # multi-second calls right down for near-identical cost.
+      MemorySize: 512
       Timeout: 10
       Environment:
         Variables:
@@ -355,6 +403,14 @@ Resources:
       Runtime: python3.12
       Handler: index.handler
       Role: !GetAtt LambdaExecutionRole.Arn
+      # Default is 128 MB, which left only ~30 MB of headroom on the
+      # full-table scans (attendance, diversity, hall of fame,
+      # progress history). Going over kills the runtime, and that
+      # surfaces as a gateway 500 with no CORS headers rather than
+      # as a Lambda error - which is why nothing showed in the logs.
+      # Lambda scales CPU with memory too, so this also cuts the
+      # multi-second calls right down for near-identical cost.
+      MemorySize: 512
       Timeout: 30
       Environment:
         Variables:
@@ -390,6 +446,14 @@ Resources:
       Runtime: python3.12
       Handler: index.handler
       Role: !GetAtt LambdaExecutionRole.Arn
+      # Default is 128 MB, which left only ~30 MB of headroom on the
+      # full-table scans (attendance, diversity, hall of fame,
+      # progress history). Going over kills the runtime, and that
+      # surfaces as a gateway 500 with no CORS headers rather than
+      # as a Lambda error - which is why nothing showed in the logs.
+      # Lambda scales CPU with memory too, so this also cuts the
+      # multi-second calls right down for near-identical cost.
+      MemorySize: 512
       Timeout: 15
       Environment:
         Variables:

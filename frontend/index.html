@@ -4994,6 +4994,16 @@
       fields.style.display = fields.style.display === 'block' ? 'none' : 'block';
     });
 
+    /** Restore the tab named in the URL on load. Guarded against a stale
+     *  or hand-edited hash naming a tab that no longer exists. */
+    function restoreTabFromHash() {
+      const wanted = (location.hash || '').replace('#', '');
+      if (!wanted) return;
+      const btn = document.querySelector(`.tab-btn[data-tab="${CSS.escape(wanted)}"]`);
+      if (btn) btn.click();
+    }
+    restoreTabFromHash();
+
     restoreSession();
     updateAuthUI();
 
@@ -5951,6 +5961,12 @@
         document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
         btn.classList.add('active');
         document.getElementById(`tab-${btn.dataset.tab}`).classList.add('active');
+        // Record it in the URL rather than in storage: a refresh keeps you
+        // where you were, back/forward behave sensibly, and a link you send
+        // someone opens on the tab you meant. replaceState so switching
+        // tabs doesn't stack up history entries you'd have to click back
+        // through one at a time.
+        history.replaceState(null, '', `#${btn.dataset.tab}`);
         // Leaving the Player Card has to hand the page back to your own
         // background, so this is re-evaluated on every switch rather than
         // only when a card is rendered.
