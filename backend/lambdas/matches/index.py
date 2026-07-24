@@ -1314,6 +1314,7 @@ def compute_diversity(items, group_id_filter=None):
             'name': display_name(p, pid),
             'total_matches': total,
             'distinct_partners': len(counts),
+            'top_partner_id': top_partner_id,
             'top_partner_name': display_name(top_partner, top_partner_id),
             'top_partner_pct': round(top_count / total * 100, 1) if total else 0
         })
@@ -1382,8 +1383,12 @@ def compute_progress_history_summary(scope_label, period_name):
                 'computed_at': e.get('computed_at'),
                 'most_improved_name': e.get('most_improved_name'), 'most_improved_delta': e.get('most_improved_delta'),
                 'most_improved_names': e.get('most_improved_names'),
+                'most_improved_player_ids': e.get('most_improved_player_ids')
+                    or ([e['most_improved_player_id']] if e.get('most_improved_player_id') else []),
                 'most_active_name': e.get('most_active_name'), 'most_active_matches': e.get('most_active_matches'),
                 'most_active_names': e.get('most_active_names'),
+                'most_active_player_ids': e.get('most_active_player_ids')
+                    or ([e['most_active_player_id']] if e.get('most_active_player_id') else []),
             } for e in filtered
         ],
         'holder_counts': [{'player_id': pid, 'count': c} for pid, c in sorted(holder_counts.items(), key=lambda kv: (-kv[1], kv[0]))],

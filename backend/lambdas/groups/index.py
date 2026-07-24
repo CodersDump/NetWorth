@@ -193,7 +193,13 @@ def register_and_join(event):
 
     player_id = str(uuid.uuid4())
     players_table.put_item(Item={
-        'player_id': player_id, 'name': name, 'nickname': nickname, 'skill_level': skill_level, 'rating': 1000
+        'player_id': player_id, 'name': name, 'nickname': nickname, 'skill_level': skill_level, 'rating': 1000,
+        # Without this, login-by-name/nickname (lookup_email_for_login in
+        # the players Lambda) silently can't find this account - only
+        # the admin bulk-provisioning script wrote email back before this
+        # fix, so anyone who came through self-signup was invisible to
+        # that lookup despite having a perfectly valid linked account.
+        'email': claims.get('email')
     })
 
     added_to = None

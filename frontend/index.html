@@ -1230,6 +1230,10 @@
       // consistently instead of only the one you're currently looking at.
       if (typeof loadRankings === 'function') loadRankings();
       if (lastHofData && typeof renderHallOfFame === 'function') renderHallOfFame(lastHofData);
+      if (lastBadgesData && typeof renderBadges === 'function') renderBadges(lastBadgesData);
+      if (lastDiversityData && typeof renderDiversity === 'function') renderDiversity(lastDiversityData);
+      if (lastAttendanceData && typeof renderAttendance === 'function') renderAttendance(lastAttendanceData);
+      if (lastHistoryData && typeof renderHistory === 'function') renderHistory(lastHistoryData);
       const groupSel = document.getElementById('group_select');
       if (groupSel && typeof loadGroupMembers === 'function') loadGroupMembers(groupSel.value);
       if (typeof loadVisiblePlayers === 'function') loadVisiblePlayers();
@@ -2724,6 +2728,8 @@
       svg.innerHTML = svgContent;
     }
 
+    let lastHistoryData = null;
+
     async function loadHistory() {
       const scope = document.getElementById('history_scope_select').value;
       const period = document.getElementById('history_period_select').value;
@@ -2735,11 +2741,16 @@
         const res = await fetch(`${API_BASE_URL}/matches?${params.toString()}`);
         const data = await res.json();
         if (!res.ok) { resultEl.textContent = `Error: ${data.error}`; return; }
+        lastHistoryData = data;
+        renderHistory(data);
+      } catch (err) {
+        resultEl.textContent = `Request failed: ${err.message}`;
+      }
+    }
 
-        const playerName = pid => {
-          const p = allPlayers.find(pl => pl.player_id === pid);
-          return p ? p.name : pid;
-        };
+    function renderHistory(data) {
+      const resultEl = document.getElementById('history-result');
+      try {
         let html = '';
         const streaks = (data.current_streaks && data.current_streaks.length)
           ? data.current_streaks
@@ -2748,7 +2759,7 @@
           // Co-winners can be on different streak lengths (A & B tie this
           // week, but only A also won last week) - group by streak length.
           const byLen = {};
-          streaks.forEach(s => { (byLen[s.streak] = byLen[s.streak] || []).push(playerName(s.player_id)); });
+          streaks.forEach(s => { (byLen[s.streak] = byLen[s.streak] || []).push(playerLabelById(s.player_id)); });
           const parts = Object.keys(byLen).sort((a, b) => b - a)
             .map(len => `${byLen[len].join(' & ')} - ${len} period${len === '1' ? '' : 's'} in a row`);
           html += `<p>🔥 <strong>Current streak:</strong> ${parts.join('; ')}</p>`;
@@ -2756,14 +2767,14 @@
         if (data.longest_streaks && data.longest_streaks.length) {
           html += '<h4>Longest streaks ever</h4><table><tr><th>Player</th><th>Streak</th></tr>';
           data.longest_streaks.slice(0, 5).forEach(s => {
-            html += `<tr><td>${playerName(s.player_id)}</td><td>${s.streak}</td></tr>`;
+            html += `<tr><td>${playerLabelById(s.player_id)}</td><td>${s.streak}</td></tr>`;
           });
           html += '</table>';
         }
         if (data.holder_counts && data.holder_counts.length) {
           html += '<h4>Times held "most improved"</h4><table><tr><th>Player</th><th>Times</th></tr>';
           data.holder_counts.slice(0, 5).forEach(h => {
-            html += `<tr><td>${playerName(h.player_id)}</td><td>${h.count}</td></tr>`;
+            html += `<tr><td>${playerLabelById(h.player_id)}</td><td>${h.count}</td></tr>`;
           });
           html += '</table>';
         }
@@ -2772,10 +2783,12 @@
           [...data.history].reverse().forEach(h => {
             // Prefer the co-winner list; fall back to the legacy singular
             // field for rows written before ties were recorded properly.
-            const improvedName = (h.most_improved_names && h.most_improved_names.length)
-              ? h.most_improved_names.join(' & ') : h.most_improved_name;
-            const activeName = (h.most_active_names && h.most_active_names.length)
-              ? h.most_active_names.join(' & ') : h.most_active_name;
+            const improvedName = (h.most_improved_player_ids && h.most_improved_player_ids.length)
+              ? playerLabelsById(h.most_improved_player_ids, h.most_improved_names).join(' & ')
+              : ((h.most_improved_names && h.most_improved_names.length) ? h.most_improved_names.join(' & ') : h.most_improved_name);
+            const activeName = (h.most_active_player_ids && h.most_active_player_ids.length)
+              ? playerLabelsById(h.most_active_player_ids, h.most_active_names).join(' & ')
+              : ((h.most_active_names && h.most_active_names.length) ? h.most_active_names.join(' & ') : h.most_active_name);
             const improved = improvedName ? `${improvedName} (${h.most_improved_delta >= 0 ? '+' : ''}${h.most_improved_delta})` : '-';
             const active = activeName ? `${activeName} (${h.most_active_matches})` : '-';
             const computedTip = h.computed_at ? ` title="Locked in: ${h.computed_at.slice(0, 19).replace('T', ' ')} UTC"` : '';
@@ -2794,6 +2807,8 @@
     document.getElementById('history_scope_select').addEventListener('change', loadHistory);
     document.getElementById('history_period_select').addEventListener('change', loadHistory);
 
+    let lastBadgesData = null;
+
     async function loadBadges() {
       const groupId = document.getElementById('badges_group_filter').value;
       const resultEl = document.getElementById('badges-result');
@@ -2805,7 +2820,16 @@
         const res = await fetch(`${API_BASE_URL}/matches?${params.toString()}`);
         const data = await res.json();
         if (!res.ok) { resultEl.textContent = `Error: ${data.error}`; return; }
+        lastBadgesData = data;
+        renderBadges(data);
+      } catch (err) {
+        resultEl.textContent = `Request failed: ${err.message}`;
+      }
+    }
 
+    function renderBadges(data) {
+      const resultEl = document.getElementById('badges-result');
+      try {
         const periodLabels = { week: 'This week', month: 'This month', year: 'This year' };
         let html = '';
         ['week', 'month', 'year'].forEach(period => {
@@ -2816,13 +2840,13 @@
             return;
           }
           const topImprover = p.most_improved_top5[0];
-          html += `<p>🔥 <strong>Most improved:</strong> ${topImprover.name} (${topImprover.delta >= 0 ? '+' : ''}${topImprover.delta})</p>`;
+          html += `<p>🔥 <strong>Most improved:</strong> ${playerLabelById(topImprover.player_id, topImprover.name)} (${topImprover.delta >= 0 ? '+' : ''}${topImprover.delta})</p>`;
           if (p.most_active) {
-            html += `<p>⚡ <strong>Most active:</strong> ${p.most_active.name} (${p.most_active.matches} match${p.most_active.matches === 1 ? '' : 'es'})</p>`;
+            html += `<p>⚡ <strong>Most active:</strong> ${playerLabelById(p.most_active.player_id, p.most_active.name)} (${p.most_active.matches} match${p.most_active.matches === 1 ? '' : 'es'})</p>`;
           }
           html += '<table><tr><th>Player</th><th>Change</th><th>Current rating</th><th>Matches</th></tr>';
           p.most_improved_top5.forEach(row => {
-            html += `<tr><td>${row.name}</td><td>${row.delta >= 0 ? '+' : ''}${row.delta}</td><td class="rating">${row.current_rating}</td><td>${row.matches_in_period}</td></tr>`;
+            html += `<tr><td>${playerLabelById(row.player_id, row.name)}</td><td>${row.delta >= 0 ? '+' : ''}${row.delta}</td><td class="rating">${row.current_rating}</td><td>${row.matches_in_period}</td></tr>`;
           });
           html += '</table>';
         });
@@ -2833,6 +2857,8 @@
     }
     document.getElementById('load-badges-btn').addEventListener('click', loadBadges);
     document.getElementById('badges_group_filter').addEventListener('change', loadBadges);
+
+    let lastDiversityData = null;
 
     async function loadDiversity() {
       const groupId = document.getElementById('diversity_group_filter').value;
@@ -2845,17 +2871,23 @@
         const res = await fetch(`${API_BASE_URL}/matches?${params.toString()}`);
         const data = await res.json();
         if (!res.ok) { resultEl.textContent = `Error: ${data.error}`; return; }
-        if (!data.players.length) { resultEl.innerHTML = '<p style="font-size:13px;color:var(--text-secondary);">No doubles matches in this scope yet.</p>'; return; }
-
-        let html = '<table><tr><th>Player</th><th>Matches</th><th>Distinct partners</th><th>Top partner</th><th>Top partner %</th></tr>';
-        data.players.forEach(p => {
-          html += `<tr><td>${p.name}</td><td>${p.total_matches}</td><td>${p.distinct_partners}</td><td>${p.top_partner_name}</td><td>${p.top_partner_pct}%</td></tr>`;
-        });
-        html += '</table>';
-        resultEl.innerHTML = html;
+        lastDiversityData = data;
+        renderDiversity(data);
       } catch (err) {
         resultEl.textContent = `Request failed: ${err.message}`;
       }
+    }
+
+    function renderDiversity(data) {
+      const resultEl = document.getElementById('diversity-result');
+      if (!data.players.length) { resultEl.innerHTML = '<p style="font-size:13px;color:var(--text-secondary);">No doubles matches in this scope yet.</p>'; return; }
+
+      let html = '<table><tr><th>Player</th><th>Matches</th><th>Distinct partners</th><th>Top partner</th><th>Top partner %</th></tr>';
+      data.players.forEach(p => {
+        html += `<tr><td>${playerLabelById(p.player_id, p.name)}</td><td>${p.total_matches}</td><td>${p.distinct_partners}</td><td>${playerLabelById(p.top_partner_id, p.top_partner_name)}</td><td>${p.top_partner_pct}%</td></tr>`;
+      });
+      html += '</table>';
+      resultEl.innerHTML = html;
     }
     document.getElementById('load-diversity-btn').addEventListener('click', loadDiversity);
     document.getElementById('diversity_group_filter').addEventListener('change', loadDiversity);
@@ -2981,6 +3013,8 @@
     document.getElementById('load-hof-btn').addEventListener('click', loadHallOfFame);
     document.getElementById('hof_group_filter').addEventListener('change', loadHallOfFame);
 
+    let lastAttendanceData = null;
+
     async function loadAttendance() {
       const groupId = document.getElementById('attendance_group_filter').value;
       const resultEl = document.getElementById('attendance-result');
@@ -2993,17 +3027,23 @@
         const res = await fetch(`${API_BASE_URL}/matches?${params.toString()}`);
         const data = await res.json();
         if (!res.ok) { resultEl.textContent = `Error: ${data.error}`; return; }
-        if (!data.attendance.length) { resultEl.innerHTML = '<p style="font-size:13px;color:#555;">No matches recorded yet.</p>'; return; }
-
-        let html = '<table><tr><th>Player</th><th>Sessions</th><th>Total Matches</th><th>Last 30d</th><th>Last 90d</th><th>Longest week streak</th></tr>';
-        data.attendance.forEach(a => {
-          html += `<tr><td>${a.name}</td><td>${a.sessions_attended}</td><td>${a.total_matches}</td><td>${a.matches_last_30_days}</td><td>${a.matches_last_90_days}</td><td>${a.longest_week_streak}</td></tr>`;
-        });
-        html += '</table>';
-        resultEl.innerHTML = html;
+        lastAttendanceData = data;
+        renderAttendance(data);
       } catch (err) {
         resultEl.textContent = `Request failed: ${err.message}`;
       }
+    }
+
+    function renderAttendance(data) {
+      const resultEl = document.getElementById('attendance-result');
+      if (!data.attendance.length) { resultEl.innerHTML = '<p style="font-size:13px;color:#555;">No matches recorded yet.</p>'; return; }
+
+      let html = '<table><tr><th>Player</th><th>Sessions</th><th>Total Matches</th><th>Last 30d</th><th>Last 90d</th><th>Longest week streak</th></tr>';
+      data.attendance.forEach(a => {
+        html += `<tr><td>${playerLabelById(a.player_id, a.name)}</td><td>${a.sessions_attended}</td><td>${a.total_matches}</td><td>${a.matches_last_30_days}</td><td>${a.matches_last_90_days}</td><td>${a.longest_week_streak}</td></tr>`;
+      });
+      html += '</table>';
+      resultEl.innerHTML = html;
     }
     document.getElementById('load-attendance-btn').addEventListener('click', loadAttendance);
     document.getElementById('attendance_group_filter').addEventListener('change', loadAttendance);
@@ -3380,8 +3420,13 @@
       if (!data.walkins.length) { el.textContent = 'No walk-ins for this period.'; return; }
       let html = '<table><tr><th>Date</th><th>Slot</th><th>Name</th><th>Fee</th><th>Skill</th><th>Recruit?</th><th></th></tr>';
       data.walkins.forEach(w => {
+        // Linked to a roster player -> show their CURRENT name/nickname,
+        // toggle-aware, ignoring the frozen display_name snapshot from
+        // whenever the walk-in was recorded. A true guest (no player_id
+        // at all) has no nickname concept, so their typed name stays as-is.
+        const label = w.player_id ? playerLabelById(w.player_id, w.display_name) : w.display_name;
         html += `<tr><td>${w.date}</td><td>${w.slot}</td>` +
-          `<td>${w.display_name}${w.player_id ? '' : ' <span style="opacity:0.6;">(guest)</span>'}${w.note ? ` <span title="${String(w.note).replace(/"/g, '&quot;')}" onclick="alert('${String(w.note).replace(/'/g, "\\'").replace(/"/g, '&quot;')}')">📝</span>` : ''}</td>` +
+          `<td>${label}${w.player_id ? '' : ' <span style="opacity:0.6;">(guest)</span>'}${w.note ? ` <span title="${String(w.note).replace(/"/g, '&quot;')}" onclick="alert('${String(w.note).replace(/'/g, "\\'").replace(/"/g, '&quot;')}')">📝</span>` : ''}</td>` +
           `<td>${w.fee}</td><td>${w.skill || ''}</td><td>${w.recruit_verdict || ''}</td>` +
           `<td><button type="button" class="secondary fin-del" data-kind="walkins" data-id="${w.record_id}">Delete</button></td></tr>`;
       });
