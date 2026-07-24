@@ -115,6 +115,7 @@ def list_players():
             'rating': i.get('rating', 1000),
             'avatar_id': i.get('avatar_id'),
             'banner_id': i.get('banner_id'),
+            'background_id': i.get('background_id'),
             'claimed': bool(i.get('email'))  # signal only, never the actual email - that stays private
         }
         for i in items
@@ -143,7 +144,12 @@ def _can_self_rename(claims):
 
 ALLOWED_AVATARS = {'shuttle', 'trophy', 'lightning', 'fire', 'target', 'eagle', 'tiger',
                    'lion', 'wolf', 'fox', 'dragon', 'crown', 'muscle', 'star', 'game', 'racket'}
-ALLOWED_BANNERS = {'sunset', 'ocean', 'forest', 'fire', 'royal', 'candy', 'midnight', 'court'}
+ALLOWED_BANNERS = {'court', 'smash', 'mesh', 'carbon', 'blueprint', 'chevron', 'dots', 'aurora', 'ember'}
+# Page-level theme, deliberately a separate field from the banner: on a
+# profile these are three independent layers (background, banner,
+# avatar), and collapsing two of them into one means you can't have a
+# calm background behind a loud banner.
+ALLOWED_BACKGROUNDS = {'plain', 'court', 'nebula', 'blueprint', 'carbon', 'topo', 'weave', 'glow', 'ember'}
 
 
 def claim_player(event):
@@ -352,12 +358,15 @@ def update_my_card(event):
     body = json.loads(event.get('body') or '{}')
     avatar_id = body.get('avatar_id')
     banner_id = body.get('banner_id')
+    background_id = body.get('background_id')
     if avatar_id is not None and avatar_id not in ALLOWED_AVATARS:
         return _response(400, {'error': f'unknown avatar_id - choose from {sorted(ALLOWED_AVATARS)}'})
     if banner_id is not None and banner_id not in ALLOWED_BANNERS:
         return _response(400, {'error': f'unknown banner_id - choose from {sorted(ALLOWED_BANNERS)}'})
-    if avatar_id is None and banner_id is None:
-        return _response(400, {'error': 'provide avatar_id and/or banner_id'})
+    if background_id is not None and background_id not in ALLOWED_BACKGROUNDS:
+        return _response(400, {'error': f'unknown background_id - choose from {sorted(ALLOWED_BACKGROUNDS)}'})
+    if avatar_id is None and banner_id is None and background_id is None:
+        return _response(400, {'error': 'provide avatar_id, banner_id and/or background_id'})
 
     update_parts = []
     values = {}
@@ -367,6 +376,9 @@ def update_my_card(event):
     if banner_id is not None:
         update_parts.append('banner_id = :b')
         values[':b'] = banner_id
+    if background_id is not None:
+        update_parts.append('background_id = :g')
+        values[':g'] = background_id
 
     table.update_item(
         Key={'player_id': player_id},

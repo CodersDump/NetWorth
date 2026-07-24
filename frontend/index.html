@@ -23,13 +23,12 @@
     --text-secondary: #52605A;
     --border: #DCE6DF;
     --radius: 10px;
-    /* Page background theming. --page-banner is swapped at runtime to the
-       selected player's banner gradient; --veil is the scrim laid over it.
-       The veil is deliberately the SAME colour as --bg, so when no banner
-       is set the composite is pixel-identical to the plain background and
-       nothing about the existing look changes. */
-    --veil: rgba(245, 249, 246, 0.88);
-    --page-banner: none;
+    /* Page background theming. --page-bg is swapped at runtime to the
+       selected player's chosen background pattern; --veil is the flat
+       scrim laid over it. The veil is the SAME colour as --bg, so with no
+       background chosen the page is pixel-identical to plain. */
+    --veil: rgba(245, 249, 246, 0.86);
+    --page-bg: none;
   }
   [data-theme="dark"] {
     --bg: #0F1B15;
@@ -40,38 +39,46 @@
     --border: #2A3D31;
     --court: #2FA968;
     --court-dark: #1F7A4D;
-    /* Slightly less opaque than light mode: a saturated gradient reads
-       much more strongly against white than against near-black, so an
-       identical value would make dark mode look almost untinted. */
-    --veil: rgba(15, 27, 21, 0.84);
+    /* Thinner than light mode: a saturated pattern reads far harder
+       against white than against near-black, so an identical value makes
+       dark mode look untinted. Dark is also where this look belongs, so
+       it gets to show more of the artwork. */
+    --veil: rgba(15, 27, 21, 0.74);
   }
   * { box-sizing: border-box; }
+  html { background: var(--bg); }
   body {
     font-family: 'Inter', sans-serif;
-    background: var(--bg);
+    background: transparent;
     color: var(--text);
     margin: 0;
     padding: 0;
     transition: background 0.2s, color 0.2s;
   }
-  /* A fixed pseudo-element rather than background-attachment: fixed on
-     body - that property is notoriously janky and repaint-heavy while
-     scrolling on mobile Safari, which is where this app actually gets
-     used. This stays put for free because it never scrolls. */
-  body::before {
+  /* Two stacked fixed layers rather than one. The pattern presets each
+     carry their own per-layer sizes and repeat rules inside a single
+     `background` shorthand, which is impossible to express if a veil
+     gradient is sharing the same background-image list. Separating them
+     means a preset can be an arbitrarily complex pattern and the veil
+     stays a flat, predictable scrim on top of it. */
+  body::before,
+  body::after {
     content: '';
     position: fixed;
     inset: 0;
-    z-index: -1;
     pointer-events: none;
-    background-color: var(--bg);
-    background-image: linear-gradient(var(--veil), var(--veil)), var(--page-banner);
-    background-size: cover;
-    background-position: center;
-    transition: background-image 0.3s ease;
+  }
+  body::before {
+    z-index: -2;
+    background: var(--page-bg, none);
+  }
+  body::after {
+    z-index: -1;
+    background: var(--veil);
+    transition: background 0.2s;
   }
   @media (prefers-reduced-motion: reduce) {
-    body::before { transition: none; }
+    body::after { transition: none; }
   }
   .app-shell { max-width: 880px; margin: 0 auto; padding: 0 16px 64px; }
   header.app-header {
@@ -414,8 +421,12 @@
       <p class="card-sub">Changes here apply to your own Player Card.</p>
       <p style="font-size:13px; font-weight:600; margin:14px 0 8px;">Avatar</p>
       <div id="settings-avatar-picker" style="display:flex; flex-wrap:wrap; gap:6px; margin-bottom:14px;"></div>
-      <p style="font-size:13px; font-weight:600; margin:0 0 8px;">Banner</p>
-      <div id="settings-banner-picker" style="display:flex; flex-wrap:wrap; gap:6px;"></div>
+      <p style="font-size:13px; font-weight:600; margin:0 0 4px;">Banner</p>
+      <p class="card-sub" style="margin:0 0 8px;">The strip across the top of your Player Card.</p>
+      <div id="settings-banner-picker" style="display:flex; flex-wrap:wrap; gap:6px; margin-bottom:14px;"></div>
+      <p style="font-size:13px; font-weight:600; margin:0 0 4px;">Background</p>
+      <p class="card-sub" style="margin:0 0 8px;">Sits behind the whole page. Shown to anyone viewing your card.</p>
+      <div id="settings-background-picker" style="display:flex; flex-wrap:wrap; gap:6px;"></div>
       </div>
       <div id="settings-status" style="font-size:13px; margin-top:10px;"></div>
 
@@ -2601,15 +2612,105 @@
       eagle: '🦅', tiger: '🐯', lion: '🦁', wolf: '🐺', fox: '🦊',
       dragon: '🐉', crown: '👑', muscle: '💪', star: '🌟', game: '🎮', racket: '🏓'
     };
+    /**
+     * Banners are patterns, not flat gradients - a plain two-stop gradient
+     * is the thing every template ships with, and at 110px tall it reads
+     * as a coloured bar rather than as anyone's choice. Each preset layers
+     * a repeating pattern over a base gradient, using per-layer
+     * `position / size` syntax inside one shorthand. Pure CSS: no image
+     * assets, so nothing new to host, cache, or pay egress on.
+     */
     const BANNER_PRESETS = {
-      sunset: 'linear-gradient(120deg, #FF512F 0%, #DD2476 50%, #1a0a2e 100%)',
-      ocean: 'linear-gradient(120deg, #005C97 0%, #363795 60%, #0a0a1a 100%)',
-      forest: 'linear-gradient(120deg, #134E5E 0%, #71B280 60%, #0a1a12 100%)',
-      fire: 'linear-gradient(120deg, #ff0844 0%, #ffb199 50%, #1a0505 100%)',
-      royal: 'linear-gradient(120deg, #0f0c29 0%, #302b63 50%, #24243e 100%)',
-      candy: 'linear-gradient(120deg, #ff9a9e 0%, #fecfef 60%, #2b1a2b 100%)',
-      midnight: 'linear-gradient(120deg, #0f2027 0%, #203a43 50%, #2c5364 100%)',
-      court: 'linear-gradient(120deg, #0f3d20 0%, #1F7A4D 50%, #2FA968 100%)'
+      // Court lines - the obvious one to have, and the only preset drawn
+      // from the actual subject rather than from generic pattern stock.
+      court: `repeating-linear-gradient(90deg, rgba(255,255,255,.16) 0 2px, transparent 2px 88px),
+              repeating-linear-gradient(0deg, rgba(255,255,255,.10) 0 2px, transparent 2px 54px),
+              linear-gradient(120deg, #0b3018 0%, #1F7A4D 55%, #2FA968 100%)`,
+      // Speed streaks, angled the way a smash travels.
+      smash: `repeating-linear-gradient(115deg, rgba(255,255,255,.10) 0 4px, transparent 4px 26px),
+              linear-gradient(120deg, #5c0d1c 0%, #ff0844 60%, #ff7a2f 100%)`,
+      mesh: `radial-gradient(at 18% 25%, rgba(106,76,255,.85) 0, transparent 55%),
+             radial-gradient(at 78% 18%, rgba(0,180,216,.75) 0, transparent 50%),
+             radial-gradient(at 62% 92%, rgba(255,77,157,.65) 0, transparent 48%),
+             linear-gradient(140deg, #0f0c29 0%, #1c1b3a 100%)`,
+      carbon: `repeating-linear-gradient(45deg, rgba(255,255,255,.05) 0 1px, transparent 1px 7px),
+               repeating-linear-gradient(-45deg, rgba(0,0,0,.28) 0 1px, transparent 1px 7px),
+               linear-gradient(120deg, #1c2126 0%, #2b333b 100%)`,
+      blueprint: `repeating-linear-gradient(0deg, rgba(255,255,255,.09) 0 1px, transparent 1px 20px),
+                  repeating-linear-gradient(90deg, rgba(255,255,255,.09) 0 1px, transparent 1px 20px),
+                  linear-gradient(120deg, #04263b 0%, #005C97 100%)`,
+      chevron: `repeating-linear-gradient(135deg, rgba(255,255,255,.09) 0 10px, transparent 10px 20px),
+                repeating-linear-gradient(45deg, rgba(255,255,255,.09) 0 10px, transparent 10px 20px),
+                linear-gradient(120deg, #1a2b4a 0%, #37507d 100%)`,
+      dots: `radial-gradient(rgba(255,255,255,.20) 1.4px, transparent 1.5px) 0 0 / 16px 16px,
+             linear-gradient(120deg, #0f2027 0%, #2c5364 100%)`,
+      aurora: `radial-gradient(at 25% 100%, rgba(47,169,104,.85) 0, transparent 60%),
+               radial-gradient(at 75% 0%, rgba(0,180,216,.70) 0, transparent 55%),
+               linear-gradient(140deg, #06231c 0%, #0d3b34 100%)`,
+      ember: `radial-gradient(at 30% 110%, rgba(255,120,40,.80) 0, transparent 55%),
+              radial-gradient(at 85% 20%, rgba(255,29,72,.55) 0, transparent 50%),
+              linear-gradient(140deg, #1a0b06 0%, #3b1207 100%)`
+    };
+
+    /**
+     * The old flat-gradient banners were retired when these patterns
+     * replaced them, but people already have those ids saved on their
+     * player record. Without this map every one of them would silently
+     * fall through to the default and quietly lose the choice they made.
+     * Resolved on read only - the next time they save, a current id gets
+     * written and the alias stops mattering for them.
+     */
+    const LEGACY_BANNER_ALIASES = {
+      sunset: 'ember', ocean: 'blueprint', forest: 'aurora',
+      fire: 'smash', royal: 'mesh', candy: 'mesh', midnight: 'dots'
+    };
+
+    function resolveBannerId(id) {
+      if (!id) return null;
+      return BANNER_PRESETS[id] ? id : (LEGACY_BANNER_ALIASES[id] || null);
+    }
+
+    /**
+     * Page backgrounds are a THIRD independent layer, not the banner
+     * reused. On a profile these do different jobs: the background is
+     * ambient and sits behind everything at low contrast, the banner is a
+     * focal strip. Tying them together means you can't pair a calm
+     * backdrop with a loud banner, which is most of the point.
+     *
+     * These are scaled much larger than the banner patterns, because they
+     * cover a whole viewport rather than a 110px strip, and they sit under
+     * a heavy veil so they read as texture rather than decoration.
+     */
+    const BACKGROUND_PRESETS = {
+      plain: 'none',
+      court: `repeating-linear-gradient(90deg, rgba(120,255,180,.16) 0 3px, transparent 3px 190px),
+              repeating-linear-gradient(0deg, rgba(120,255,180,.10) 0 3px, transparent 3px 130px),
+              linear-gradient(160deg, #0b3018 0%, #12452a 100%)`,
+      nebula: `radial-gradient(at 12% 18%, rgba(106,76,255,.9) 0, transparent 45%),
+               radial-gradient(at 88% 12%, rgba(0,180,216,.8) 0, transparent 42%),
+               radial-gradient(at 70% 85%, rgba(255,77,157,.7) 0, transparent 40%),
+               radial-gradient(at 25% 92%, rgba(47,169,104,.6) 0, transparent 38%),
+               linear-gradient(160deg, #0a0a1f 0%, #16162e 100%)`,
+      blueprint: `repeating-linear-gradient(0deg, rgba(120,200,255,.13) 0 1px, transparent 1px 44px),
+                  repeating-linear-gradient(90deg, rgba(120,200,255,.13) 0 1px, transparent 1px 44px),
+                  linear-gradient(160deg, #041d2e 0%, #063b5c 100%)`,
+      carbon: `repeating-linear-gradient(45deg, rgba(255,255,255,.045) 0 2px, transparent 2px 12px),
+               repeating-linear-gradient(-45deg, rgba(0,0,0,.30) 0 2px, transparent 2px 12px),
+               linear-gradient(160deg, #14181c 0%, #242c33 100%)`,
+      // Contour lines. repeating-radial-gradient is the only way to get
+      // this without shipping an SVG, and it tiles cleanly at this scale.
+      topo: `repeating-radial-gradient(circle at 30% 40%, transparent 0 38px, rgba(255,255,255,.07) 38px 40px),
+             repeating-radial-gradient(circle at 78% 75%, transparent 0 46px, rgba(255,255,255,.05) 46px 48px),
+             linear-gradient(160deg, #12211c 0%, #1d3730 100%)`,
+      weave: `repeating-linear-gradient(60deg, rgba(255,255,255,.06) 0 12px, transparent 12px 34px),
+              repeating-linear-gradient(-60deg, rgba(255,255,255,.05) 0 12px, transparent 12px 34px),
+              linear-gradient(160deg, #1b1526 0%, #2e2340 100%)`,
+      glow: `radial-gradient(at 0% 0%, rgba(47,169,104,.75) 0, transparent 48%),
+             radial-gradient(at 100% 100%, rgba(0,180,216,.65) 0, transparent 48%),
+             linear-gradient(160deg, #0c1712 0%, #101c26 100%)`,
+      ember: `radial-gradient(at 15% 105%, rgba(255,120,40,.75) 0, transparent 50%),
+              radial-gradient(at 90% 10%, rgba(255,29,72,.55) 0, transparent 45%),
+              linear-gradient(160deg, #14090a 0%, #2b1008 100%)`
     };
 
     /**
@@ -2619,8 +2720,8 @@
      * fourth thing each call site has to remember to call.
      */
     function applyPageBackground(player) {
-      const banner = player && player.banner_id ? BANNER_PRESETS[player.banner_id] : null;
-      document.documentElement.style.setProperty('--page-banner', banner || 'none');
+      const bg = player && player.background_id ? BACKGROUND_PRESETS[player.background_id] : null;
+      document.documentElement.style.setProperty('--page-bg', bg || 'none');
     }
 
     function renderProfileCardBanner(player) {
@@ -2635,8 +2736,10 @@
       const emojiEl = document.getElementById('profile-avatar-emoji');
       const nameEl = document.getElementById('profile-banner-name');
       if (!player || (!player.avatar_id && !player.banner_id)) { displayEl.style.display = 'none'; return; }
+      // background_id deliberately not in that test - a background with no
+      // banner or avatar still themes the page, it just has no card strip.
       displayEl.style.display = 'block';
-      stripEl.style.background = BANNER_PRESETS[player.banner_id] || BANNER_PRESETS.court;
+      stripEl.style.background = BANNER_PRESETS[resolveBannerId(player.banner_id)] || BANNER_PRESETS.court;
       emojiEl.textContent = AVATAR_PRESETS[player.avatar_id] || '';
       nameEl.textContent = formatPlayerLabel(player.name, player.nickname);
     }
@@ -2677,10 +2780,23 @@
         `<button type="button" class="secondary" style="font-size:22px; padding:6px 10px; ${player.avatar_id === id ? 'border-color:var(--court); border-width:2px;' : ''}" onclick="setMyCardField('avatar_id','${id}')">${emoji}</button>`
       ).join('');
 
-      const bannerPicker = document.getElementById('settings-banner-picker');
-      bannerPicker.innerHTML = Object.entries(BANNER_PRESETS).map(([id, gradient]) =>
-        `<button type="button" style="width:36px; height:36px; border-radius:6px; border:${player.banner_id === id ? '3px solid var(--text)' : '1px solid var(--border)'}; background:${gradient}; cursor:pointer; padding:0;" title="${id}" onclick="setMyCardField('banner_id','${id}')"></button>`
-      ).join('');
+      // Swatches are wider than tall so a directional pattern (stripes,
+      // chevrons, court lines) is actually legible in the swatch - at 36px
+      // square most of these presets look like a single flat colour.
+      const swatch = (field, id, css, selected) =>
+        `<button type="button" style="width:62px; height:38px; border-radius:6px;
+           border:${selected ? '3px solid var(--court)' : '1px solid var(--border)'};
+           background:${css.replace(/\s+/g, ' ')}; background-size:auto; cursor:pointer; padding:0;"
+           title="${id}" onclick="setMyCardField('${field}','${id}')"></button>`;
+
+      document.getElementById('settings-banner-picker').innerHTML =
+        Object.entries(BANNER_PRESETS).map(([id, css]) =>
+          swatch('banner_id', id, css, resolveBannerId(player.banner_id) === id)).join('');
+
+      document.getElementById('settings-background-picker').innerHTML =
+        Object.entries(BACKGROUND_PRESETS).map(([id, css]) =>
+          swatch('background_id', id, id === 'plain' ? 'var(--surface-2)' : css,
+                 player.background_id === id)).join('');
     }
 
     /** Asks an admin for access instead of linking immediately. */

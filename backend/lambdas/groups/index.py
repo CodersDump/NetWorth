@@ -274,7 +274,8 @@ def visible_players_for_caller(event):
 
     return _response(200, {'players': [
         {'player_id': p['player_id'], 'name': p['name'], 'nickname': p.get('nickname'), 'rating': p.get('rating', 1000),
-         'avatar_id': p.get('avatar_id'), 'banner_id': p.get('banner_id')}
+         'avatar_id': p.get('avatar_id'), 'banner_id': p.get('banner_id'),
+         'background_id': p.get('background_id')}
         for p in visible
     ]})
 
