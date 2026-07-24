@@ -328,11 +328,29 @@
     <div class="card" style="max-width:400px; width:90%;">
       <h2>Set up your player profile</h2>
       <p class="card-sub">One more step - this links your login to a player record so your matches and stats are yours.</p>
-      <label>Your name <input type="text" id="complete-profile-name" required></label>
-      <label>Nickname <span style="opacity:0.6; font-weight:normal;">(optional - auto-generated from your name if left blank; lowercase letters, numbers, underscore only)</span>
-        <input type="text" id="complete-profile-nickname">
-      </label>
-      <button type="button" id="complete-profile-submit-btn">Create my profile</button>
+      <p style="font-size:13px; margin-bottom:10px;">
+        <a href="#" id="complete-profile-mode-create-link" onclick="showCompleteProfileMode('create'); return false;">Create a new profile</a> ·
+        <a href="#" id="complete-profile-mode-claim-link" onclick="showCompleteProfileMode('claim'); return false;">I've played before, claim my existing profile</a>
+      </p>
+
+      <div id="complete-profile-create-view">
+        <label>Your name <input type="text" id="complete-profile-name" required></label>
+        <label>Nickname <span style="opacity:0.6; font-weight:normal;">(optional - auto-generated from your name if left blank; lowercase letters, numbers, underscore only)</span>
+          <input type="text" id="complete-profile-nickname">
+        </label>
+        <button type="button" id="complete-profile-submit-btn">Create my profile</button>
+      </div>
+
+      <div id="complete-profile-claim-view" style="display:none;">
+        <label>Which player is you?
+          <select id="complete-profile-claim-select"></select>
+        </label>
+        <label>Confirmation code <span style="opacity:0.6; font-weight:normal;">(ask your group admin if you don't have it)</span>
+          <input type="text" id="complete-profile-claim-code">
+        </label>
+        <button type="button" id="complete-profile-claim-btn">Claim this profile</button>
+      </div>
+
       <div id="complete-profile-status" style="font-size:13px; margin-top:6px;"></div>
     </div>
   </div>
@@ -3808,7 +3826,75 @@
 
     function openCompleteProfileModal() {
       document.getElementById('complete-profile-modal').style.display = 'flex';
+      showCompleteProfileMode('create');
     }
+
+    function showCompleteProfileMode(mode) {
+      document.getElementById('complete-profile-create-view').style.display = mode === 'create' ? 'block' : 'none';
+      document.getElementById('complete-profile-claim-view').style.display = mode === 'claim' ? 'block' : 'none';
+      document.getElementById('complete-profile-status').textContent = '';
+      if (mode === 'claim') populateClaimPicker();
+    }
+
+    async function populateClaimPicker() {
+      const select = document.getElementById('complete-profile-claim-select');
+      select.innerHTML = '<option value="">Loading...</option>';
+      try {
+        const res = await fetch(`${API_BASE_URL}/players`);
+        const data = await res.json();
+        const unclaimed = (data.players || []).filter(p => !p.claimed);
+        if (!unclaimed.length) {
+          select.innerHTML = '<option value="">No unclaimed profiles found</option>';
+          return;
+        }
+        const labeled = unclaimed.map(p => ({ ...p, label: `${p.name} (${p.nickname})` }));
+        populateSelect(select, labeled, 'player_id', 'label', null);
+      } catch (err) {
+        select.innerHTML = '<option value="">Failed to load</option>';
+      }
+    }
+
+    async function submitClaimProfile() {
+      const playerId = document.getElementById('complete-profile-claim-select').value;
+      const confirm = document.getElementById('complete-profile-claim-code').value.trim();
+      const statusEl = document.getElementById('complete-profile-status');
+      if (!playerId) { statusEl.textContent = 'Pick which player is you.'; return; }
+      if (!confirm) { statusEl.textContent = 'Confirmation code is required.'; return; }
+      statusEl.textContent = 'Claiming your profile...';
+
+      try {
+        const res = await fetch(`${API_BASE_URL}/claim-player`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+          body: JSON.stringify({ player_id: playerId, confirm })
+        });
+        const data = await res.json();
+        if (!res.ok) { statusEl.textContent = `Error: ${data.error}`; return; }
+
+        // Same self-service linking dance as the create-new path.
+        const cognitoUser = authSession.cognitoUser;
+        if (!cognitoUser) { statusEl.textContent = 'Claimed, but linking failed - please log out and back in.'; return; }
+        cognitoUser.updateAttributes(
+          [new AmazonCognitoIdentity.CognitoUserAttribute({ Name: 'custom:player_id', Value: data.player_id })],
+          (err) => {
+            if (err) { statusEl.textContent = `Claimed, but linking failed: ${err.message}`; return; }
+            cognitoUser.getSession((sessionErr, session) => {
+              if (!sessionErr && session) {
+                cognitoUser.refreshSession(session.getRefreshToken(), (refreshErr, newSession) => {
+                  if (!refreshErr && newSession) { setAuthSession(newSession, cognitoUser); }
+                });
+              }
+              closeCompleteProfileModal();
+              loadPlayers();
+              loadGroups();
+            });
+          }
+        );
+      } catch (err) {
+        statusEl.textContent = `Request failed: ${err.message}`;
+      }
+    }
+
     function closeCompleteProfileModal() {
       document.getElementById('complete-profile-modal').style.display = 'none';
     }
@@ -3979,6 +4065,7 @@
     document.getElementById('auth-forgot-submit-btn').addEventListener('click', doForgotPassword);
     document.getElementById('auth-forgot-confirm-btn').addEventListener('click', doConfirmForgotPassword);
     document.getElementById('complete-profile-submit-btn').addEventListener('click', submitCompleteProfile);
+    document.getElementById('complete-profile-claim-btn').addEventListener('click', submitClaimProfile);
 
     restoreSession();
     updateAuthUI();

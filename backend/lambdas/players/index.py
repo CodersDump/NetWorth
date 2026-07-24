@@ -43,6 +43,8 @@ def handler(event, context):
             return rename_self(event)
         if event.get('resource') == '/update-my-card' and method == 'PUT':
             return update_my_card(event)
+        if event.get('resource') == '/claim-player' and method == 'POST':
+            return claim_player(event)
         if method == 'GET' and not player_id:
             return list_players()
         elif method == 'PUT' and player_id:
@@ -99,7 +101,8 @@ def list_players():
             'skill_level': i.get('skill_level'),
             'rating': i.get('rating', 1000),
             'avatar_id': i.get('avatar_id'),
-            'banner_id': i.get('banner_id')
+            'banner_id': i.get('banner_id'),
+            'claimed': bool(i.get('email'))  # signal only, never the actual email - that stays private
         }
         for i in items
     ]
@@ -128,6 +131,47 @@ def _can_self_rename(claims):
 ALLOWED_AVATARS = {'shuttle', 'trophy', 'lightning', 'fire', 'target', 'eagle', 'tiger',
                    'lion', 'wolf', 'fox', 'dragon', 'crown', 'muscle', 'star', 'game', 'racket'}
 ALLOWED_BANNERS = {'sunset', 'ocean', 'forest', 'fire', 'royal', 'candy', 'midnight', 'court'}
+
+
+def claim_player(event):
+    """Self-service: link my Cognito account to an EXISTING, UNCLAIMED
+    player record (someone who's played before but never signed up),
+    instead of creating a brand new one. Two independent safety checks,
+    not just one:
+      1. Only players with no email on file are eligible - once a player
+         is claimed, this route can never be used to take over their
+         account, regardless of who's asking or what code they have.
+      2. The confirmation code is still required on top of that - being
+         unclaimed isn't the same as "up for grabs by anyone who finds
+         this endpoint"; it requires the same insider knowledge every
+         other semi-trusted action in this app already requires.
+    """
+    claims = _caller_claims(event)
+    if not claims:
+        return _response(403, {'error': 'log in to claim a profile'})
+    if claims.get('custom:player_id'):
+        return _response(400, {'error': 'your account is already linked to a player'})
+
+    body = json.loads(event.get('body') or '{}')
+    player_id = body.get('player_id')
+    confirm = body.get('confirm')
+    if confirm != CONFIRMATION_CODE:
+        return _response(403, {'error': 'incorrect confirmation code'})
+    if not player_id:
+        return _response(400, {'error': 'player_id is required'})
+
+    player = table.get_item(Key={'player_id': player_id}).get('Item')
+    if not player:
+        return _response(404, {'error': 'player not found'})
+    if player.get('email'):
+        return _response(400, {'error': 'this player is already linked to an account'})
+
+    table.update_item(
+        Key={'player_id': player_id},
+        UpdateExpression='SET email = :e',
+        ExpressionAttributeValues={':e': claims.get('email')}
+    )
+    return _response(200, {'player_id': player_id, 'name': player.get('name'), 'nickname': player.get('nickname')})
 
 
 def update_my_card(event):
