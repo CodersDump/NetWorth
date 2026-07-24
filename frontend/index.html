@@ -23,6 +23,13 @@
     --text-secondary: #52605A;
     --border: #DCE6DF;
     --radius: 10px;
+    /* Page background theming. --page-banner is swapped at runtime to the
+       selected player's banner gradient; --veil is the scrim laid over it.
+       The veil is deliberately the SAME colour as --bg, so when no banner
+       is set the composite is pixel-identical to the plain background and
+       nothing about the existing look changes. */
+    --veil: rgba(245, 249, 246, 0.88);
+    --page-banner: none;
   }
   [data-theme="dark"] {
     --bg: #0F1B15;
@@ -33,6 +40,10 @@
     --border: #2A3D31;
     --court: #2FA968;
     --court-dark: #1F7A4D;
+    /* Slightly less opaque than light mode: a saturated gradient reads
+       much more strongly against white than against near-black, so an
+       identical value would make dark mode look almost untinted. */
+    --veil: rgba(15, 27, 21, 0.84);
   }
   * { box-sizing: border-box; }
   body {
@@ -42,6 +53,25 @@
     margin: 0;
     padding: 0;
     transition: background 0.2s, color 0.2s;
+  }
+  /* A fixed pseudo-element rather than background-attachment: fixed on
+     body - that property is notoriously janky and repaint-heavy while
+     scrolling on mobile Safari, which is where this app actually gets
+     used. This stays put for free because it never scrolls. */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+    background-color: var(--bg);
+    background-image: linear-gradient(var(--veil), var(--veil)), var(--page-banner);
+    background-size: cover;
+    background-position: center;
+    transition: background-image 0.3s ease;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    body::before { transition: none; }
   }
   .app-shell { max-width: 880px; margin: 0 auto; padding: 0 16px 64px; }
   header.app-header {
@@ -2556,7 +2586,24 @@
       court: 'linear-gradient(120deg, #0f3d20 0%, #1F7A4D 50%, #2FA968 100%)'
     };
 
+    /**
+     * Swaps the page background to the given player's banner. Every place
+     * that changes which card is on screen already routes through
+     * renderProfileCardBanner, so this hangs off that rather than being a
+     * fourth thing each call site has to remember to call.
+     */
+    function applyPageBackground(player) {
+      const banner = player && player.banner_id ? BANNER_PRESETS[player.banner_id] : null;
+      document.documentElement.style.setProperty('--page-banner', banner || 'none');
+    }
+
     function renderProfileCardBanner(player) {
+      // Deliberately outside the early return below: a player with a
+      // banner but no avatar still themes the page, and clearing the card
+      // must also clear the background rather than stranding the previous
+      // player's colours behind an empty view.
+      applyPageBackground(player);
+
       const displayEl = document.getElementById('profile-banner-display');
       const stripEl = document.getElementById('profile-banner-strip');
       const emojiEl = document.getElementById('profile-avatar-emoji');
