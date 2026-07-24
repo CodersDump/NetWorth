@@ -455,7 +455,12 @@
 
   <div class="app-shell">
     <div class="tab-panel active" id="tab-players">
-      <div class="card">
+      <div class="card" id="register-guest-notice" style="display:none;">
+        <h2>Register a player</h2>
+        <p class="card-sub">Log in to add someone to the pool. New players are recorded against the account that created them, so entries can be traced back.</p>
+        <button type="button" onclick="openAuthModal()">Log in</button>
+      </div>
+      <div class="card" id="register-player-card">
         <h2>Register a player</h2>
         <p class="card-sub">Add someone to the pool. They don't need to be in a group yet.</p>
         <form id="register-form">
@@ -1991,15 +1996,16 @@
       const resultEl = document.getElementById('result');
       resultEl.textContent = 'Registering...';
       try {
-        const url = isLoggedIn() ? `${API_BASE_URL}/register-and-join` : `${API_BASE_URL}/register`;
+        // No anonymous branch any more - registering a player is now a
+        // logged-in action so every new name has someone attached to it.
+        if (!isLoggedIn()) { resultEl.textContent = 'Log in to register a player.'; return; }
         const body = { name, skill_level };
-        if (isLoggedIn() && groupId) body.group_id = groupId;
-        const res = await fetch(url, {
+        if (groupId) body.group_id = groupId;
+        const { res, data, error } = await authedFetch(`${API_BASE_URL}/register-and-join`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(body)
         });
-        const data = await res.json();
         if (res.ok) {
           resultEl.textContent = data.added_to_group
             ? `Registered! Added to ${data.added_to_group}.`
@@ -2027,14 +2033,13 @@
       const failed = [];
       for (const name of names) {
         try {
-          const res = await fetch(`${API_BASE_URL}/register`, {
+          const { res, data, error } = await authedFetch(`${API_BASE_URL}/register`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ name, skill_level })
           });
-          const data = await res.json();
           if (res.ok) registered.push(name);
-          else failed.push(`${name} (${data.error})`);
+          else failed.push(`${name} (${error})`);
         } catch (err) {
           failed.push(`${name} (request failed)`);
         }
@@ -2562,6 +2567,14 @@
         const labeledVisible = visible.map(p => ({
           ...p, label: `${formatPlayerLabel(p.name, p.nickname)} (${p.rating})`
         }));
+        // created_by only comes back for SuperAdmin, and it's the whole
+        // point of the audit trail - surface it where the roster is
+        // actually browsed rather than making it a DynamoDB lookup.
+        if (isSuperAdmin()) {
+          labeledVisible.forEach(p => {
+            if (p.created_by) p.label += ` - added by ${p.created_by}`;
+          });
+        }
         // Capture whatever's currently selected BEFORE repopulating (e.g.
         // from a display-mode toggle re-render) so re-populating the
         // options doesn't silently yank the view back to your own card
@@ -2719,9 +2732,38 @@
      * renderProfileCardBanner, so this hangs off that rather than being a
      * fourth thing each call site has to remember to call.
      */
+    /**
+     * Which player's background the Player Card tab is currently showing.
+     * Separate from "my own" because the two answer different questions.
+     */
+    let viewedProfileBackgroundId = null;
+
+    /**
+     * Two rules, not one:
+     *   - Everywhere except the Player Card, the page wears YOUR OWN
+     *     background. It's your app; browsing the Matches tab shouldn't
+     *     leave you sitting in someone else's colours.
+     *   - On the Player Card, the player you're looking at takes over,
+     *     the same way visiting a profile does elsewhere.
+     * A guest has no "own" background, so everything outside the card
+     * stays plain for them rather than inheriting the last card viewed.
+     *
+     * The old version applied the viewed player's background globally and
+     * never took it back off, which is what made an unrelated tab keep
+     * rendering someone else's theme.
+     */
+    function updatePageBackground() {
+      const onProfileTab = document.getElementById('tab-profile').classList.contains('active');
+      const me = allPlayers.find(p => p.player_id === myPlayerId());
+      const myBackgroundId = me ? me.background_id : null;
+      const activeId = (onProfileTab && viewedProfileBackgroundId) ? viewedProfileBackgroundId : myBackgroundId;
+      const css = activeId ? BACKGROUND_PRESETS[activeId] : null;
+      document.documentElement.style.setProperty('--page-bg', css || 'none');
+    }
+
     function applyPageBackground(player) {
-      const bg = player && player.background_id ? BACKGROUND_PRESETS[player.background_id] : null;
-      document.documentElement.style.setProperty('--page-bg', bg || 'none');
+      viewedProfileBackgroundId = player ? (player.background_id || null) : null;
+      updatePageBackground();
     }
 
     function renderProfileCardBanner(player) {
@@ -2917,6 +2959,9 @@
         if (document.getElementById('profile_player_select').value === myId) {
           renderProfileCardBanner(me);  // instant, no fetch
         }
+        // Settings can be opened from any tab, so the page background has
+        // to update even when the Player Card isn't the active one.
+        updatePageBackground();
       } catch (err) {
         statusEl.textContent = `Request failed: ${err.message}`;
       }
@@ -4321,6 +4366,8 @@
       const loggedIn = isLoggedIn();
       const linked = hasLinkedPlayer();
       const showForms = loggedIn && linked;
+      document.getElementById('register-guest-notice').style.display = loggedIn ? 'none' : 'block';
+      document.getElementById('register-player-card').style.display = loggedIn ? 'block' : 'none';
       document.getElementById('record-match-guest-notice').style.display = loggedIn ? 'none' : 'block';
       document.getElementById('record-match-unlinked-notice').style.display = (loggedIn && !linked) ? 'block' : 'none';
       document.getElementById('record-match-card').style.display = showForms ? 'block' : 'none';
@@ -4361,6 +4408,9 @@
         const sel = document.getElementById('group_select');
         if (sel && sel.value) loadGroupMembers(sel.value);
       }
+      // Logging in, logging out, and a roster refresh all change what
+      // "my own background" resolves to, and all three land here.
+      updatePageBackground();
     }
 
     function openAuthModal() { document.getElementById('auth-modal').style.display = 'flex'; showAuthView('login'); }
@@ -4978,12 +5028,11 @@
 
         fillerResultEl.textContent = 'Registering...';
         try {
-          const regRes = await fetch(`${API_BASE_URL}/register`, {
+          const { res: regRes, data: regData } = await authedFetch(`${API_BASE_URL}/register`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ name: newName, skill_level })
           });
-          const regData = await regRes.json();
           if (!regRes.ok) { fillerResultEl.textContent = `Error registering: ${regData.error}`; return; }
           filler_player_id = regData.player_id;
           loadPlayers();
@@ -5216,12 +5265,11 @@
 
         resultEl.textContent = 'Registering new player...';
         try {
-          const regRes = await fetch(`${API_BASE_URL}/register`, {
+          const { res: regRes, data: regData } = await authedFetch(`${API_BASE_URL}/register`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ name: newName, skill_level })
           });
-          const regData = await regRes.json();
           if (!regRes.ok) { resultEl.textContent = `Error registering: ${regData.error}`; return; }
           new_player_id = regData.player_id;
           loadPlayers();
@@ -5734,6 +5782,10 @@
         document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
         btn.classList.add('active');
         document.getElementById(`tab-${btn.dataset.tab}`).classList.add('active');
+        // Leaving the Player Card has to hand the page back to your own
+        // background, so this is re-evaluated on every switch rather than
+        // only when a card is rendered.
+        updatePageBackground();
       });
     });
 

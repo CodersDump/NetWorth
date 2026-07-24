@@ -14,6 +14,7 @@ import os
 import re
 import uuid
 import boto3
+from datetime import datetime, timezone
 
 dynamodb = boto3.resource('dynamodb')
 table = dynamodb.Table(os.environ['PLAYERS_TABLE'])
@@ -28,8 +29,20 @@ def sanitize_nickname(raw):
     return cleaned or 'player'  # defensive fallback if literally nothing survives sanitizing
 
 
+def _caller_claims(event):
+    return (event.get('requestContext') or {}).get('authorizer', {}).get('claims') or {}
+
+
 def handler(event, context):
     try:
+        # Registration used to be fully anonymous, which meant a junk
+        # player could be created with no way to trace who did it. The
+        # route now requires a Cognito session AND records the creator, so
+        # the same thing is at worst attributable.
+        claims = _caller_claims(event)
+        if not claims:
+            return _response(403, {'error': 'log in to register a player'})
+
         body = json.loads(event.get('body') or '{}')
         name = (body.get('name') or '').strip()
         skill_level = body.get('skill_level', 'unrated')
@@ -63,7 +76,9 @@ def handler(event, context):
             'name': name,
             'nickname': nickname,
             'skill_level': skill_level,
-            'rating': 1000  # starting Elo rating
+            'rating': 1000,  # starting Elo rating
+            'created_by': claims.get('email'),
+            'created_at': datetime.now(timezone.utc).isoformat()
         })
 
         return _response(200, {'player_id': player_id, 'name': name, 'nickname': nickname})

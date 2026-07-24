@@ -272,12 +272,23 @@ def visible_players_for_caller(event):
                     visible_ids.update(members)
             visible = [p for p in all_players if p['player_id'] in visible_ids]
 
-    return _response(200, {'players': [
-        {'player_id': p['player_id'], 'name': p['name'], 'nickname': p.get('nickname'), 'rating': p.get('rating', 1000),
-         'avatar_id': p.get('avatar_id'), 'banner_id': p.get('banner_id'),
-         'background_id': p.get('background_id')}
-        for p in visible
-    ]})
+    # Creator/editor attribution is an email address, so it goes only to
+    # SuperAdmin - it exists to make a junk entry traceable, not to publish
+    # everyone's address to the whole club. This is also why it rides on
+    # this authenticated route rather than the public GET /players.
+    show_audit = _is_super_admin(claims)
+
+    def shape(p):
+        row = {'player_id': p['player_id'], 'name': p['name'], 'nickname': p.get('nickname'),
+               'rating': p.get('rating', 1000), 'avatar_id': p.get('avatar_id'),
+               'banner_id': p.get('banner_id'), 'background_id': p.get('background_id')}
+        if show_audit:
+            row['created_by'] = p.get('created_by')
+            row['created_at'] = p.get('created_at')
+            row['last_edited_by'] = p.get('last_edited_by')
+        return row
+
+    return _response(200, {'players': [shape(p) for p in visible]})
 
 
 def create_group(event):

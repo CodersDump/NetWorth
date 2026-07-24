@@ -405,7 +405,8 @@ Resources:
       RestApiId: !Ref RestApi
       ResourceId: !Ref RegisterResource
       HttpMethod: POST
-      AuthorizationType: NONE
+      AuthorizationType: COGNITO_USER_POOLS
+      AuthorizerId: !Ref CognitoAuthorizer
       Integration:
         Type: AWS_PROXY
         IntegrationHttpMethod: POST
@@ -501,7 +502,8 @@ Resources:
       RestApiId: !Ref RestApi
       ResourceId: !Ref PlayerIdResource
       HttpMethod: DELETE
-      AuthorizationType: NONE
+      AuthorizationType: COGNITO_USER_POOLS
+      AuthorizerId: !Ref CognitoAuthorizer
       Integration:
         Type: AWS_PROXY
         IntegrationHttpMethod: POST
@@ -513,7 +515,8 @@ Resources:
       RestApiId: !Ref RestApi
       ResourceId: !Ref PlayerIdResource
       HttpMethod: PUT
-      AuthorizationType: NONE
+      AuthorizationType: COGNITO_USER_POOLS
+      AuthorizerId: !Ref CognitoAuthorizer
       Integration:
         Type: AWS_PROXY
         IntegrationHttpMethod: POST

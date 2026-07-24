@@ -421,6 +421,12 @@ def rename_self(event):
 
 
 def update_player(player_id, event):
+    # Login is now enforced at the API Gateway layer too, but check here
+    # as well: the Lambda shouldn't depend on the route config being right
+    # to stay safe, and this is what puts a name on the change.
+    claims = _caller_claims(event)
+    if not claims:
+        return _response(403, {'error': 'log in to edit a player'})
     body = json.loads(event.get('body') or '{}')
     if body.get('confirm') != CONFIRMATION_CODE:
         return _response(400, {'error': "confirmation code is missing or incorrect"})
@@ -465,6 +471,10 @@ def update_player(player_id, event):
     if nickname_provided:
         update_parts.append('nickname = :nk')
         values[':nk'] = nickname
+    update_parts.append('last_edited_by = :leb')
+    values[':leb'] = claims.get('email')
+    update_parts.append('last_edited_at = :lea')
+    values[':lea'] = datetime.now(timezone.utc).isoformat()
 
     expr = ''
     if update_parts:
@@ -483,6 +493,9 @@ def update_player(player_id, event):
 
 
 def delete_player(player_id, event):
+    claims = _caller_claims(event)
+    if not claims:
+        return _response(403, {'error': 'log in to delete a player'})
     body = json.loads(event.get('body') or '{}')
     if body.get('confirm') != CONFIRMATION_CODE:
         return _response(400, {'error': "confirmation code is missing or incorrect"})
@@ -491,6 +504,10 @@ def delete_player(player_id, event):
     if not existing:
         return _response(404, {'error': 'player not found'})
     table.delete_item(Key={'player_id': player_id})
+    # The record is gone, so the only surviving trace of who removed it is
+    # this log line. Worth having when a player disappears mid-season.
+    print(json.dumps({'action': 'delete_player', 'player_id': player_id,
+                      'name': existing.get('name'), 'by': claims.get('email')}))
     return _response(200, {'deleted': player_id})
 
 
