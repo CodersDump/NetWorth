@@ -72,7 +72,9 @@
         "s3:PutObject",
         "s3:GetObject",
         "s3:ListBucket",
-        "s3:PutBucketPublicAccessBlock"
+        "s3:PutBucketPublicAccessBlock",
+        "s3:PutBucketCORS",
+        "s3:GetBucketCORS"
       ],
       "Resource": [
         "arn:aws:s3:::networth-site-*",
@@ -108,21 +110,21 @@
       ],
       "Resource": "arn:aws:iam::*:role/networth-*"
     },
-      {
-    "Sid": "CloudFrontAccess",
-    "Effect": "Allow",
-    "Action": [
-      "cloudfront:CreateDistribution",
-      "cloudfront:GetDistribution",
-      "cloudfront:GetDistributionConfig",
-      "cloudfront:UpdateDistribution",
-      "cloudfront:DeleteDistribution",
-      "cloudfront:TagResource",
-      "cloudfront:ListTagsForResource",
-      "cloudfront:CreateInvalidation",
-      "cloudfront:ListDistributions"
-    ],
-    "Resource": "*"
-  }
+    {
+      "Sid": "CloudFrontAccess",
+      "Effect": "Allow",
+      "Action": [
+        "cloudfront:CreateDistribution",
+        "cloudfront:GetDistribution",
+        "cloudfront:GetDistributionConfig",
+        "cloudfront:UpdateDistribution",
+        "cloudfront:DeleteDistribution",
+        "cloudfront:TagResource",
+        "cloudfront:ListTagsForResource",
+        "cloudfront:CreateInvalidation",
+        "cloudfront:ListDistributions"
+      ],
+      "Resource": "*"
+    }
   ]
 }
