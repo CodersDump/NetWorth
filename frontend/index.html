@@ -257,13 +257,16 @@
       </svg>
       <h1>NetWorth</h1>
     </div>
-    <div style="display:flex; align-items:center; gap:10px;">
+    <div style="display:flex; align-items:center; gap:10px; position:relative;">
       <span id="auth-status" style="font-size:13px; opacity:0.85;"></span>
       <button class="secondary" id="auth-login-btn" type="button">Log in</button>
-      <button class="secondary" id="open-settings-btn" type="button" style="display:none;" onclick="openSettingsModal()">Settings</button>
-      <button class="secondary" id="auth-logout-btn" type="button" style="display:none;">Log out</button>
-      <button class="theme-toggle" id="display-mode-toggle-btn" type="button">Show: Nickname</button>
-      <button class="theme-toggle" id="theme-toggle-btn" type="button">Dark mode</button>
+      <button class="theme-toggle" id="header-menu-btn" type="button" onclick="toggleHeaderMenu()">&#9776;</button>
+      <div id="header-menu-dropdown" style="display:none; position:absolute; top:44px; right:0; background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); box-shadow:0 4px 16px rgba(0,0,0,0.25); z-index:50; min-width:180px; padding:6px;">
+        <button class="secondary" id="open-settings-btn" type="button" style="display:none; width:100%; margin:4px 0;" onclick="openSettingsModal(); toggleHeaderMenu();">Settings</button>
+        <button class="secondary" id="auth-logout-btn" type="button" style="display:none; width:100%; margin:4px 0;">Log out</button>
+        <button class="secondary" id="display-mode-toggle-btn" type="button" style="width:100%; margin:4px 0;">Show: Nickname</button>
+        <button class="secondary" id="theme-toggle-btn" type="button" style="width:100%; margin:4px 0;">Dark mode</button>
+      </div>
     </div>
   </header>
 
@@ -920,9 +923,14 @@
         <label>Player
           <select id="profile_player_select"></select>
         </label>
-        <div id="profile-banner-display" style="display:none; margin-top:12px; border-radius:var(--radius); overflow:hidden;">
-          <div id="profile-banner-strip" style="height:70px; display:flex; align-items:center; padding:0 16px;">
-            <span id="profile-avatar-emoji" style="font-size:40px; line-height:1;"></span>
+        <div id="profile-banner-display" style="display:none; margin-top:12px; border-radius:var(--radius); overflow:visible; padding-bottom:34px;">
+          <div id="profile-banner-strip" style="height:110px; border-radius:var(--radius); position:relative; box-shadow:inset 0 0 40px rgba(0,0,0,0.15);">
+            <div style="position:absolute; bottom:-30px; left:20px; width:76px; height:76px; border-radius:50%; background:var(--surface); border:4px solid var(--surface); box-shadow:0 2px 8px rgba(0,0,0,0.3); display:flex; align-items:center; justify-content:center;">
+              <span id="profile-avatar-emoji" style="font-size:36px; line-height:1;"></span>
+            </div>
+            <div style="position:absolute; left:112px; bottom:10px; color:#fff; text-shadow:0 1px 3px rgba(0,0,0,0.5);">
+              <div id="profile-banner-name" style="font-weight:700; font-size:16px;"></div>
+            </div>
           </div>
         </div>
       </div>
@@ -2364,25 +2372,41 @@
       dragon: '🐉', crown: '👑', muscle: '💪', star: '🌟', game: '🎮', racket: '🏓'
     };
     const BANNER_PRESETS = {
-      sunset: 'linear-gradient(135deg, #FF512F, #F09819)',
-      ocean: 'linear-gradient(135deg, #2193b0, #6dd5ed)',
-      forest: 'linear-gradient(135deg, #134E5E, #71B280)',
-      fire: 'linear-gradient(135deg, #f12711, #f5af19)',
-      royal: 'linear-gradient(135deg, #141E30, #243B55)',
-      candy: 'linear-gradient(135deg, #ee9ca7, #ffdde1)',
-      midnight: 'linear-gradient(135deg, #232526, #414345)',
-      court: 'linear-gradient(135deg, #1F7A4D, #2FA968)'
+      sunset: 'linear-gradient(120deg, #FF512F 0%, #DD2476 50%, #1a0a2e 100%)',
+      ocean: 'linear-gradient(120deg, #005C97 0%, #363795 60%, #0a0a1a 100%)',
+      forest: 'linear-gradient(120deg, #134E5E 0%, #71B280 60%, #0a1a12 100%)',
+      fire: 'linear-gradient(120deg, #ff0844 0%, #ffb199 50%, #1a0505 100%)',
+      royal: 'linear-gradient(120deg, #0f0c29 0%, #302b63 50%, #24243e 100%)',
+      candy: 'linear-gradient(120deg, #ff9a9e 0%, #fecfef 60%, #2b1a2b 100%)',
+      midnight: 'linear-gradient(120deg, #0f2027 0%, #203a43 50%, #2c5364 100%)',
+      court: 'linear-gradient(120deg, #0f3d20 0%, #1F7A4D 50%, #2FA968 100%)'
     };
 
     function renderProfileCardBanner(player) {
       const displayEl = document.getElementById('profile-banner-display');
       const stripEl = document.getElementById('profile-banner-strip');
       const emojiEl = document.getElementById('profile-avatar-emoji');
+      const nameEl = document.getElementById('profile-banner-name');
       if (!player || (!player.avatar_id && !player.banner_id)) { displayEl.style.display = 'none'; return; }
       displayEl.style.display = 'block';
       stripEl.style.background = BANNER_PRESETS[player.banner_id] || BANNER_PRESETS.court;
       emojiEl.textContent = AVATAR_PRESETS[player.avatar_id] || '';
+      nameEl.textContent = formatPlayerLabel(player.name, player.nickname);
     }
+
+    function toggleHeaderMenu() {
+      const dropdown = document.getElementById('header-menu-dropdown');
+      dropdown.style.display = dropdown.style.display === 'block' ? 'none' : 'block';
+    }
+    // Close the dropdown when clicking anywhere outside it, standard
+    // expected menu behavior.
+    document.addEventListener('click', (e) => {
+      const dropdown = document.getElementById('header-menu-dropdown');
+      const menuBtn = document.getElementById('header-menu-btn');
+      if (dropdown.style.display === 'block' && !dropdown.contains(e.target) && e.target !== menuBtn) {
+        dropdown.style.display = 'none';
+      }
+    });
 
     function openSettingsModal() {
       document.getElementById('settings-modal').style.display = 'flex';
