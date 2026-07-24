@@ -3116,6 +3116,12 @@
         }
         await loadClaimRequests();
         await loadPlayers();
+        // A finance_access approval flips a flag the finance list shows, so
+        // refresh it too - otherwise the newly-granted person doesn't
+        // appear as having access until Settings is reopened.
+        if (requestType === 'finance_access' && typeof loadFinanceAccessList === 'function') {
+          loadFinanceAccessList();
+        }
       } catch (err) {
         alert(`Request failed: ${err.message}`);
       }
@@ -4272,6 +4278,7 @@
         financeKey = data.view_key;
         sessionStorage.setItem('nw_finance_key', financeKey);
         document.getElementById('finance-content').style.display = 'block';
+        document.getElementById('finance-lock-card').style.display = 'none';
         const s = await (await fetch(`${financeBaseUrl()}/settings?${finQS()}`, { headers: getAuthHeaders() })).json();
         document.getElementById('finance_walkins_public').checked = !!s.walkins_public;
         loadFinanceSummary(); loadFinanceExpenses(); loadFinanceMembers();
@@ -4310,6 +4317,10 @@
         sessionStorage.setItem('nw_finance_key', financeKey);
         statusEl.textContent = 'Unlocked ✓';
         document.getElementById('finance-content').style.display = 'block';
+        // Once unlocked there's nothing to unlock - hide the key form so it
+        // matches the admin auto-unlock experience rather than leaving a
+        // dead input sitting above the loaded data.
+        document.getElementById('finance-lock-card').style.display = 'none';
         const settings = await res.json();
         document.getElementById('finance_walkins_public').checked = !!settings.walkins_public;
         loadFinanceSummary();
@@ -4841,7 +4852,11 @@
       document.getElementById('create-tournament-card').style.display = showForms ? 'block' : 'none';
       // Guests see only the public UPI QR card, not even the option to
       // try entering a finance view key.
-      document.getElementById('finance-lock-card').style.display = showForms ? 'block' : 'none';
+      // Don't reshow the key form if finance is already unlocked - a
+      // background updateAuthUI (e.g. token refresh) would otherwise pop
+      // the lock card back over the loaded data.
+      const financeUnlocked = document.getElementById('finance-content').style.display === 'block';
+      document.getElementById('finance-lock-card').style.display = (showForms && !financeUnlocked) ? 'block' : 'none';
       if (!showForms) document.getElementById('finance-content').style.display = 'none';
       // Profile: guests see a login prompt only; logged-in users see the
       // real tab (populated from /visible-players, group-scoped server-side).
