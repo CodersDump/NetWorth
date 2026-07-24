@@ -123,8 +123,10 @@ def list_players():
             'background_id': i.get('background_id'),
             'avatar_url': i.get('avatar_url'),
             'banner_url': i.get('banner_url'),
+            'background_url': i.get('background_url'),
             'avatar_uploads': i.get('avatar_uploads') or [],
             'banner_uploads': i.get('banner_uploads') or [],
+            'background_uploads': i.get('background_uploads') or [],
             'claimed': bool(i.get('email'))  # signal only, never the actual email - that stays private
         }
         for i in items
@@ -303,8 +305,8 @@ def create_action_request(event):
 
     body = json.loads(event.get('body') or '{}')
     action_type = body.get('type')
-    if action_type not in ('delete_player', 'new_profile', 'edit_own_name'):
-        return _response(400, {'error': "type must be 'delete_player', 'new_profile' or 'edit_own_name'"})
+    if action_type not in ('delete_player', 'new_profile', 'edit_own_name', 'finance_access'):
+        return _response(400, {'error': "unknown request type"})
 
     # new_profile is the one request an unlinked account SHOULD be able to
     # make - it's how someone with no player becomes a member at all.
@@ -318,6 +320,8 @@ def create_action_request(event):
         return _create_new_profile_request(claims, body)
     if action_type == 'edit_own_name':
         return _create_edit_name_request(claims, body)
+    if action_type == 'finance_access':
+        return _create_finance_access_request(claims)
 
     player_id = body.get('player_id')
     reason = (body.get('reason') or '').strip()
@@ -477,6 +481,42 @@ def _approve_new_profile(req, claims):
     return None
 
 
+
+def _create_finance_access_request(claims):
+    """A member asking to be allowed into the Finance tab. Approving it
+    just flips their finance_access flag - handled in decide_claim_request
+    so the same approve/reject UI covers it."""
+    pid = claims.get('custom:player_id')
+    player = table.get_item(Key={'player_id': pid}).get('Item') if pid else None
+    if not player:
+        return _response(403, {'error': 'link your profile before requesting finance access'})
+    if player.get('finance_access'):
+        return _response(400, {'error': 'you already have finance access'})
+    pending = claim_requests_table.scan().get('Items', [])
+    if any(r.get('status') == 'pending' and r.get('type') == 'finance_access'
+           and r.get('player_id') == pid for r in pending):
+        return _response(400, {'error': 'your finance access request is already waiting'})
+    request_id = str(uuid.uuid4())
+    claim_requests_table.put_item(Item={
+        'request_id': request_id, 'type': 'finance_access',
+        'player_id': pid, 'player_name': player.get('name'),
+        'player_nickname': player.get('nickname'),
+        'requester_email': claims.get('email'),
+        'requester_username': claims.get('cognito:username') or claims.get('email'),
+        'status': 'pending', 'created_at': datetime.now(timezone.utc).isoformat()
+    })
+    return _response(200, {'request_id': request_id, 'status': 'pending'})
+
+
+def _approve_finance_access(req):
+    table.update_item(
+        Key={'player_id': req['player_id']},
+        UpdateExpression='SET finance_access = :v',
+        ExpressionAttributeValues={':v': True}
+    )
+    return None
+
+
 def decide_claim_request(event):
     """Approve or reject. On approval this writes the link on BOTH sides:
     the email onto the player record, and custom:player_id onto the
@@ -509,7 +549,10 @@ def decide_claim_request(event):
         'decided_by': claims.get('email')
     }
 
-    if action == 'approve' and req.get('type') == 'edit_own_name':
+    if action == 'approve' and req.get('type') == 'finance_access':
+        _approve_finance_access(req)
+
+    elif action == 'approve' and req.get('type') == 'edit_own_name':
         failed = _approve_edit_name(req, claims)
         if failed:
             return failed
@@ -580,7 +623,7 @@ def decide_claim_request(event):
 # that can carry script, and these files are served from the same origin
 # as the app, so an uploaded SVG would be stored XSS.
 ALLOWED_UPLOAD_TYPES = {'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp'}
-UPLOAD_KINDS = {'avatar', 'banner'}
+UPLOAD_KINDS = {'avatar', 'banner', 'background'}
 
 
 def create_upload_url(event):
@@ -699,17 +742,20 @@ def update_my_card(event):
     background_id = body.get('background_id')
     avatar_url = body.get('avatar_url')
     banner_url = body.get('banner_url')
+    background_url = body.get('background_url')
     if not _valid_upload_key(avatar_url, player_id, 'avatar'):
         return _response(400, {'error': 'invalid avatar image reference'})
     if not _valid_upload_key(banner_url, player_id, 'banner'):
         return _response(400, {'error': 'invalid banner image reference'})
+    if not _valid_upload_key(background_url, player_id, 'background'):
+        return _response(400, {'error': 'invalid background image reference'})
     if avatar_id is not None and avatar_id not in ALLOWED_AVATARS:
         return _response(400, {'error': f'unknown avatar_id - choose from {sorted(ALLOWED_AVATARS)}'})
     if banner_id is not None and banner_id not in ALLOWED_BANNERS:
         return _response(400, {'error': f'unknown banner_id - choose from {sorted(ALLOWED_BANNERS)}'})
     if background_id is not None and background_id not in ALLOWED_BACKGROUNDS:
         return _response(400, {'error': f'unknown background_id - choose from {sorted(ALLOWED_BACKGROUNDS)}'})
-    if all(v is None for v in (avatar_id, banner_id, background_id, avatar_url, banner_url)):
+    if all(v is None for v in (avatar_id, banner_id, background_id, avatar_url, banner_url, background_url)):
         return _response(400, {'error': 'nothing to update'})
 
     update_parts = []
@@ -731,6 +777,8 @@ def update_my_card(event):
     if background_id is not None:
         update_parts.append('background_id = :g')
         values[':g'] = background_id
+        update_parts.append('background_url = :gu_clear')
+        values[':gu_clear'] = None
     if avatar_url is not None:
         update_parts.append('avatar_url = :au')
         values[':au'] = avatar_url
@@ -749,6 +797,15 @@ def update_my_card(event):
         kept = _rotate_uploads(player_id, 'banner', banner_url)
         update_parts.append('banner_uploads = :bup')
         values[':bup'] = kept
+    if background_url is not None:
+        update_parts.append('background_url = :gu')
+        values[':gu'] = background_url
+        if background_url:
+            update_parts.append('background_id = :g_clear')
+            values[':g_clear'] = None
+        kept = _rotate_uploads(player_id, 'background', background_url)
+        update_parts.append('background_uploads = :gup')
+        values[':gup'] = kept
 
     table.update_item(
         Key={'player_id': player_id},

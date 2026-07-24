@@ -512,6 +512,9 @@
       <div id="settings-banner-picker" style="display:flex; flex-wrap:wrap; gap:6px; margin-bottom:14px;"></div>
       <p style="font-size:13px; font-weight:600; margin:0 0 4px;">Background</p>
       <p class="card-sub" style="margin:0 0 8px;">Sits behind the whole page. Shown to anyone viewing your card.</p>
+      <input type="file" accept="image/*" id="upload-background-input" style="margin-bottom:8px; font-size:12px;"
+             onchange="uploadCardImage('background', this)">
+      <div id="settings-background-uploads" style="margin-bottom:10px;"></div>
       <div id="settings-background-picker" style="display:flex; flex-wrap:wrap; gap:6px;"></div>
       </div>
       <div id="settings-status" style="font-size:13px; margin-top:10px;"></div>
@@ -944,6 +947,10 @@
         </label>
         <button id="finance-unlock-btn" type="button">Unlock</button>
         <span id="finance-lock-status" style="font-size:13px; margin-left:8px;"></span>
+        <p style="font-size:13px; margin-top:12px;">Don't have the key?
+          <a href="#" onclick="requestFinanceAccess(); return false;">Ask an admin for finance access</a>
+          <span id="finance-request-status" style="margin-left:6px;"></span>
+        </p>
       </div>
 
       <div id="finance-content" style="display:none;">
@@ -1586,6 +1593,14 @@
       const groupSel = document.getElementById('group_select');
       if (groupSel && typeof loadGroupMembers === 'function') loadGroupMembers(groupSel.value);
       if (typeof loadVisiblePlayers === 'function') loadVisiblePlayers();
+      // The Player Card's name label is toggle-aware too, but it was left
+      // out here - so the banner kept the old format until a manual
+      // reload. Re-render it in place from the currently-selected player.
+      const selId = document.getElementById('profile_player_select')?.value;
+      if (selId) {
+        const sel = allPlayers.find(p => p.player_id === selId);
+        if (sel && typeof renderProfileCardBanner === 'function') renderProfileCardBanner(sel);
+      }
       if (typeof updateAuthUI === 'function') updateAuthUI();
     }
 
@@ -2838,17 +2853,25 @@
      * never took it back off, which is what made an unrelated tab keep
      * rendering someone else's theme.
      */
+    function bgCss(id, url) {
+      if (url) return `center / cover no-repeat url("${imageSrc(url)}")`;
+      return id ? BACKGROUND_PRESETS[id] : null;
+    }
+
     function updatePageBackground() {
       const onProfileTab = document.getElementById('tab-profile').classList.contains('active');
       const me = allPlayers.find(p => p.player_id === myPlayerId());
-      const myBackgroundId = me ? me.background_id : null;
-      const activeId = (onProfileTab && viewedProfileBackgroundId) ? viewedProfileBackgroundId : myBackgroundId;
-      const css = activeId ? BACKGROUND_PRESETS[activeId] : null;
+      const useViewed = onProfileTab && (viewedProfileBackgroundId || viewedProfileBackgroundUrl);
+      const css = useViewed
+        ? bgCss(viewedProfileBackgroundId, viewedProfileBackgroundUrl)
+        : bgCss(me && me.background_id, me && me.background_url);
       document.documentElement.style.setProperty('--page-bg', css || 'none');
     }
 
+    let viewedProfileBackgroundUrl = null;
     function applyPageBackground(player) {
       viewedProfileBackgroundId = player ? (player.background_id || null) : null;
+      viewedProfileBackgroundUrl = player ? (player.background_url || null) : null;
       updatePageBackground();
       prefillEditForm();
     }
@@ -2987,6 +3010,7 @@
       // doesn't push anything off the list.
       renderUploadStrip('avatar', player);
       renderUploadStrip('banner', player);
+      renderUploadStrip('background', player);
 
       document.getElementById('settings-background-picker').innerHTML =
         Object.entries(BACKGROUND_PRESETS).map(([id, css]) =>
@@ -3049,6 +3073,7 @@
           const what = {
             delete_player: `wants to <strong style="color:var(--smash);">delete</strong> ${target}`,
             new_profile:   `wants a <strong>new profile</strong>: ${target}`,
+            finance_access: `wants <strong>finance access</strong> (${target})`,
             edit_own_name: `wants to rename ${target} to <strong>${escapeHtml(r.new_name || '')} (${escapeHtml(r.new_nickname || '')})</strong>`,
             claim:         `wants to be ${target}`
           }[r.type || 'claim'];
@@ -3073,6 +3098,7 @@
         const msg = {
           delete_player: 'Approve this deletion?\n\nThe player record and any login linked to it are removed permanently. Their match history stays, but the player is gone.',
           new_profile:   'Approve this new profile?\n\nA new player is created and linked to their login. They become a full member and can add players and record matches.',
+          finance_access: 'Grant finance access?\n\nThey will be able to view the Finance tab.',
           edit_own_name: 'Approve this rename?\n\nTheir display name and nickname change everywhere, including past matches.',
           claim:         'Approve this request?\n\nThis links their login to that player permanently - their match history and rating become theirs.'
         }[requestType || 'claim'];
@@ -3178,7 +3204,8 @@
         });
         if (!putRes.ok) { statusEl.textContent = `Upload failed (HTTP ${putRes.status}).`; return; }
 
-        await setMyCardField(kind === 'avatar' ? 'avatar_url' : 'banner_url', urlData.key);
+        const urlField = { avatar: 'avatar_url', banner: 'banner_url', background: 'background_url' }[kind];
+        await setMyCardField(urlField, urlData.key);
         fileInput.value = '';
       } catch (err) {
         statusEl.textContent = err.message;
@@ -3343,8 +3370,10 @@
         const patch = { [field]: value };
         if (field === 'avatar_id') patch.avatar_url = null;
         if (field === 'banner_id') patch.banner_url = null;
+        if (field === 'background_id') patch.background_url = null;
         if (field === 'avatar_url' && value) patch.avatar_id = null;
         if (field === 'banner_url' && value) patch.banner_id = null;
+        if (field === 'background_url' && value) patch.background_id = null;
         if (idx >= 0) allPlayers[idx] = { ...allPlayers[idx], ...patch };
         const me = allPlayers[idx] || patch;
 
@@ -4252,25 +4281,44 @@
       } catch (e) { return false; }
     }
 
+    async function requestFinanceAccess() {
+      const el = document.getElementById('finance-request-status');
+      if (!isLoggedIn() || !hasLinkedPlayer()) { el.textContent = 'Log in and link your profile first.'; return; }
+      el.textContent = 'Sending...';
+      try {
+        const { res, error } = await authedFetch(`${API_BASE_URL}/action-request`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ type: 'finance_access' })
+        });
+        el.textContent = res.ok ? 'Request sent - an admin will review it.' : `Error: ${error}`;
+      } catch (e) { el.textContent = `Failed: ${e.message}`; }
+    }
+
     async function financeUnlock() {
       const statusEl = document.getElementById('finance-lock-status');
       financeKey = document.getElementById('finance_view_key').value.trim();
       statusEl.textContent = 'Checking...';
-      const res = await fetch(`${financeBaseUrl()}/settings?${finQS()}`, { headers: getAuthHeaders() });
-      if (!res.ok) {
-        statusEl.textContent = res.status === 403 ? 'Incorrect key' : `Error ${res.status}`;
-        document.getElementById('finance-content').style.display = 'none';
-        return;
+      // Wrapped: an unhandled network error here used to leave "Checking..."
+      // on screen forever, since nothing reset it on a thrown fetch.
+      try {
+        const res = await fetch(`${financeBaseUrl()}/settings?${finQS()}`, { headers: getAuthHeaders() });
+        if (!res.ok) {
+          statusEl.textContent = res.status === 403 ? 'Incorrect key' : `Error ${res.status}`;
+          document.getElementById('finance-content').style.display = 'none';
+          return;
+        }
+        sessionStorage.setItem('nw_finance_key', financeKey);
+        statusEl.textContent = 'Unlocked ✓';
+        document.getElementById('finance-content').style.display = 'block';
+        const settings = await res.json();
+        document.getElementById('finance_walkins_public').checked = !!settings.walkins_public;
+        loadFinanceSummary();
+        loadFinanceExpenses();
+        loadFinanceMembers();
+        loadFinanceWalkins();
+      } catch (e) {
+        statusEl.textContent = `Couldn't reach finance - ${e.message}`;
       }
-      sessionStorage.setItem('nw_finance_key', financeKey);
-      statusEl.textContent = 'Unlocked ✓';
-      document.getElementById('finance-content').style.display = 'block';
-      const settings = await res.json();
-      document.getElementById('finance_walkins_public').checked = !!settings.walkins_public;
-      loadFinanceSummary();
-      loadFinanceExpenses();
-      loadFinanceMembers();
-      loadFinanceWalkins();
     }
 
     async function loadFinanceSummary() {
