@@ -321,7 +321,7 @@ def create_action_request(event):
     if action_type == 'edit_own_name':
         return _create_edit_name_request(claims, body)
     if action_type == 'finance_access':
-        return _create_finance_access_request(claims)
+        return _create_finance_access_request(claims, body)
 
     player_id = body.get('player_id')
     reason = (body.get('reason') or '').strip()
@@ -482,16 +482,27 @@ def _approve_new_profile(req, claims):
 
 
 
-def _create_finance_access_request(claims):
-    """A member asking to be allowed into the Finance tab. Approving it
-    just flips their finance_access flag - handled in decide_claim_request
-    so the same approve/reject UI covers it."""
+FINANCE_LEVELS = {'none': 0, 'view': 1, 'write': 2, 'delete': 3}
+
+
+def _create_finance_access_request(claims, body):
+    """A member asking for a finance role (view / write / delete). Approving
+    it sets that role - handled in decide_claim_request so the same
+    approve/reject UI covers it."""
     pid = claims.get('custom:player_id')
     player = table.get_item(Key={'player_id': pid}).get('Item') if pid else None
     if not player:
         return _response(403, {'error': 'link your profile before requesting finance access'})
-    if player.get('finance_access'):
-        return _response(400, {'error': 'you already have finance access'})
+    requested = (body or {}).get('role', 'view')
+    if requested not in ('view', 'write', 'delete'):
+        return _response(400, {'error': 'role must be view, write or delete'})
+    # Don't let someone request a level they already have or below.
+    current = player.get('finance_role')
+    if not current and player.get('finance_access'):
+        current = 'write'  # legacy boolean
+    current = current or 'none'
+    if FINANCE_LEVELS.get(current, 0) >= FINANCE_LEVELS[requested]:
+        return _response(400, {'error': f'you already have {current} access'})
     pending = claim_requests_table.scan().get('Items', [])
     if any(r.get('status') == 'pending' and r.get('type') == 'finance_access'
            and r.get('player_id') == pid for r in pending):
@@ -501,6 +512,7 @@ def _create_finance_access_request(claims):
         'request_id': request_id, 'type': 'finance_access',
         'player_id': pid, 'player_name': player.get('name'),
         'player_nickname': player.get('nickname'),
+        'requested_role': requested,
         'requester_email': claims.get('email'),
         'requester_username': claims.get('cognito:username') or claims.get('email'),
         'status': 'pending', 'created_at': datetime.now(timezone.utc).isoformat()
@@ -509,10 +521,11 @@ def _create_finance_access_request(claims):
 
 
 def _approve_finance_access(req):
+    role = req.get('requested_role', 'view')
     table.update_item(
         Key={'player_id': req['player_id']},
-        UpdateExpression='SET finance_access = :v',
-        ExpressionAttributeValues={':v': True}
+        UpdateExpression='SET finance_role = :r REMOVE finance_access',
+        ExpressionAttributeValues={':r': role}
     )
     return None
 

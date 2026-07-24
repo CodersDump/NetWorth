@@ -980,7 +980,7 @@
             <div><label>Est. qty <input type="number" id="fexp_est_qty" value="1"></label></div>
             <div><label>Actual qty <input type="number" id="fexp_act_qty" value="1"></label></div>
           </div>
-          <button id="finance-add-expense-btn" type="button">Add expense</button>
+          <button id="finance-add-expense-btn" data-fin-min="write" type="button">Add expense</button>
           <button id="finance-cancel-expense-edit-btn" type="button" class="secondary" style="display:none;">Cancel edit</button>
           <button id="finance-load-expenses-btn" type="button" class="secondary">Load expenses</button>
           <div id="finance-expenses-result" style="margin-top:12px;"></div>
@@ -1027,7 +1027,7 @@
             </label></div>
             <div><label>Remark <input type="text" id="fmem_remark"></label></div>
           </div>
-          <button id="finance-add-member-btn" type="button">Add membership</button>
+          <button id="finance-add-member-btn" data-fin-min="write" type="button">Add membership</button>
           <div id="finance-members-result" style="margin-top:12px;"></div>
         </div>
 
@@ -1058,7 +1058,7 @@
             </label></div>
             <div><label>Note <input type="text" id="fwalk_note"></label></div>
           </div>
-          <button id="finance-add-walkin-btn" type="button">Add walk-in</button>
+          <button id="finance-add-walkin-btn" data-fin-min="write" type="button">Add walk-in</button>
           <button id="finance-load-walkins-btn" type="button" class="secondary">Load walk-ins</button>
           <div id="finance-walkins-result" style="margin-top:12px;"></div>
         </div>
@@ -1085,7 +1085,7 @@
           <label style="display:flex; align-items:center; gap:8px;">
             <input type="checkbox" id="finance_walkins_public" style="width:auto;"> Walk-in list visible to everyone
           </label>
-          <button id="finance-save-settings-btn" type="button" class="secondary" style="margin-top:8px;">Save settings</button>
+          <button id="finance-save-settings-btn" data-fin-min="write" type="button" class="secondary" style="margin-top:8px;">Save settings</button>
           <span id="finance-settings-status" style="font-size:13px; margin-left:8px;"></span>
         </div>
       </div>
@@ -2958,23 +2958,27 @@
         const players = (data.players || []).filter(p => p.claimed)
           .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
         if (!players.length) { listEl.innerHTML = '<p class="card-sub" style="margin:0;">No linked players yet.</p>'; return; }
-        listEl.innerHTML = players.map(p => `
+        listEl.innerHTML = players.map(p => {
+          const role = p.finance_role || (p.finance_access ? 'write' : 'none');
+          const opt = (v, label) => `<option value="${v}"${role === v ? ' selected' : ''}>${label}</option>`;
+          return `
           <div style="display:flex; justify-content:space-between; align-items:center; padding:6px 0; border-bottom:1px solid var(--border);">
             <span>${escapeHtml(p.name)} <span style="color:var(--text-secondary);">(${escapeHtml(p.nickname || '')})</span></span>
-            <button type="button" class="${p.finance_access ? '' : 'secondary'}" style="margin:0; padding:4px 12px; font-size:12px;"
-                    onclick="toggleFinanceAccess('${p.player_id}', ${p.finance_access ? 'false' : 'true'})">
-              ${p.finance_access ? 'Revoke' : 'Grant'}
-            </button>
-          </div>`).join('');
+            <select style="margin:0; width:auto; padding:4px 8px; font-size:12px;"
+                    onchange="setFinanceRole('${p.player_id}', this.value)">
+              ${opt('none', 'No access')}${opt('view', 'View')}${opt('write', 'View + Write')}${opt('delete', 'View + Write + Delete')}
+            </select>
+          </div>`;
+        }).join('');
       } catch (e) { listEl.textContent = 'Could not load players.'; }
     }
 
-    async function toggleFinanceAccess(playerId, grant) {
+    async function setFinanceRole(playerId, role) {
       try {
         const { res, error } = await authedFetch(`${API_BASE_URL}/finance-access`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ player_id: playerId, grant })
+          body: JSON.stringify({ player_id: playerId, role })
         });
         if (!res.ok) { alert(`Error: ${error}`); return; }
         loadFinanceAccessList();
@@ -3073,7 +3077,7 @@
           const what = {
             delete_player: `wants to <strong style="color:var(--smash);">delete</strong> ${target}`,
             new_profile:   `wants a <strong>new profile</strong>: ${target}`,
-            finance_access: `wants <strong>finance access</strong> (${target})`,
+            finance_access: `wants <strong>${escapeHtml(r.requested_role || 'view')}</strong> finance access (${target})`,
             edit_own_name: `wants to rename ${target} to <strong>${escapeHtml(r.new_name || '')} (${escapeHtml(r.new_nickname || '')})</strong>`,
             claim:         `wants to be ${target}`
           }[r.type || 'claim'];
@@ -4240,6 +4244,25 @@
     // ---------- finance (view-key gated, now SuperAdmin-enforced when logged in) ----------
 
     let financeKey = sessionStorage.getItem('nw_finance_key') || '';
+    let myFinanceRole = 'none';  // none < view < write < delete
+    const FIN_LEVEL = { none:0, view:1, write:2, delete:3 };
+
+    /** Hides finance controls above the caller's role. View-only users see
+     *  numbers but no add/edit forms; write users see those but no delete
+     *  buttons. Marked elements carry data-fin-min="write|delete". */
+    function applyFinanceRoleVisibility() {
+      const lvl = FIN_LEVEL[myFinanceRole] || 0;
+      document.querySelectorAll('[data-fin-min]').forEach(el => {
+        const need = FIN_LEVEL[el.getAttribute('data-fin-min')] || 99;
+        el.style.display = lvl >= need ? '' : 'none';
+      });
+      // Delete buttons are rendered fresh each time a finance list loads,
+      // so they're matched by class and re-hidden here. Called again at the
+      // end of each list render so newly-drawn rows obey the role too.
+      document.querySelectorAll('.fin-del').forEach(el => {
+        el.style.display = lvl >= FIN_LEVEL.delete ? '' : 'none';
+      });
+    }
 
     function finQS(extra) {
       const p = new URLSearchParams(extra || {});
@@ -4276,9 +4299,11 @@
         const { res, data } = await authedFetch(`${API_BASE_URL}/finance-access`);
         if (!res.ok || !data.view_key) return false;
         financeKey = data.view_key;
+        myFinanceRole = data.finance_role || 'view';
         sessionStorage.setItem('nw_finance_key', financeKey);
         document.getElementById('finance-content').style.display = 'block';
         document.getElementById('finance-lock-card').style.display = 'none';
+        applyFinanceRoleVisibility();
         const s = await (await fetch(`${financeBaseUrl()}/settings?${finQS()}`, { headers: getAuthHeaders() })).json();
         document.getElementById('finance_walkins_public').checked = !!s.walkins_public;
         loadFinanceSummary(); loadFinanceExpenses(); loadFinanceMembers();
@@ -4291,13 +4316,17 @@
     async function requestFinanceAccess() {
       const el = document.getElementById('finance-request-status');
       if (!isLoggedIn() || !hasLinkedPlayer()) { el.textContent = 'Log in and link your profile first.'; return; }
+      const role = prompt('What finance access do you need?\n\nType one of: view, write, delete\n\n- view: see the numbers\n- write: add and edit records\n- delete: also remove records', 'view');
+      if (role === null) return;
+      const r = role.trim().toLowerCase();
+      if (!['view','write','delete'].includes(r)) { el.textContent = 'Type view, write or delete.'; return; }
       el.textContent = 'Sending...';
       try {
         const { res, error } = await authedFetch(`${API_BASE_URL}/action-request`, {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ type: 'finance_access' })
+          body: JSON.stringify({ type: 'finance_access', role: r })
         });
-        el.textContent = res.ok ? 'Request sent - an admin will review it.' : `Error: ${error}`;
+        el.textContent = res.ok ? `Request for ${r} access sent - an admin will review it.` : `Error: ${error}`;
       } catch (e) { el.textContent = `Failed: ${e.message}`; }
     }
 
@@ -4317,10 +4346,15 @@
         sessionStorage.setItem('nw_finance_key', financeKey);
         statusEl.textContent = 'Unlocked ✓';
         document.getElementById('finance-content').style.display = 'block';
-        // Once unlocked there's nothing to unlock - hide the key form so it
-        // matches the admin auto-unlock experience rather than leaving a
-        // dead input sitting above the loaded data.
         document.getElementById('finance-lock-card').style.display = 'none';
+        // Someone unlocking with the raw key has full rights (the key was
+        // always all-or-nothing); a logged-in user's role, if any, is
+        // fetched to hide controls they shouldn't see.
+        try {
+          const rr = await authedFetch(`${API_BASE_URL}/finance-access`);
+          myFinanceRole = (rr.res.ok && rr.data.finance_role) ? rr.data.finance_role : 'delete';
+        } catch (_) { myFinanceRole = 'delete'; }
+        applyFinanceRoleVisibility();
         const settings = await res.json();
         document.getElementById('finance_walkins_public').checked = !!settings.walkins_public;
         loadFinanceSummary();
@@ -4385,6 +4419,7 @@
         document.getElementById('finance-cancel-expense-edit-btn').style.display = 'inline-block';
         document.getElementById('fexp_item').scrollIntoView({ behavior: 'smooth', block: 'center' });
       }));
+      applyFinanceRoleVisibility();
     }
 
     let editingExpenseId = null;
@@ -4495,6 +4530,7 @@
         loadFinanceSummary(); loadFinanceMembers();
       }));
       renderBulkRosterList();
+      applyFinanceRoleVisibility();
     }
 
     let lastMemberships = [];
@@ -4599,6 +4635,7 @@
           `<td><button type="button" class="secondary fin-del" data-kind="walkins" data-id="${w.record_id}">Delete</button></td></tr>`;
       });
       el.innerHTML = html + '</table>';
+      applyFinanceRoleVisibility();
     }
 
     async function addFinanceWalkin() {

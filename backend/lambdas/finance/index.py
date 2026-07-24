@@ -86,47 +86,73 @@ def _is_super_admin(claims):
 
 
 
-def _has_finance_access(claims):
+# Finance is tiered. A player's finance_role is one of:
+#   none < view < write < delete
+# each level implicitly includes the ones below it. The legacy boolean
+# finance_access is honoured on read (True == 'write', since that's what
+# the old flag effectively allowed) so nobody loses access at deploy time.
+FINANCE_LEVELS = {'none': 0, 'view': 1, 'write': 2, 'delete': 3}
+
+
+def _finance_role(claims):
     if _is_super_admin(claims):
-        return True
+        return 'delete'  # admins get the top tier implicitly
     pid = claims.get('custom:player_id')
     if not pid:
-        return False
+        return 'none'
     p = players_table.get_item(Key={'player_id': pid}).get('Item') or {}
-    return bool(p.get('finance_access'))
+    role = p.get('finance_role')
+    if role in FINANCE_LEVELS:
+        return role
+    # Back-compat: an old grant stored as finance_access=True maps to write.
+    if p.get('finance_access'):
+        return 'write'
+    return 'none'
+
+
+def _finance_level(claims):
+    return FINANCE_LEVELS[_finance_role(claims)]
+
+
+def _has_finance_access(claims):
+    """View or better - the gate for reading finance at all."""
+    return _finance_level(claims) >= FINANCE_LEVELS['view']
 
 
 def finance_key_for_caller(event):
-    """Hands the shared view key to an allowed caller, so the frontend can
-    unlock finance without anyone knowing or typing the secret. The key
-    never leaves the server for anyone not on the list."""
+    """Hands the shared view key to any caller with view access or better,
+    plus their own role so the UI can hide write/delete controls."""
     claims = _caller_claims(event)
     if not claims:
         return _response(403, {'error': 'log in to access finance'})
     if not _has_finance_access(claims):
         return _response(403, {'error': 'you do not have finance access - ask an admin'})
-    return _response(200, {'view_key': VIEW_KEY})
+    return _response(200, {'view_key': VIEW_KEY, 'finance_role': _finance_role(claims)})
 
 
 def set_finance_access(event):
-    """SuperAdmin flips a player's finance access on or off."""
+    """SuperAdmin sets a player's finance role directly."""
     claims = _caller_claims(event)
     if not _is_super_admin(claims):
         return _response(403, {'error': 'only a SuperAdmin can manage finance access'})
     body = json.loads(event.get('body') or '{}')
     player_id = body.get('player_id')
-    grant = bool(body.get('grant'))
+    role = body.get('role')
+    # Accept the legacy {grant: true/false} shape too, mapping to view/none.
+    if role is None and 'grant' in body:
+        role = 'view' if body.get('grant') else 'none'
+    if role not in FINANCE_LEVELS:
+        return _response(400, {'error': f'role must be one of {sorted(FINANCE_LEVELS)}'})
     if not player_id:
         return _response(400, {'error': 'player_id is required'})
     if not players_table.get_item(Key={'player_id': player_id}).get('Item'):
         return _response(404, {'error': 'player not found'})
     players_table.update_item(
         Key={'player_id': player_id},
-        UpdateExpression='SET finance_access = :v',
-        ExpressionAttributeValues={':v': grant}
+        UpdateExpression='SET finance_role = :r REMOVE finance_access',
+        ExpressionAttributeValues={':r': role}
     )
-    return _response(200, {'player_id': player_id, 'finance_access': grant})
-
+    return _response(200, {'player_id': player_id, 'finance_role': role})
 
 def handler(event, context):
     try:
@@ -163,10 +189,15 @@ def handler(event, context):
         # the way `if claims:` would (empty dict is falsy in Python).
         # Requests with no authorizer key at all came via the original open
         # /finance/{proxy+} route and are completely unaffected.
+        # The authenticated /finance-secure route used to be SuperAdmin-only,
+        # which predates finance roles. It now admits anyone with view access
+        # or better; the per-method role check further down enforces write
+        # and delete. Key presence (not claims truthiness) still identifies
+        # the route, so an empty-but-present claims dict can't skip the gate.
         came_via_secure_route = 'authorizer' in (event.get('requestContext') or {})
         claims = _caller_claims(event)
-        if came_via_secure_route and not _is_super_admin(claims):
-            return _response(403, {'error': 'SuperAdmin required for this finance route'})
+        if came_via_secure_route and not _has_finance_access(claims):
+            return _response(403, {'error': 'you do not have finance access - ask an admin'})
 
         proxy = path_params.get('proxy', '')
         parts = [p for p in proxy.split('/') if p] if proxy else []
@@ -180,6 +211,19 @@ def handler(event, context):
         supplied_key = params.get('view_key') or body.get('view_key')
         if supplied_key != VIEW_KEY:
             return _response(403, {'error': 'view key is missing or incorrect'})
+
+        # Tiered enforcement applies only when we actually know who the
+        # caller is. Requests arriving via the authenticated route carry
+        # claims and get gated by role. Requests using only the shared key
+        # (the legacy open route, no authorizer) have no identity to gate
+        # on, so the key alone keeps the full access it always had - this
+        # is what stops existing key-holders from suddenly being view-only.
+        claims_for_role = _caller_claims(event)
+        if claims_for_role:
+            if method in ('POST', 'PUT') and _finance_level(claims_for_role) < FINANCE_LEVELS['write']:
+                return _response(403, {'error': 'you have view-only finance access - ask an admin for write access'})
+            if method == 'DELETE' and _finance_level(claims_for_role) < FINANCE_LEVELS['delete']:
+                return _response(403, {'error': 'you need delete access for this - ask an admin'})
 
         if parts == ['summary'] and method == 'GET':
             return summary()

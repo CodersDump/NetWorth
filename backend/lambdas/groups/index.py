@@ -313,7 +313,8 @@ def visible_players_for_caller(event):
                'avatar_uploads': p.get('avatar_uploads') or [],
                'banner_uploads': p.get('banner_uploads') or [],
                'background_uploads': p.get('background_uploads') or [],
-               'finance_access': bool(p.get('finance_access'))}
+               'finance_access': bool(p.get('finance_access')),
+               'finance_role': p.get('finance_role') or ('write' if p.get('finance_access') else 'none')}
         if show_audit:
             row['created_by'] = p.get('created_by')
             row['created_at'] = p.get('created_at')
