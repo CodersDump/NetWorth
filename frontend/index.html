@@ -3206,6 +3206,11 @@
      *  the format - normalise so callers don't have to care. */
     function vsSideIds(side) {
       if (!side) return [];
+      // A doubles fixture side is a synthetic TEAM: `player_id` is the
+      // pair's own id, and `members` holds the two real player ids. Only
+      // the latter resolve to avatars, so they come first. Singles has no
+      // `members`, and there `player_id` is the real one.
+      if (Array.isArray(side.members) && side.members.length) return side.members;
       return side.player_ids || side.ids || (side.player_id ? [side.player_id] : []);
     }
 
@@ -5763,19 +5768,24 @@
             const tbPrefix = f.tiebreaker ? '<strong>[TIEBREAKER]</strong> ' : '';
             const label = `${tbPrefix}${f.player_a.name} vs ${f.player_b.name}`;
             const gamesText = formatGames(f.games);
+            const vsCard = renderVsCard(vsSideIds(f.player_a), vsSideIds(f.player_b),
+                                        { snapshot: t.card_snapshot, isFinal: false });
+            const matchCell = vsCard
+              ? `${tbPrefix}${vsCard}`
+              : label;  // falls back to the old text row if ids are missing
             if (f.played) {
-              html += `<tr><td>${label}</td><td>${gamesText} (${f.games_won_a}-${f.games_won_b})</td><td>Done</td></tr>`;
+              html += `<tr><td>${matchCell}</td><td>${gamesText} (${f.games_won_a}-${f.games_won_b})</td><td>Done</td></tr>`;
             } else {
               const nextGameNum = (f.games ? f.games.length : 0) + 1;
               const progress = gamesText ? `Games so far: ${gamesText} (${f.games_won_a}-${f.games_won_b}) | ` : '';
               const matchKey = `group_${f.fixture_id}`;
               if (liveMode) {
-                html += `<tr><td>${label}</td><td colspan="2">
+                html += `<tr><td>${matchCell}</td><td colspan="2">
                   ${progress}Game ${nextGameNum}:
                   ${renderLiveScoreControls(matchKey, target, `finishGroupLiveGame('${matchKey}','${t.tournament_id}','${sgName}','${f.fixture_id}')`, f.player_a.name, f.player_b.name)}
                 </td></tr>`;
               } else {
-                html += `<tr><td>${label}</td><td colspan="2">
+                html += `<tr><td>${matchCell}</td><td colspan="2">
                   ${progress}Game ${nextGameNum}:
                   <input type="number" id="ga_${f.fixture_id}" style="width:50px;display:inline-block;">
                   -
