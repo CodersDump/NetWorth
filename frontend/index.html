@@ -5855,7 +5855,11 @@
         t.knockout.rounds.forEach((round, rIdx) => {
           const isFinalRound = rIdx === t.knockout.rounds.length - 1;
           html += `<h4 style="font-size:14px;">${isFinalRound ? 'Final' : 'Round ' + (rIdx + 1)}</h4>`;
-          round.matches.forEach((m, mIdx) => {
+          // A round is the array of matches itself in this payload, not an
+          // object wrapping one. Accept either shape so this can't break
+          // again on a format that nests them.
+          const roundMatches = Array.isArray(round) ? round : (round.matches || []);
+          roundMatches.forEach((m, mIdx) => {
             const bName = m.player_b ? m.player_b.name : 'BYE';
             const label = `${m.player_a.name} vs ${bName}`;
             const gamesText = formatGames(m.games);
