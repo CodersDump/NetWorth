@@ -104,6 +104,13 @@
     .vsc-score { font-size:24px; }
   }
 
+  /* Winner reads three ways at once - gold number, gold ring on their
+     avatars, and a W badge - because on a busy photo banner any single
+     one of those can get lost. */
+  .vsc-av-won { border-color:#F5C542; box-shadow:0 0 0 2px rgba(245,197,66,.5), 0 0 16px rgba(245,197,66,.85), 0 2px 10px rgba(0,0,0,.55); }
+  .vsc-w { font-size:12px; margin-left:6px; vertical-align:middle; letter-spacing:1px;
+           background:#F5C542; color:#12200f; padding:1px 5px; border-radius:4px; font-weight:800; }
+
   body {
     font-family: 'Inter', sans-serif;
     background: transparent;
@@ -3189,10 +3196,10 @@
       };
     }
 
-    function vsAvatarHtml(v) {
+    function vsAvatarHtml(v, isWinner) {
       const bg = v.avatarUrl ? `background-image:url('${v.avatarUrl}');` : '';
       return `<div class="vsc-pl">
-        <div class="vsc-av" style="${bg}">${v.avatarUrl ? '' : escapeHtml(v.avatarEmoji)}</div>
+        <div class="vsc-av${isWinner ? ' vsc-av-won' : ''}" style="${bg}">${v.avatarUrl ? '' : escapeHtml(v.avatarEmoji)}</div>
         <div class="vsc-nm">${escapeHtml(v.name)}</div></div>`;
     }
 
@@ -3213,6 +3220,16 @@
       return (chosen || side[0]).banner;
     }
 
+    /** Games store scores as score_a/score_b. Reading `.a` silently gave
+     *  undefined, which made the card skip the score block entirely - so
+     *  neither the card nor the removed row showed anything. Accepts the
+     *  short form too in case another payload uses it. */
+    function gameScore(game, side) {
+      if (!game) return undefined;
+      const v = game[`score_${side}`] !== undefined ? game[`score_${side}`] : game[side];
+      return v === undefined || v === null ? undefined : v;
+    }
+
     function renderVsCard(idsA, idsB, opts = {}) {
       const snap = opts.snapshot || null;
       const a = (idsA || []).map(id => vsPlayerVisual(id, snap));
@@ -3220,8 +3237,8 @@
       if (!a.length || !b.length) return '';
       const won = (side) => opts.winner === side ? ' vsc-won' : '';
       const scoreHtml = (opts.scoreA === undefined || opts.scoreA === null) ? '' : `
-        <div class="vsc-score vsc-score-a${won('a')}">${escapeHtml(String(opts.scoreA))}</div>
-        <div class="vsc-score vsc-score-b${won('b')}">${escapeHtml(String(opts.scoreB))}</div>`;
+        <div class="vsc-score vsc-score-a${won('a')}">${escapeHtml(String(opts.scoreA))}${opts.winner === 'a' ? '<span class="vsc-w">W</span>' : ''}</div>
+        <div class="vsc-score vsc-score-b${won('b')}">${escapeHtml(String(opts.scoreB))}${opts.winner === 'b' ? '<span class="vsc-w">W</span>' : ''}</div>`;
       const centre = opts.isFinal
         ? `<div class="vsc-cup">${VS_CUP_SVG}<div class="vsc-cupl">FINAL</div></div>`
         : `<div class="vsc-badge">VS</div>`;
@@ -3234,8 +3251,8 @@
              mask-image:linear-gradient(115deg,#000 36%,transparent 64%);"></div>
         <div class="vsc-layer" style="background:linear-gradient(115deg,transparent 42%,rgba(0,0,0,.30) 50%,transparent 58%);"></div>
         ${goldEdge}
-        <div style="position:absolute; left:14px; top:16px; display:flex; gap:8px; z-index:4;">${a.map(vsAvatarHtml).join('')}</div>
-        <div style="position:absolute; right:14px; bottom:16px; display:flex; gap:8px; z-index:4;">${b.map(vsAvatarHtml).join('')}</div>
+        <div style="position:absolute; left:14px; top:16px; display:flex; gap:8px; z-index:4;">${a.map(v => vsAvatarHtml(v, opts.winner === 'a')).join('')}</div>
+        <div style="position:absolute; right:14px; bottom:16px; display:flex; gap:8px; z-index:4;">${b.map(v => vsAvatarHtml(v, opts.winner === 'b')).join('')}</div>
         ${scoreHtml}
         ${centre}
       </div>`;
@@ -5813,8 +5830,8 @@
             const vsCard = renderVsCard(vsSideIds(f.player_a), vsSideIds(f.player_b), {
               snapshot: t.card_snapshot,
               isFinal: false,
-              scoreA: lastGame ? lastGame.a : (f.played ? f.games_won_a : undefined),
-              scoreB: lastGame ? lastGame.b : (f.played ? f.games_won_b : undefined),
+              scoreA: gameScore(lastGame, 'a'),
+              scoreB: gameScore(lastGame, 'b'),
               winner: f.played ? (f.games_won_a > f.games_won_b ? 'a' : 'b') : null
             });
             const head = vsCard ? `${tbPrefix}${vsCard}` : `<p>${label}</p>`;
@@ -5869,8 +5886,8 @@
               // Only the last round's match is the actual final - that's
               // what earns the cup rather than the VS badge.
               isFinal: isFinalRound,
-              scoreA: lastGame ? lastGame.a : undefined,
-              scoreB: lastGame ? lastGame.b : undefined,
+              scoreA: gameScore(lastGame, 'a'),
+              scoreB: gameScore(lastGame, 'b'),
               winner: m.played ? (m.games_won_a > m.games_won_b ? 'a' : 'b') : null
             }) : '';
             html += `<div class="fixture">${card || `<p>${label}</p>`}`;
@@ -5911,8 +5928,8 @@
             // Third place gets the VS badge, not the cup - the cup means
             // the title, and putting one here would flatten the difference.
             isFinal: false,
-            scoreA: tpLast ? tpLast.a : undefined,
-            scoreB: tpLast ? tpLast.b : undefined,
+            scoreA: gameScore(tpLast, 'a'),
+            scoreB: gameScore(tpLast, 'b'),
             winner: tp.played ? (tp.games_won_a > tp.games_won_b ? 'a' : 'b') : null
           });
           html += `<h4 style="font-size:14px;">3rd Place Match</h4>`;
