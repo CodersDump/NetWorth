@@ -59,6 +59,12 @@ XP_PLAYED = {None: 10, 'group': 15, 'knockout': 25, 'third_place': 15, 'final': 
 XP_WIN_BONUS = {None: 5, 'group': 8, 'knockout': 15, 'third_place': 8, 'final': 30}
 XP_TOURNAMENT_WIN = 100          # one-off, awarded when a tournament is won
 
+# Winners earn a little extra for a dominant result, scaled by point margin.
+# Capped so a 21-3 thrashing doesn't dwarf the base award - it's a nudge,
+# not the main event. Roughly: +1 XP per 3 points of margin, up to +7.
+XP_MARGIN_PER_POINTS = 3         # 1 bonus XP per this many points of margin
+XP_MARGIN_CAP = 7                # never more than this from margin alone
+
 # Escalating curve: total XP needed to REACH level N is 5 * N^2. So level 10
 # = 500, level 50 = 12,500, level 100 = 50,000, level 1000 = 5,000,000 -
 # early levels are quick, high levels are a genuine long-term grind (chosen
@@ -82,12 +88,17 @@ def xp_for_level(level):
     return XP_LEVEL_COEFF * level * level
 
 
-def xp_for_match(stage, won):
+def xp_for_match(stage, won, margin=0):
     """Base XP a single player earns for one match (before any event
-    multiplier, which is applied at the point of accumulation)."""
+    multiplier, which is applied at the point of accumulation). Winners get
+    a small extra, capped, for the margin of victory - dominating earns a
+    touch more than scraping through, without making blowouts everything."""
     played = XP_PLAYED.get(stage, XP_PLAYED[None])
     bonus = XP_WIN_BONUS.get(stage, XP_WIN_BONUS[None]) if won else 0
-    return played + bonus
+    margin_bonus = 0
+    if won and margin > 0:
+        margin_bonus = min(XP_MARGIN_CAP, margin // XP_MARGIN_PER_POINTS)
+    return played + bonus + margin_bonus
 
 
 
@@ -507,10 +518,11 @@ def recompute_all_ratings():
         stage = m.get('stage')
         won_a = (winner == 'A')
         won_b = (winner == 'B')
+        margin = int(abs(score_a - score_b))
         for pid in team_a:
-            xp_totals[pid] = xp_totals.get(pid, 0) + xp_for_match(stage, won_a)
+            xp_totals[pid] = xp_totals.get(pid, 0) + xp_for_match(stage, won_a, margin)
         for pid in team_b:
-            xp_totals[pid] = xp_totals.get(pid, 0) + xp_for_match(stage, won_b)
+            xp_totals[pid] = xp_totals.get(pid, 0) + xp_for_match(stage, won_b, margin)
 
         # The rating history graph reads ratings_after directly off each
         # match record - if we don't write the corrected values back here,
@@ -681,7 +693,7 @@ def _play_and_log(match_type, team_a_ids, team_b_ids, score_a, score_b, group_id
         # later recompute reproduces the same totals. Level and coin balance
         # are recomputed from the new XP total (coins = earned - spent).
         won = ((winner == 'A' and pid in team_a_ids) or (winner == 'B' and pid in team_b_ids))
-        gained = xp_for_match(stage, won)
+        gained = xp_for_match(stage, won, int(abs(score_a - score_b)))
         new_xp = int(player_obj.get('xp', 0) or 0) + gained
         new_level = level_from_xp(new_xp)
         earned = COINS_PER_LEVEL * (new_level - 1)
