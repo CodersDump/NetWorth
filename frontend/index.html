@@ -729,7 +729,7 @@
         <form id="match-form">
           <div class="row">
             <div>
-              <label>Group (optional)
+              <label>Group
                 <select id="match_group_select"><option value="">None</option></select>
               </label>
               <button type="button" class="secondary" id="match-quick-add-player-btn" style="display:none; margin-top:6px;">+ Register a new player for this match</button>
@@ -1685,9 +1685,18 @@
       populateSelect(document.getElementById('group_select'), allGroups, 'group_id', 'group_name', null);
       populateSelect(document.getElementById('register_group_id'), allGroups, 'group_id', 'group_name', "Don't add to a group yet");
       populateSelect(document.getElementById('match_group_select'), allGroups, 'group_id', 'group_name', 'None');
+      defaultMatchGroup();  // pre-pick the recorder's group once groups are loaded
       populateSelect(document.getElementById('log_group_filter'), allGroups, 'group_id', 'group_name', 'All groups');
       populateSelect(document.getElementById('attendance_group_filter'), allGroups, 'group_id', 'group_name', 'All groups');
       populateSelect(document.getElementById('rankings_scope_select'), allGroups, 'group_id', 'group_name', 'All players');
+      // Once someone belongs to a group, default the rankings view to it so
+      // they see their group-mates first rather than the whole club. Only
+      // when nothing's been chosen yet, so it never fights a manual pick.
+      const rankScope = document.getElementById('rankings_scope_select');
+      if (rankScope && !rankScope.value) {
+        const mine = myGroups();
+        if (mine.length) { rankScope.value = mine[0].group_id; if (typeof loadRankings === 'function') loadRankings(); }
+      }
       populateSelect(document.getElementById('profile_partnerships_scope_group'), allGroups, 'group_id', 'group_name', 'All plays');
       populateSelect(document.getElementById('hof_group_filter'), allGroups, 'group_id', 'group_name', 'All groups');
       populateSelect(document.getElementById('diversity_group_filter'), allGroups, 'group_id', 'group_name', 'All groups');
@@ -2393,10 +2402,36 @@
       alert(`${name.trim()} is registered${data.added_to_group ? ' and added to ' + data.added_to_group : ''} - pick them from the team dropdowns below.`);
     });
 
+
+    /** The groups the logged-in user belongs to, owner or member. */
+    function myGroups() {
+      const me = myPlayerId();
+      if (!me) return [];
+      return allGroups.filter(g => (g.member_ids || []).includes(me));
+    }
+
+    /** Pre-selects the recorder's group when recording a match, so matches
+     *  get attributed by default instead of piling up ungrouped. Picks
+     *  their first group; they can still change it (and a SuperAdmin can
+     *  set None for a genuinely one-off game). */
+    function defaultMatchGroup() {
+      const sel = document.getElementById('match_group_select');
+      if (!sel || sel.value) return;              // don't override a choice already made
+      const mine = myGroups();
+      if (mine.length) sel.value = mine[0].group_id;
+    }
+
     document.getElementById('match-form').addEventListener('submit', async (e) => {
       e.preventDefault();
       const group_id = document.getElementById('match_group_select').value || null;
       const match_type = document.getElementById('match_type_select').value;
+      // A group is required for everyone except a SuperAdmin, who may
+      // deliberately record an ungrouped one-off. This keeps new matches
+      // attributed without removing the escape hatch entirely.
+      if (!group_id && !isSuperAdmin()) {
+        document.getElementById('match-result').textContent = 'Please select a group for this match.';
+        return;
+      }
       const a1 = document.getElementById('team_a1_select').value;
       const a2 = document.getElementById('team_a2_select').value;
       const b1 = document.getElementById('team_b1_select').value;
@@ -6618,6 +6653,9 @@
         history.replaceState(null, '', `#${btn.dataset.tab}`);
         // Finance: if the user is on the allowlist, unlock without ever
         // showing the key box. Only tried when it's still locked.
+        if (btn.dataset.tab === 'matches' && typeof defaultMatchGroup === 'function') {
+          defaultMatchGroup();
+        }
         if (btn.dataset.tab === 'finance'
             && document.getElementById('finance-content').style.display !== 'block') {
           tryAutoFinanceUnlock();
