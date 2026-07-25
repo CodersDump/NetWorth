@@ -951,6 +951,10 @@
           <a href="#" onclick="requestFinanceAccess(); return false;">Ask an admin for finance access</a>
           <span id="finance-request-status" style="margin-left:6px;"></span>
         </p>
+        <p style="font-size:13px; margin-top:4px;">Already been granted access?
+          <a href="#" onclick="tryAutoFinanceUnlock(); return false;">Check now</a>
+          <span style="opacity:0.7;">(no need to reload the page)</span>
+        </p>
       </div>
 
       <div id="finance-content" style="display:none;">
@@ -1085,6 +1089,12 @@
           <label style="display:flex; align-items:center; gap:8px;">
             <input type="checkbox" id="finance_walkins_public" style="width:auto;"> Walk-in list visible to everyone
           </label>
+          <div data-fin-min="write" style="margin-top:14px; border-top:1px solid var(--border); padding-top:12px;">
+            <p style="font-size:13px; font-weight:600; margin:0 0 4px;">UPI payment details</p>
+            <p class="card-sub" style="margin:0 0 8px;">Shown on the public "Pay the club" card. The QR is generated from this ID automatically.</p>
+            <label>UPI ID <input type="text" id="finance_upi_id" placeholder="yourname@okhdfcbank"></label>
+            <label>Display name <input type="text" id="finance_upi_name" placeholder="Matchpoint Badminton"></label>
+          </div>
           <button id="finance-save-settings-btn" data-fin-min="write" type="button" class="secondary" style="margin-top:8px;">Save settings</button>
           <span id="finance-settings-status" style="font-size:13px; margin-left:8px;"></span>
         </div>
@@ -1607,8 +1617,11 @@
     // UPI payment card config: set your (ideally secondary) VPA to make the
     // 'Pay the club' card appear on the Finance tab. Leave as REPLACE_ME to
     // keep the card hidden.
-    const UPI_ID = 'REPLACE_ME@upi';
-    const UPI_NAME = 'Matchpoint Badminton';
+    // Server-driven now (editable from Settings by anyone with finance
+    // write access). These are just the in-memory current values; the real
+    // source of truth is the finance settings record, fetched on load.
+    let UPI_ID = '';
+    let UPI_NAME = 'Matchpoint Badminton';
     // Easiest path: export the QR straight from your UPI app (GPay/PhonePe
     // -> your profile -> Share QR -> Save image), then add that image file
     // to frontend/assets/upi-qr.png in the repo and leave this path as-is.
@@ -2953,11 +2966,18 @@
       const listEl = document.getElementById('settings-finance-list');
       listEl.textContent = 'Loading...';
       try {
-        const { res, data } = await authedFetch(`${API_BASE_URL}/visible-players`);
+        // /players returns everyone (not group-scoped like /visible-players),
+        // which is what an admin managing finance access needs - otherwise
+        // players who don't share a group with the admin never appear.
+        const res = await fetch(`${API_BASE_URL}/players`);
+        const data = await res.json();
         if (!res.ok) { listEl.textContent = 'Could not load players.'; return; }
         const players = (data.players || []).filter(p => p.claimed)
           .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
-        if (!players.length) { listEl.innerHTML = '<p class="card-sub" style="margin:0;">No linked players yet.</p>'; return; }
+        if (!players.length) {
+          listEl.innerHTML = '<p class="card-sub" style="margin:0;">No players have a linked login yet, so there\'s no one to grant access to. People appear here once they log in and claim a profile.</p>';
+          return;
+        }
         listEl.innerHTML = players.map(p => {
           const role = p.finance_role || (p.finance_access ? 'write' : 'none');
           const opt = (v, label) => `<option value="${v}"${role === v ? ' selected' : ''}>${label}</option>`;
@@ -4174,72 +4194,62 @@
 
 
     // ---------- UPI payment card (public) ----------
-    (function initUpiCard() {
-      const idSet = UPI_ID && !UPI_ID.includes('REPLACE_ME');
-      const imgSet = !!UPI_QR_IMAGE_BASE;
-      if (!idSet && !imgSet) return;
+    // Fetches the current UPI details from the server, then renders the pay
+    // card. Called on load and again after an admin edits the ID in
+    // Settings, so the QR reflects the live value without a page reload.
+    async function refreshUpiCard() {
+      try {
+        const res = await fetch(`${financeBaseUrl()}/upi/public`);
+        if (res.ok) {
+          const d = await res.json();
+          UPI_ID = d.upi_id || '';
+          if (d.upi_name) UPI_NAME = d.upi_name;
+        }
+      } catch (_) { /* leave whatever we had */ }
+      renderUpiCard();
+    }
+
+    function renderUpiCard() {
       const card = document.getElementById('upi-pay-card');
+      const idSet = !!UPI_ID && !UPI_ID.includes('REPLACE_ME');
+      if (!idSet) { card.style.display = 'none'; return; }
       card.style.display = 'block';
-      if (idSet) {
-        document.getElementById('upi-id-text').textContent = UPI_ID;
-        const payUrl = `upi://pay?pa=${encodeURIComponent(UPI_ID)}&pn=${encodeURIComponent(UPI_NAME)}&cu=INR`;
-        document.getElementById('upi-deeplink').href = payUrl;
-        document.getElementById('upi-copy-btn').addEventListener('click', () => {
-          navigator.clipboard.writeText(UPI_ID).then(() => {
-            document.getElementById('upi-copy-btn').textContent = 'Copied ✓';
-            setTimeout(() => { document.getElementById('upi-copy-btn').textContent = 'Copy'; }, 1500);
-          });
+
+      document.getElementById('upi-id-text').textContent = UPI_ID;
+      const payUrl = `upi://pay?pa=${encodeURIComponent(UPI_ID)}&pn=${encodeURIComponent(UPI_NAME)}&cu=INR`;
+      document.getElementById('upi-deeplink').href = payUrl;
+      const copyBtn = document.getElementById('upi-copy-btn');
+      copyBtn.onclick = () => {
+        navigator.clipboard.writeText(UPI_ID).then(() => {
+          copyBtn.textContent = 'Copied ✓';
+          setTimeout(() => { copyBtn.textContent = 'Copy'; }, 1500);
         });
-      } else {
-        document.getElementById('upi-id-text').closest('p').style.display = 'none';
-        document.getElementById('upi-deeplink').style.display = 'none';
-      }
-      // Priority: (1) a real QR image you exported from your UPI app and
-      // committed to the repo - no CDN dependency, always renders;
-      // (2) a client-generated QR from UPI_ID via a CDN library;
-      // (3) a QR image service as a second fallback; (4) hide the box, ID
-      // text and deep link button above still work regardless.
-      const qrEl = document.getElementById('upi-qr');
-      const generateFallback = () => {
-        if (!idSet) { qrEl.style.display = 'none'; return; }
-        const payUrl = `upi://pay?pa=${encodeURIComponent(UPI_ID)}&pn=${encodeURIComponent(UPI_NAME)}&cu=INR`;
-        const imageServiceFallback = () => {
-          const img = document.createElement('img');
-          img.width = 180; img.height = 180; img.alt = 'UPI QR';
-          img.src = `https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(payUrl)}`;
-          img.onerror = () => { qrEl.style.display = 'none'; };
-          qrEl.appendChild(img);
-        };
-        const s = document.createElement('script');
-        s.src = 'https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js';
-        s.onload = () => {
-          try { new QRCode(qrEl, { text: payUrl, width: 180, height: 180 }); }
-          catch (err) { imageServiceFallback(); }
-        };
-        s.onerror = imageServiceFallback;
-        document.head.appendChild(s);
       };
-      if (imgSet) {
-        const extensions = ['png', 'jpg', 'jpeg', 'webp'];
+
+      // QR is generated live from the current ID (CDN lib, image-service
+      // fallback), so it always matches whatever's set - no committed image
+      // to keep in sync now that the ID is editable.
+      const qrEl = document.getElementById('upi-qr');
+      qrEl.innerHTML = '';
+      const imageServiceFallback = () => {
         const img = document.createElement('img');
         img.width = 180; img.height = 180; img.alt = 'UPI QR';
-        img.style.display = 'block';
-        let extIndex = 0;
-        img.onerror = () => {
-          extIndex++;
-          if (extIndex < extensions.length) {
-            img.src = `${UPI_QR_IMAGE_BASE}.${extensions[extIndex]}`;
-          } else {
-            qrEl.innerHTML = '';
-            generateFallback();
-          }
-        };
-        img.src = `${UPI_QR_IMAGE_BASE}.${extensions[0]}`;
+        img.src = `https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(payUrl)}`;
+        img.onerror = () => { qrEl.style.display = 'none'; };
         qrEl.appendChild(img);
+      };
+      if (window.QRCode) {
+        try { new QRCode(qrEl, { text: payUrl, width: 180, height: 180 }); }
+        catch (e) { imageServiceFallback(); }
       } else {
-        generateFallback();
+        const sc = document.createElement('script');
+        sc.src = 'https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js';
+        sc.onload = () => { try { new QRCode(qrEl, { text: payUrl, width: 180, height: 180 }); } catch (e) { imageServiceFallback(); } };
+        sc.onerror = imageServiceFallback;
+        document.head.appendChild(sc);
       }
-    })();
+    }
+    refreshUpiCard();
 
     // ---------- finance (view-key gated, now SuperAdmin-enforced when logged in) ----------
 
@@ -4257,8 +4267,13 @@
         el.style.display = lvl >= need ? '' : 'none';
       });
       // Delete buttons are rendered fresh each time a finance list loads,
-      // so they're matched by class and re-hidden here. Called again at the
-      // end of each list render so newly-drawn rows obey the role too.
+      // so they're matched by class and re-hidden here. Edit is a write
+      // action, so it hides for view-only users; delete needs the delete
+      // tier. Called again at the end of each list render so newly-drawn
+      // rows obey the role too.
+      document.querySelectorAll('.fin-edit-exp, .fin-edit').forEach(el => {
+        el.style.display = lvl >= FIN_LEVEL.write ? '' : 'none';
+      });
       document.querySelectorAll('.fin-del').forEach(el => {
         el.style.display = lvl >= FIN_LEVEL.delete ? '' : 'none';
       });
@@ -4306,6 +4321,8 @@
         applyFinanceRoleVisibility();
         const s = await (await fetch(`${financeBaseUrl()}/settings?${finQS()}`, { headers: getAuthHeaders() })).json();
         document.getElementById('finance_walkins_public').checked = !!s.walkins_public;
+        document.getElementById('finance_upi_id').value = s.upi_id || '';
+        document.getElementById('finance_upi_name').value = s.upi_name || '';
         loadFinanceSummary(); loadFinanceExpenses(); loadFinanceMembers();
         const lock = document.getElementById('finance-lock-status');
         if (lock) lock.textContent = 'Unlocked ✓ (you have finance access)';
@@ -4357,6 +4374,8 @@
         applyFinanceRoleVisibility();
         const settings = await res.json();
         document.getElementById('finance_walkins_public').checked = !!settings.walkins_public;
+        document.getElementById('finance_upi_id').value = settings.upi_id || '';
+        document.getElementById('finance_upi_name').value = settings.upi_name || '';
         loadFinanceSummary();
         loadFinanceExpenses();
         loadFinanceMembers();
@@ -4765,9 +4784,13 @@
     async function saveFinanceSettings() {
       const statusEl = document.getElementById('finance-settings-status');
       const { ok, data } = await finPost('settings', 'PUT', {
-        walkins_public: document.getElementById('finance_walkins_public').checked
+        walkins_public: document.getElementById('finance_walkins_public').checked,
+        upi_id: document.getElementById('finance_upi_id').value.trim(),
+        upi_name: document.getElementById('finance_upi_name').value.trim()
       });
       statusEl.textContent = ok ? 'Saved ✓' : `Error: ${data.error}`;
+      // Reflect a changed UPI ID on the pay card immediately.
+      if (ok) refreshUpiCard();
     }
 
     document.addEventListener('click', async (e) => {

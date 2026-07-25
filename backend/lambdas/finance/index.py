@@ -208,6 +208,11 @@ def handler(event, context):
         if parts == ['walkins', 'public'] and method == 'GET':
             return public_walkins()
 
+        # UPI payment details are public too - guests pay walk-in fees by
+        # scanning the QR, so this must work with no key and no login.
+        if parts == ['upi', 'public'] and method == 'GET':
+            return public_upi()
+
         supplied_key = params.get('view_key') or body.get('view_key')
         if supplied_key != VIEW_KEY:
             return _response(403, {'error': 'view key is missing or incorrect'})
@@ -445,14 +450,34 @@ def delete_record(record_type, record_id, body):
 
 def get_settings():
     item = finance_table.get_item(Key={'record_id': 'settings'}).get('Item') or {}
-    return _response(200, {'walkins_public': bool(item.get('walkins_public', False))})
+    return _response(200, {
+        'walkins_public': bool(item.get('walkins_public', False)),
+        'upi_id': item.get('upi_id', ''),
+        'upi_name': item.get('upi_name', '')
+    })
 
 
 def put_settings(body):
-    item = {'record_id': 'settings', 'record_type': 'settings',
-            'walkins_public': bool(body.get('walkins_public', False))}
+    # Preserve existing values for any field the caller didn't send, so
+    # saving the walk-in toggle doesn't wipe the UPI details and vice versa.
+    existing = finance_table.get_item(Key={'record_id': 'settings'}).get('Item') or {}
+    item = {
+        'record_id': 'settings', 'record_type': 'settings',
+        'walkins_public': bool(body.get('walkins_public', existing.get('walkins_public', False))),
+        'upi_id': (body.get('upi_id') if 'upi_id' in body else existing.get('upi_id', '')) or '',
+        'upi_name': (body.get('upi_name') if 'upi_name' in body else existing.get('upi_name', '')) or ''
+    }
     finance_table.put_item(Item=item)
-    return _response(200, {'walkins_public': item['walkins_public']})
+    return _response(200, {'walkins_public': item['walkins_public'],
+                           'upi_id': item['upi_id'], 'upi_name': item['upi_name']})
+
+
+def public_upi():
+    """The pay card is shown to guests (they pay walk-in fees), so the UPI
+    ID must be readable without the finance key. Only the payment details
+    are exposed - nothing financial about the club."""
+    item = finance_table.get_item(Key={'record_id': 'settings'}).get('Item') or {}
+    return _response(200, {'upi_id': item.get('upi_id', ''), 'upi_name': item.get('upi_name', '')})
 
 
 def public_walkins():
