@@ -1125,6 +1125,15 @@
             </div>
           </div>
         </div>
+        <div id="profile-xp-inline" style="display:none; margin-top:8px;">
+          <div style="display:flex; justify-content:space-between; font-size:12px; margin-bottom:3px; opacity:0.85;">
+            <span id="profile-xp-current">0 XP</span>
+            <span id="profile-xp-next" style="opacity:0.7;"></span>
+          </div>
+          <div style="height:10px; background:var(--surface-2); border-radius:5px; overflow:hidden;">
+            <div id="profile-xp-bar" style="height:100%; width:0%; background:linear-gradient(90deg, var(--court), #2FA968); transition:width 0.4s;"></div>
+          </div>
+        </div>
       </div>
 
       <div class="card">
@@ -1180,17 +1189,6 @@
           </div>
         </div>
         <canvas id="profile-rating-canvas" height="200"></canvas>
-      </div>
-
-      <div class="card" id="profile-xp-card" style="display:none;">
-        <h2>Level progress <span style="font-size:12px; font-weight:normal; opacity:0.6;">(admin preview)</span></h2>
-        <div style="display:flex; justify-content:space-between; font-size:12px; margin-bottom:3px;">
-          <span id="profile-xp-current">0 XP</span>
-          <span id="profile-xp-next" style="opacity:0.6;"></span>
-        </div>
-        <div style="height:12px; background:var(--surface-2); border-radius:6px; overflow:hidden;">
-          <div id="profile-xp-bar" style="height:100%; width:0%; background:linear-gradient(90deg, var(--court), #2FA968); transition:width 0.4s;"></div>
-        </div>
       </div>
 
       <div class="card">
@@ -4004,9 +4002,9 @@
     }
 
     function renderXpPanel(player) {
-      const card = document.getElementById('profile-xp-card');
+      const inline = document.getElementById('profile-xp-inline');
       const bannerLevel = document.getElementById('profile-banner-level');
-      if (!player) { if (card) card.style.display = 'none'; if (bannerLevel) bannerLevel.style.display = 'none'; return; }
+      if (!player) { if (inline) inline.style.display = 'none'; if (bannerLevel) bannerLevel.style.display = 'none'; return; }
 
       const xp = Number(player.xp || 0);
       const COEFF = 5;
@@ -4018,17 +4016,17 @@
       const span = Math.max(1, nextFloor - curFloor);
       const pct = Math.min(100, Math.round((into / span) * 100));
 
-      // Level shows under the banner name for everyone viewing this card.
-      // (Admin-only gate stays on the detailed progress bar for now.)
+      // Level under the banner name.
       if (bannerLevel) {
         bannerLevel.textContent = `Level ${level}`;
         bannerLevel.style.display = isSuperAdmin() ? 'block' : 'none';
       }
 
-      // The XP progress bar stays admin-only during soft launch.
-      if (!card) return;
-      if (!isSuperAdmin()) { card.style.display = 'none'; return; }
-      card.style.display = 'block';
+      // The progress bar now sits inside the Player Card, right under the
+      // banner - admin-only during soft launch.
+      if (!inline) return;
+      if (!isSuperAdmin()) { inline.style.display = 'none'; return; }
+      inline.style.display = 'block';
       document.getElementById('profile-xp-current').textContent = `${xp.toLocaleString()} XP`;
       document.getElementById('profile-xp-next').textContent = `${(nextFloor - xp).toLocaleString()} to level ${level + 1}`;
       document.getElementById('profile-xp-bar').style.width = `${pct}%`;
