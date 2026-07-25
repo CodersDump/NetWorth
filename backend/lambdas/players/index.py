@@ -639,10 +639,12 @@ def decide_claim_request(event):
                 'requestContext': {'authorizer': {'claims': claims}}
             }
         else:
+            # Scores come off the DynamoDB request row as Decimal, which
+            # json.dumps can't serialize - coerce to int for the payload.
             payload = {
                 'resource': '/matches/{match_id}', 'httpMethod': 'PUT',
                 'pathParameters': {'match_id': req['match_id']},
-                'body': json.dumps({'score_a': req['new_score_a'], 'score_b': req['new_score_b'],
+                'body': json.dumps({'score_a': int(req['new_score_a']), 'score_b': int(req['new_score_b']),
                                     'confirm': CONFIRMATION_CODE}),
                 'requestContext': {'authorizer': {'claims': claims}}
             }
