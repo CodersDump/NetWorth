@@ -561,6 +561,8 @@
     <button class="tab-btn" data-tab="review" id="review-tab-btn" style="display:none;">Reviews &amp; Approvals</button>
   </nav>
 
+  <div id="event-banner" style="display:none; text-align:center; padding:8px 14px; margin:8px auto 0; max-width:960px; background:linear-gradient(90deg, rgba(47,169,104,0.18), rgba(214,64,63,0.18)); border:1px solid var(--border); border-radius:10px; font-size:13px;"></div>
+
   <div class="app-shell">
     <div class="tab-panel active" id="tab-players">
       <div class="card" id="register-guest-notice" style="display:none;">
@@ -1269,6 +1271,26 @@
             </label>
             <p class="card-sub" style="margin:6px 0 0;">Off by default: a new sign-up's "create profile" goes to the request queue above. Turn on during a busy session so new people can start playing without waiting for you to approve each one. Claiming an existing profile always needs approval regardless.</p>
             <span id="app-instant-create-status" style="font-size:12px;"></span>
+          </div>
+        </details>
+
+        <details class="review-section">
+          <summary>Events &amp; XP multipliers</summary>
+          <div style="padding:10px 0;">
+            <p class="card-sub" style="margin:0 0 10px;">Run a limited-time XP boost (Diwali, a tournament weekend, etc). Matches played within the dates earn multiplied XP - applied by match date, so it stays correct through any recompute.</p>
+            <div id="events-list" style="font-size:13px; margin-bottom:12px;"></div>
+            <div style="border-top:1px solid var(--border); padding-top:10px;">
+              <p style="font-size:13px; font-weight:600; margin:0 0 6px;">Add / edit an event</p>
+              <label>Name <input type="text" id="event-name" placeholder="Diwali Double XP"></label>
+              <div class="row">
+                <div><label>Start <input type="date" id="event-start"></label></div>
+                <div><label>End <input type="date" id="event-end"></label></div>
+                <div><label>XP multiplier <input type="number" id="event-mult" min="1" max="10" step="0.5" value="2"></label></div>
+              </div>
+              <input type="hidden" id="event-edit-id">
+              <button type="button" class="secondary" onclick="saveEvent()">Save event</button>
+              <span id="event-save-status" style="font-size:12px; margin-left:8px;"></span>
+            </div>
           </div>
         </details>
 
@@ -3297,6 +3319,86 @@
         });
         statusEl.textContent = res.ok ? (value ? 'Instant create is ON.' : 'Instant create is OFF - new profiles need approval.') : `Error: ${error}`;
       } catch (e) { statusEl.textContent = `Failed: ${e.message}`; }
+    }
+
+    async function loadEventsAdmin() {
+      const listEl = document.getElementById('events-list');
+      if (!listEl) return;
+      try {
+        const res = await fetch(`${API_BASE_URL}/events`);
+        const data = await res.json();
+        const events = data.events || [];
+        if (!events.length) { listEl.innerHTML = '<p class="card-sub" style="margin:0;">No events yet.</p>'; return; }
+        const today = new Date().toLocaleDateString('en-CA');
+        listEl.innerHTML = events.map(e => {
+          const active = e.start_date <= today && today <= e.end_date;
+          return `<div style="display:flex; justify-content:space-between; align-items:center; padding:6px 0; border-bottom:1px solid var(--border);">
+            <span>${active ? '🟢 ' : ''}<strong>${escapeHtml(e.name)}</strong> — ${e.xp_multiplier}× XP <span style="opacity:0.6;">(${e.start_date} to ${e.end_date})</span></span>
+            <span>
+              <button class="secondary" style="margin:0; padding:2px 8px; font-size:11px;" onclick='editEvent(${JSON.stringify(e)})'>Edit</button>
+              <button class="secondary" style="margin:0; padding:2px 8px; font-size:11px;" onclick="deleteEvent('${e.event_id}')">Delete</button>
+            </span>
+          </div>`;
+        }).join('');
+      } catch (e) { listEl.textContent = 'Could not load events.'; }
+    }
+
+    function editEvent(e) {
+      document.getElementById('event-edit-id').value = e.event_id;
+      document.getElementById('event-name').value = e.name;
+      document.getElementById('event-start').value = e.start_date;
+      document.getElementById('event-end').value = e.end_date;
+      document.getElementById('event-mult').value = e.xp_multiplier;
+    }
+
+    async function saveEvent() {
+      const statusEl = document.getElementById('event-save-status');
+      const body = {
+        event_id: document.getElementById('event-edit-id').value || undefined,
+        name: document.getElementById('event-name').value.trim(),
+        start_date: document.getElementById('event-start').value,
+        end_date: document.getElementById('event-end').value,
+        xp_multiplier: parseFloat(document.getElementById('event-mult').value)
+      };
+      if (!body.name || !body.start_date || !body.end_date) { statusEl.textContent = 'Name and dates required.'; return; }
+      statusEl.textContent = 'Saving...';
+      try {
+        const { res, error } = await authedFetch(`${API_BASE_URL}/events`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+        });
+        if (!res.ok) { statusEl.textContent = `Error: ${error}`; return; }
+        statusEl.textContent = 'Saved.';
+        document.getElementById('event-edit-id').value = '';
+        document.getElementById('event-name').value = '';
+        loadEventsAdmin(); refreshEventBanner();
+      } catch (e) { statusEl.textContent = `Failed: ${e.message}`; }
+    }
+
+    async function deleteEvent(eventId) {
+      if (!confirm('Delete this event? Past matches keep the XP they already earned until the next recompute.')) return;
+      try {
+        const { res, error } = await authedFetch(`${API_BASE_URL}/events`, {
+          method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ event_id: eventId })
+        });
+        if (!res.ok) { alert(`Error: ${error}`); return; }
+        loadEventsAdmin(); refreshEventBanner();
+      } catch (e) { alert(`Failed: ${e.message}`); }
+    }
+
+    // Public: a small banner shown to everyone when an event is live.
+    async function refreshEventBanner() {
+      const bar = document.getElementById('event-banner');
+      if (!bar) return;
+      try {
+        const res = await fetch(`${API_BASE_URL}/events`);
+        const data = await res.json();
+        const today = new Date().toLocaleDateString('en-CA');
+        const active = (data.events || []).find(e => e.start_date <= today && today <= e.end_date);
+        if (active) {
+          bar.innerHTML = `🎉 <strong>${escapeHtml(active.name)}</strong> is live — ${active.xp_multiplier}× XP on every match until ${active.end_date}!`;
+          bar.style.display = 'block';
+        } else { bar.style.display = 'none'; }
+      } catch (_) { bar.style.display = 'none'; }
     }
 
     async function loadClaimRequests() {
@@ -5868,6 +5970,7 @@
     (async () => {
       await loadPlayers();
       await loadGroups();
+      refreshEventBanner();
       loadTournamentGroupOptions();
       loadTournamentsList();
       loadRankings();
@@ -7041,6 +7144,7 @@
           loadClaimRequests();
           loadFinanceAccessList();
           loadAppSettings();
+          loadEventsAdmin();
         }
         if (btn.dataset.tab === 'finance'
             && document.getElementById('finance-content').style.display !== 'block') {

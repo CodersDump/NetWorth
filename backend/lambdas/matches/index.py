@@ -101,6 +101,38 @@ def xp_for_match(stage, won, margin=0):
     return played + bonus + margin_bonus
 
 
+# ---------- limited-time events (XP multipliers) ----------
+# Events live in one reserved row of the matches table. Each has a name,
+# start/end date (inclusive, YYYY-MM-DD), and an xp_multiplier (e.g. 2.0 for
+# a Diwali double-XP weekend). A match's XP is multiplied by whatever event
+# covers ITS date - not "now" - so a recompute always reproduces the same
+# totals. Overlapping events take the highest multiplier.
+_EVENTS_ROW_ID = '__events__'
+
+def _load_events():
+    item = matches_table.get_item(Key={'match_id': _EVENTS_ROW_ID}).get('Item') or {}
+    return item.get('events', [])
+
+def event_multiplier_for_date(date_str, events=None):
+    """The XP multiplier active on a given match date (default 1.0). Pass a
+    preloaded events list during recompute to avoid a lookup per match."""
+    if events is None:
+        events = _load_events()
+    if not date_str:
+        return 1.0
+    day = date_str[:10]
+    best = 1.0
+    for ev in events:
+        start = ev.get('start_date', '')
+        end = ev.get('end_date', '')
+        if start <= day <= end:
+            try:
+                best = max(best, float(ev.get('xp_multiplier', 1.0)))
+            except (TypeError, ValueError):
+                pass
+    return best
+
+
 
 def display_name(player_item, fallback=None):
     """Single source of truth for name formatting: 'Nickname (Real Name)'
@@ -259,6 +291,12 @@ def handler(event, context):
         # XP/levels onto players who predate the XP system.
         if event.get('resource') == '/recompute' and method == 'POST':
             return recompute_now(event)
+        if event.get('resource') == '/events' and method == 'GET':
+            return list_events(event)
+        if event.get('resource') == '/events' and method == 'POST':
+            return save_event(event)
+        if event.get('resource') == '/events' and method == 'DELETE':
+            return delete_event(event)
 
         # Epic 7 extension: profile viewing is now genuinely restricted -
         # guests can't view any profile at all; logged-in members can only
@@ -284,6 +322,57 @@ def handler(event, context):
         return _response(404, {'error': 'not found'})
     except Exception as e:
         return _response(500, {'error': str(e)})
+
+
+def list_events(event):
+    """Public read - the frontend shows an active-event banner to everyone.
+    Returns events sorted by start date."""
+    events = _load_events()
+    events.sort(key=lambda e: e.get('start_date', ''))
+    return _response(200, {'events': events})
+
+
+def save_event(event):
+    """SuperAdmin creates or updates an event (upsert by event_id)."""
+    claims = _caller_claims(event)
+    if not _is_super_admin(claims):
+        return _response(403, {'error': 'only a SuperAdmin can manage events'})
+    body = json.loads(event.get('body') or '{}')
+    name = (body.get('name') or '').strip()
+    start = (body.get('start_date') or '').strip()[:10]
+    end = (body.get('end_date') or '').strip()[:10]
+    if not name or not start or not end:
+        return _response(400, {'error': 'name, start_date and end_date are required'})
+    if end < start:
+        return _response(400, {'error': 'end_date cannot be before start_date'})
+    try:
+        mult = float(body.get('xp_multiplier', 1.0))
+    except (TypeError, ValueError):
+        return _response(400, {'error': 'xp_multiplier must be a number'})
+    if mult < 1.0 or mult > 10.0:
+        return _response(400, {'error': 'xp_multiplier must be between 1 and 10'})
+
+    events = _load_events()
+    eid = body.get('event_id') or str(uuid.uuid4())
+    row = {'event_id': eid, 'name': name, 'start_date': start, 'end_date': end,
+           'xp_multiplier': str(mult)}  # stored as string; DynamoDB has no float
+    events = [e for e in events if e.get('event_id') != eid]
+    events.append(row)
+    matches_table.put_item(Item={'match_id': _EVENTS_ROW_ID, 'events': events})
+    return _response(200, {'event': row})
+
+
+def delete_event(event):
+    claims = _caller_claims(event)
+    if not _is_super_admin(claims):
+        return _response(403, {'error': 'only a SuperAdmin can manage events'})
+    body = json.loads(event.get('body') or '{}')
+    eid = body.get('event_id')
+    if not eid:
+        return _response(400, {'error': 'event_id is required'})
+    events = [e for e in _load_events() if e.get('event_id') != eid]
+    matches_table.put_item(Item={'match_id': _EVENTS_ROW_ID, 'events': events})
+    return _response(200, {'ok': True})
 
 
 def recompute_now(event):
@@ -479,7 +568,11 @@ def recompute_all_ratings():
     pairing_counts = {}  # frozenset({p1,p2}) -> matches played together so far
 
     matches = matches_table.scan().get('Items', [])
+    # The reserved events row lives in this table but isn't a match.
+    matches = [m for m in matches if m.get('match_id') != _EVENTS_ROW_ID]
     matches.sort(key=lambda m: m.get('date', ''))
+    # Load events once for the whole replay rather than per match.
+    _events = _load_events()
 
     for m in matches:
         team_a = m.get('team_a') or []
@@ -535,10 +628,12 @@ def recompute_all_ratings():
         won_a = (winner == 'A')
         won_b = (winner == 'B')
         margin = int(abs(score_a - score_b))
+        # Event multiplier for THIS match's date (events preloaded above).
+        mult = event_multiplier_for_date(m.get('date'), _events)
         for pid in team_a:
-            xp_totals[pid] = xp_totals.get(pid, 0) + xp_for_match(stage, won_a, margin)
+            xp_totals[pid] = xp_totals.get(pid, 0) + round(xp_for_match(stage, won_a, margin) * mult)
         for pid in team_b:
-            xp_totals[pid] = xp_totals.get(pid, 0) + xp_for_match(stage, won_b, margin)
+            xp_totals[pid] = xp_totals.get(pid, 0) + round(xp_for_match(stage, won_b, margin) * mult)
 
         # The rating history graph reads ratings_after directly off each
         # match record - if we don't write the corrected values back here,
@@ -698,6 +793,8 @@ def _play_and_log(match_type, team_a_ids, team_b_ids, score_a, score_b, group_id
     for p in team_b_players:
         new_ratings[p['player_id']] = int(round(float(p.get('rating', 1000)) + delta_b))
 
+    # Event multiplier once for this match (it's "now"), not per player.
+    _live_mult = event_multiplier_for_date(datetime.now(timezone.utc).isoformat())
     for pid, new_rating in new_ratings.items():
         # Snapshot the rating this player held BEFORE this match as
         # previous_rating. Ranking players by previous_rating vs current
@@ -709,7 +806,7 @@ def _play_and_log(match_type, team_a_ids, team_b_ids, score_a, score_b, group_id
         # later recompute reproduces the same totals. Level and coin balance
         # are recomputed from the new XP total (coins = earned - spent).
         won = ((winner == 'A' and pid in team_a_ids) or (winner == 'B' and pid in team_b_ids))
-        gained = xp_for_match(stage, won, int(abs(score_a - score_b)))
+        gained = round(xp_for_match(stage, won, int(abs(score_a - score_b))) * _live_mult)
         new_xp = int(player_obj.get('xp', 0) or 0) + gained
         new_level = level_from_xp(new_xp)
         earned = COINS_PER_LEVEL * (new_level - 1)
@@ -763,6 +860,8 @@ def list_matches(event):
     tournament_filter = params.get('tournament_filter', 'include')  # 'include' | 'exclude'
 
     items = matches_table.scan().get('Items', [])
+    # Reserved config rows (events) live in this table but aren't matches.
+    items = [i for i in items if i.get('match_id') != _EVENTS_ROW_ID]
 
     if partnerships_for or radar_for:
         scoped_items = items
