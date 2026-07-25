@@ -111,6 +111,14 @@
   .vsc-w { font-size:12px; margin-left:6px; vertical-align:middle; letter-spacing:1px;
            background:#F5C542; color:#12200f; padding:1px 5px; border-radius:4px; font-weight:800; }
 
+  .review-section { border:1px solid var(--border); border-radius:8px; margin:10px 0; padding:0 12px; }
+  .review-section > summary { cursor:pointer; padding:12px 0; font-weight:600; font-size:14px; list-style:none; display:flex; align-items:center; gap:8px; }
+  .review-section > summary::-webkit-details-marker { display:none; }
+  .review-section > summary::before { content:'▸'; transition:transform 0.15s; opacity:0.6; }
+  .review-section[open] > summary::before { transform:rotate(90deg); }
+  .review-badge { background:var(--smash); color:#fff; border-radius:10px; padding:1px 8px; font-size:11px; font-weight:700; }
+  .review-badge:empty { display:none; }
+
   body {
     font-family: 'Inter', sans-serif;
     background: transparent;
@@ -498,7 +506,24 @@
       </div>
       <div id="settings-cosmetics">
       <p class="card-sub">Changes here apply to your own Player Card.</p>
-      <p style="font-size:13px; font-weight:600; margin:14px 0 4px;">Avatar</p>
+            <div class="card">
+        <h2>Edit my name</h2>
+        <p class="card-sub">You can only change your own name and nickname, and the change goes to an admin for approval. Nickname shows as "Nickname (Real Name)" across Stats, Hall of Fame and Profile.</p>
+        <div id="edit-player-locked" style="display:none;">
+          <p class="card-sub">Log in and link your profile to edit your name.</p>
+        </div>
+        <form id="edit-player-form">
+          <label>Name
+            <input type="text" id="edit_player_name" required>
+          </label>
+          <label>Nickname <span style="opacity:0.6; font-weight:normal;">(lowercase letters, numbers and underscore only)</span>
+            <input type="text" id="edit_player_nickname" required>
+          </label>
+          <button type="submit" class="secondary">Request change</button>
+        </form>
+        <div id="edit-player-result" class="result"></div>
+      </div>
+<p style="font-size:13px; font-weight:600; margin:14px 0 4px;">Avatar</p>
       <p class="card-sub" style="margin:0 0 8px;">Upload a photo, or pick a preset below. Photos are cropped square and resized before uploading.</p>
       <input type="file" accept="image/*" id="upload-avatar-input" style="margin-bottom:8px; font-size:12px;"
              onchange="uploadCardImage('avatar', this)">
@@ -521,23 +546,6 @@
 
       <!-- SuperAdmin only. Hidden entirely for everyone else rather than
            shown-and-disabled: a control you can never use is just noise. -->
-      <div id="settings-requests-section" style="display:none; margin-top:20px; border-top:1px solid var(--border); padding-top:16px;">
-        <div style="display:flex; justify-content:space-between; align-items:center;">
-          <p style="font-size:13px; font-weight:600; margin:0;">Claim requests</p>
-          <button class="secondary" type="button" style="margin:0; padding:4px 10px; font-size:12px;" onclick="loadClaimRequests()">Refresh</button>
-        </div>
-        <p class="card-sub" style="margin:4px 0 10px;">People asking to be linked to an existing player.</p>
-        <div id="settings-requests-list" style="font-size:13px;"></div>
-      </div>
-
-      <div id="settings-finance-section" style="display:none; margin-top:20px; border-top:1px solid var(--border); padding-top:16px;">
-        <div style="display:flex; justify-content:space-between; align-items:center;">
-          <p style="font-size:13px; font-weight:600; margin:0;">Finance access</p>
-          <button class="secondary" type="button" style="margin:0; padding:4px 10px; font-size:12px;" onclick="loadFinanceAccessList()">Refresh</button>
-        </div>
-        <p class="card-sub" style="margin:4px 0 10px;">Who can view the Finance tab. You always have access.</p>
-        <div id="settings-finance-list" style="font-size:13px;"></div>
-      </div>
     </div>
   </div>
 
@@ -549,7 +557,7 @@
     <button class="tab-btn" data-tab="stats">Stats</button>
     <button class="tab-btn" data-tab="finance">Finance</button>
     <button class="tab-btn" data-tab="profile">Player Card</button>
-    <button class="tab-btn" data-tab="review" id="review-tab-btn" style="display:none;">Match Review</button>
+    <button class="tab-btn" data-tab="review" id="review-tab-btn" style="display:none;">Reviews &amp; Approvals</button>
   </nav>
 
   <div class="app-shell">
@@ -598,23 +606,6 @@
         <div id="bulk-register-result" class="result"></div>
       </div>
 
-      <div class="card">
-        <h2>Edit my name</h2>
-        <p class="card-sub">You can only change your own name and nickname, and the change goes to an admin for approval. Nickname shows as "Nickname (Real Name)" across Stats, Hall of Fame and Profile.</p>
-        <div id="edit-player-locked" style="display:none;">
-          <p class="card-sub">Log in and link your profile to edit your name.</p>
-        </div>
-        <form id="edit-player-form">
-          <label>Name
-            <input type="text" id="edit_player_name" required>
-          </label>
-          <label>Nickname <span style="opacity:0.6; font-weight:normal;">(lowercase letters, numbers and underscore only)</span>
-            <input type="text" id="edit_player_nickname" required>
-          </label>
-          <button type="submit" class="secondary">Request change</button>
-        </form>
-        <div id="edit-player-result" class="result"></div>
-      </div>
 
       <div class="card">
         <h2>Delete a player</h2>
@@ -1237,15 +1228,40 @@
 
     <div class="tab-panel" id="tab-review">
       <div class="card">
-        <h2>Match Review &amp; Reorder</h2>
-        <p class="card-sub">Matches count in timestamp order, which sets every Elo change. If a match was logged out of sequence, pick its day, drag the rows into the real order, and apply - the timestamps swap among that day's matches and all ratings recompute. This rewrites history, so it's SuperAdmin-only.</p>
-        <label>Day
-          <input type="date" id="review-date">
-        </label>
-        <button type="button" id="review-load-btn" class="secondary">Load that day's matches</button>
-        <p id="review-status" style="font-size:13px; margin-top:8px;"></p>
-        <ul id="review-list" style="list-style:none; padding:0; margin:14px 0;"></ul>
-        <button type="button" id="review-apply-btn" style="display:none;">Apply new order &amp; recompute</button>
+        <h2>Access Reviews &amp; Approvals</h2>
+        <p class="card-sub">Everything that needs an admin decision, in one place. Click a section to expand it.</p>
+
+        <details class="review-section" open>
+          <summary>Claim &amp; change requests <span id="review-requests-count" class="review-badge"></span></summary>
+          <div style="padding:10px 0;">
+            <button class="secondary" type="button" style="margin:0 0 8px; padding:4px 10px; font-size:12px;" onclick="loadClaimRequests()">Refresh</button>
+            <p class="card-sub" style="margin:0 0 10px;">People asking to claim a profile, create one, rename, get finance access, or edit/delete a match.</p>
+            <div id="settings-requests-list" style="font-size:13px;"></div>
+          </div>
+        </details>
+
+        <details class="review-section">
+          <summary>Finance access</summary>
+          <div style="padding:10px 0;">
+            <button class="secondary" type="button" style="margin:0 0 8px; padding:4px 10px; font-size:12px;" onclick="loadFinanceAccessList()">Refresh</button>
+            <p class="card-sub" style="margin:0 0 10px;">Who can view the Finance tab, and at what level. You always have full access.</p>
+            <div id="settings-finance-list" style="font-size:13px;"></div>
+          </div>
+        </details>
+
+        <details class="review-section">
+          <summary>Match reorder</summary>
+          <div style="padding:10px 0;">
+            <p class="card-sub" style="margin:0 0 10px;">Matches count in timestamp order, which sets every Elo change. Pick a day this week, drag rows into the real order, and apply - timestamps swap and ratings recompute. Past weeks are settled and locked.</p>
+            <label>Day
+              <input type="date" id="review-date">
+            </label>
+            <button type="button" id="review-load-btn" class="secondary">Load that day's matches</button>
+            <p id="review-status" style="font-size:13px; margin-top:8px;"></p>
+            <ul id="review-list" style="list-style:none; padding:0; margin:14px 0;"></ul>
+            <button type="button" id="review-apply-btn" style="display:none;">Apply new order &amp; recompute</button>
+          </div>
+        </details>
       </div>
     </div>
 
@@ -3077,11 +3093,9 @@
       // No linked player means nothing to customise - update-my-card
       // would 403 anyway, so don't offer the controls.
       document.getElementById('settings-cosmetics').style.display = me ? 'block' : 'none';
-      const requestsSection = document.getElementById('settings-requests-section');
-      requestsSection.style.display = isSuperAdmin() ? 'block' : 'none';
-      if (isSuperAdmin()) loadClaimRequests();
-      document.getElementById('settings-finance-section').style.display = isSuperAdmin() ? 'block' : 'none';
-      if (isSuperAdmin()) loadFinanceAccessList();
+      // The approval sections (requests, finance access) moved to the
+      // Reviews & Approvals tab, so nothing to load here anymore.
+      prefillEditForm();
     }
 
     async function loadFinanceAccessList() {
@@ -3210,6 +3224,8 @@
         const { res, data, error } = await authedFetch(`${API_BASE_URL}/claim-requests`);
         if (!res.ok) { listEl.textContent = `Error: ${error}`; return; }
         const pending = data.pending || [];
+        const badge = document.getElementById('review-requests-count');
+        if (badge) badge.textContent = pending.length ? String(pending.length) : '';
         if (!pending.length) {
           listEl.innerHTML = '<p class="card-sub" style="margin:0;">No requests waiting.</p>';
           return;
@@ -6823,6 +6839,13 @@
         // showing the key box. Only tried when it's still locked.
         if (btn.dataset.tab === 'matches' && typeof defaultMatchGroup === 'function') {
           defaultMatchGroup();
+        }
+        // The Reviews & Approvals tab is where claim/change requests and
+        // finance access now live - load them on open (SuperAdmin only, and
+        // the tab itself is hidden for everyone else).
+        if (btn.dataset.tab === 'review' && isSuperAdmin()) {
+          loadClaimRequests();
+          loadFinanceAccessList();
         }
         if (btn.dataset.tab === 'finance'
             && document.getElementById('finance-content').style.display !== 'block') {
