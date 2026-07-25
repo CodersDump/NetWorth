@@ -39,11 +39,48 @@ def get_group_member_ids(group_id):
     return set(group.get('member_ids', [])) if group else set()
 
 
+def _approve_closed_week_matches(matches, today):
+    """Marks every match whose week has fully closed as approved=True.
+
+    "Closed" means the match's day is before the current week's Monday - the
+    same boundary the reorder tool locks on, so a match becomes approved
+    exactly when it stops being reorderable. Runs over ALL matches every
+    time (skipping ones already flagged), not just "last week", so a missed
+    scheduler run or a first deploy over existing history self-heals rather
+    than leaving permanent gaps. Idempotent: re-running changes nothing once
+    everything eligible is flagged.
+    """
+    week_start = today - timedelta(days=today.weekday())  # this week's Monday
+    week_start_iso = week_start.isoformat()
+    stamped = 0
+    for m in matches:
+        if m.get('approved'):
+            continue
+        day = (m.get('date') or '')[:10]
+        if day and day < week_start_iso:
+            matches_table.update_item(
+                Key={'match_id': m['match_id']},
+                UpdateExpression='SET approved = :t, approved_at = :now',
+                ExpressionAttributeValues={
+                    ':t': True,
+                    ':now': datetime.now(timezone.utc).isoformat()
+                }
+            )
+            m['approved'] = True  # keep the in-memory copy consistent for later use this run
+            stamped += 1
+    return stamped
+
+
 def handler(event, context):
     today = datetime.now(timezone.utc).date()
     matches = matches_table.scan().get('Items', [])
     matches.sort(key=lambda m: m.get('date', ''))
     groups = groups_table.scan().get('Items', [])
+
+    # Freeze closed weeks: any match older than this week's Monday is settled
+    # and gets flagged approved. Self-healing and idempotent, so it runs on
+    # every invocation regardless of which period boundaries also close today.
+    approved_count = _approve_closed_week_matches(matches, today)
 
     periods_to_close = []
 
@@ -78,7 +115,7 @@ def handler(event, context):
             write_history_entry(scope_label, group_id, period_name, period_start.isoformat(), period_end.isoformat(), snapshot)
             closed.append(f"{scope_label}/{period_name}/{period_start.isoformat()}")
 
-    return {'statusCode': 200, 'body': f"Closed periods: {closed}"}
+    return {'statusCode': 200, 'body': f"Approved {approved_count} closed-week matches. Closed periods: {closed}"}
 
 
 def compute_period_snapshot(matches, period_start_dt, period_end_dt, member_ids=None):

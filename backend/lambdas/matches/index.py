@@ -261,6 +261,21 @@ def reorder_matches(event):
     if len(days) > 1:
         return _response(400, {'error': 'all matches in a reorder must be from the same day'})
 
+    # A day is reorderable for the whole current week (Monday-start). Once
+    # the week has passed the matches are settled - this stops history being
+    # quietly rewritten later and lines up with the weekly scheduler, which
+    # stamps closed-week matches as approved. Belt and braces: if any match
+    # in the set is already flagged approved, it's settled regardless of the
+    # date maths, so an explicitly-approved match can never be reordered.
+    if any(found[mid].get('approved') for mid in ordered_ids):
+        return _response(403, {'error': 'these matches have been approved for a closed week and can no longer be reordered'})
+    from datetime import datetime as _dt, timezone as _tz, timedelta as _td
+    day = next(iter(days))
+    now = _dt.now(_tz.utc)
+    week_start = (now - _td(days=now.weekday())).strftime('%Y-%m-%d')  # Monday
+    if day and day < week_start:
+        return _response(403, {'error': 'this week has closed - these matches are settled and can no longer be reordered'})
+
     # The pool of timestamps to redistribute, earliest first.
     timestamps = sorted(found[mid].get('date') for mid in ordered_ids)
 

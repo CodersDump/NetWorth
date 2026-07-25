@@ -3530,8 +3530,27 @@
         if (field === 'avatar_url' && value) patch.avatar_id = null;
         if (field === 'banner_url' && value) patch.banner_id = null;
         if (field === 'background_url' && value) patch.background_id = null;
+        // The server also prepends a new upload to its kept-list, but the
+        // local cache didn't mirror that - so the "your uploads" strip
+        // stayed empty until a full reload. Mirror it here: when a *_url is
+        // set to a real key, move it to the front of the matching *_uploads
+        // (deduped, capped at 3) exactly as the backend rotation does.
+        const uploadKinds = { avatar_url: 'avatar_uploads', banner_url: 'banner_uploads', background_url: 'background_uploads' };
+        if (uploadKinds[field] && value && idx >= 0) {
+          const listKey = uploadKinds[field];
+          const existing = (allPlayers[idx][listKey] || []).filter(k => k && k !== value);
+          patch[listKey] = [value, ...existing].slice(0, 3);
+        }
         if (idx >= 0) allPlayers[idx] = { ...allPlayers[idx], ...patch };
         const me = allPlayers[idx] || patch;
+
+        // Re-render the upload strips so the just-used image appears/highlights
+        // without waiting for the modal to be reopened.
+        if (typeof renderUploadStrip === 'function' && me) {
+          renderUploadStrip('avatar', me);
+          renderUploadStrip('banner', me);
+          renderUploadStrip('background', me);
+        }
 
         renderSettingsPickers(me);  // highlight the newly-selected preset
         if (document.getElementById('profile_player_select').value === myId) {
@@ -5012,7 +5031,9 @@
     // stays here, since those only ever run from event handlers, never
     // as immediately-executing top-level code.
     // ---------- Match Review & Reorder (SuperAdmin) ----------
-    let reviewMatches = [];  // the loaded day's matches, in current display order
+    let reviewMatches = [];       // the loaded day's matches, in current display order
+    let reviewOriginalIds = [];   // the order as loaded, to detect a no-op apply
+    let reviewLocked = false;      // a past day is settled - view only, no reorder
 
     async function loadReviewDay() {
       const statusEl = document.getElementById('review-status');
@@ -5022,54 +5043,107 @@
       if (!day) { statusEl.textContent = 'Pick a day first.'; return; }
       statusEl.textContent = 'Loading...';
       listEl.innerHTML = ''; applyBtn.style.display = 'none';
+
+      // A day stays editable for the whole current week (Monday-start), so
+      // late corrections within the week are still possible; once the week
+      // has passed, its matches are settled. This also lines up with the
+      // weekly scheduler, which can treat past weeks as auto-approved.
+      const now = new Date();
+      const dow = (now.getDay() + 6) % 7;               // 0 = Monday ... 6 = Sunday
+      const monday = new Date(now);
+      monday.setDate(now.getDate() - dow);
+      const weekStartStr = monday.toLocaleDateString('en-CA');  // YYYY-MM-DD, local
+      reviewLocked = day < weekStartStr;
+
       try {
         const res = await fetch(`${API_BASE_URL}/matches?date_from=${day}&date_to=${day}`);
         const data = await res.json();
         if (!res.ok) { statusEl.textContent = `Error: ${data.error}`; return; }
-        // Oldest first, so the list reads top-to-bottom as play order.
         reviewMatches = (data.matches || []).slice().sort((a, b) => (a.date || '').localeCompare(b.date || ''));
-        if (reviewMatches.length < 2) {
-          statusEl.textContent = reviewMatches.length ? 'Only one match that day - nothing to reorder.' : 'No matches that day.';
-          return;
+        reviewOriginalIds = reviewMatches.map(m => m.match_id);
+        if (!reviewMatches.length) { statusEl.textContent = 'No matches that day.'; return; }
+        // An approved match (stamped by the weekly scheduler once its week
+        // closed) is settled regardless of the date maths - honour the flag
+        // directly so the UI and the server agree.
+        if (reviewMatches.some(m => m.approved)) reviewLocked = true;
+        if (reviewLocked) {
+          statusEl.textContent = `${reviewMatches.length} matches - this was before the current week and is settled, so it can't be reordered.`;
+        } else if (reviewMatches.length < 2) {
+          statusEl.textContent = 'Only one match today - nothing to reorder.';
+        } else {
+          statusEl.textContent = `${reviewMatches.length} matches. Hold and drag a row to slide it into place, then apply.`;
+          applyBtn.style.display = 'inline-block';
         }
-        statusEl.textContent = `${reviewMatches.length} matches. Drag to reorder, then apply.`;
         renderReviewList();
-        applyBtn.style.display = 'inline-block';
       } catch (e) { statusEl.textContent = `Failed: ${e.message}`; }
+    }
+
+    // Whether the current visual order differs from what was loaded.
+    function reviewOrderChanged() {
+      const now = reviewMatches.map(m => m.match_id);
+      return now.length !== reviewOriginalIds.length
+        || now.some((id, i) => id !== reviewOriginalIds[i]);
     }
 
     function renderReviewList() {
       const listEl = document.getElementById('review-list');
       listEl.innerHTML = '';
+      const changed = reviewOrderChanged();
       reviewMatches.forEach((m, idx) => {
         const li = document.createElement('li');
-        li.draggable = true;
+        li.draggable = !reviewLocked;
         li.dataset.idx = idx;
-        li.style.cssText = 'display:flex; align-items:center; gap:10px; padding:10px 12px; margin:6px 0; border:1px solid var(--border); border-radius:8px; background:var(--surface-2); cursor:grab;';
+        li.style.cssText = `display:flex; align-items:center; gap:10px; padding:10px 12px; margin:6px 0; border:1px solid var(--border); border-radius:8px; background:var(--surface-2); ${reviewLocked ? '' : 'cursor:grab;'}`;
         const time = (m.date || '').slice(11, 19) || '';
         const teamA = playerLabelsById(m.team_a, m.team_a_names).join(' & ');
         const teamB = playerLabelsById(m.team_b, m.team_b_names).join(' & ');
-        li.innerHTML = `<span style="opacity:0.5; font-size:12px; min-width:64px;">${time}</span>
-          <span style="flex:1;">${escapeHtml(teamA)} <strong>${m.score_a}-${m.score_b}</strong> ${escapeHtml(teamB)}</span>
-          <span style="opacity:0.4;">⠿</span>`;
-        li.addEventListener('dragstart', e => { e.dataTransfer.setData('text/plain', idx); li.style.opacity = '0.4'; });
-        li.addEventListener('dragend', () => { li.style.opacity = ''; });
-        li.addEventListener('dragover', e => e.preventDefault());
-        li.addEventListener('drop', e => {
-          e.preventDefault();
-          const from = parseInt(e.dataTransfer.getData('text/plain'), 10);
-          const to = idx;
-          if (from === to) return;
-          const [moved] = reviewMatches.splice(from, 1);
-          reviewMatches.splice(to, 0, moved);
-          renderReviewList();
-        });
+        // A live position number, so the reordering is legible at a glance
+        // rather than having to read timestamps.
+        li.innerHTML =
+          `<span style="min-width:22px; height:22px; border-radius:50%; background:var(--court); color:#fff; font-size:12px; font-weight:700; display:flex; align-items:center; justify-content:center;">${idx + 1}</span>
+           <span style="opacity:0.5; font-size:12px; min-width:64px;">${time}</span>
+           <span style="flex:1;">${escapeHtml(teamA)} <strong>${m.score_a}-${m.score_b}</strong> ${escapeHtml(teamB)}</span>
+           ${reviewLocked ? '' : '<span style="opacity:0.4;">⠿</span>'}`;
+
+        if (!reviewLocked) {
+          li.addEventListener('dragstart', e => { e.dataTransfer.setData('text/plain', idx); li.style.opacity = '0.4'; });
+          li.addEventListener('dragend', () => { li.style.opacity = ''; });
+          li.addEventListener('dragover', e => {
+            e.preventDefault();
+            // Smooth "insert" behaviour: as the held row passes over another,
+            // slide it into that slot live (everything else shifts up/down)
+            // rather than only swapping two rows on drop.
+            const from = parseInt(e.dataTransfer.getData('text/plain') || reviewDragFrom, 10);
+            const to = idx;
+            if (isNaN(from) || from === to) return;
+            const [moved] = reviewMatches.splice(from, 1);
+            reviewMatches.splice(to, 0, moved);
+            reviewDragFrom = to;   // the held row is now at its new index
+            renderReviewList();
+          });
+          li.addEventListener('drop', e => e.preventDefault());
+        }
         listEl.appendChild(li);
       });
+
+      // Reflect whether there's anything to apply on the button itself.
+      const applyBtn = document.getElementById('review-apply-btn');
+      if (applyBtn && !reviewLocked) {
+        applyBtn.textContent = changed ? 'Apply new order & recompute' : 'Confirm order (no change)';
+      }
     }
+    let reviewDragFrom = null;  // index of the row currently being dragged
 
     async function applyReviewOrder() {
       const statusEl = document.getElementById('review-status');
+
+      // No change -> nothing to recompute. Just acknowledge; don't burn a
+      // full rating replay for an order that's already correct.
+      if (!reviewOrderChanged()) {
+        statusEl.textContent = 'Order confirmed - no change, so nothing was recomputed.';
+        return;
+      }
+
       if (!confirm('Apply this order?\n\nThe timestamps for this day\'s matches will be swapped to match, and every player\'s rating recomputed from scratch. This cannot be undone automatically.')) return;
       statusEl.textContent = 'Applying and recomputing...';
       try {
@@ -5079,12 +5153,13 @@
         });
         if (!res.ok) { statusEl.textContent = `Error: ${error}`; return; }
         statusEl.textContent = 'Done - order applied and ratings recomputed.';
-        loadReviewDay();  // reload to show the corrected times
+        loadReviewDay();  // reload to show the corrected times and reset the baseline
       } catch (e) { statusEl.textContent = `Failed: ${e.message}`; }
     }
 
     document.getElementById('review-load-btn').addEventListener('click', loadReviewDay);
     document.getElementById('review-apply-btn').addEventListener('click', applyReviewOrder);
+
 
     function updateAuthUI() {
       const statusEl = document.getElementById('auth-status');
