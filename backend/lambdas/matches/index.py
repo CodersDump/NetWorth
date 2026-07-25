@@ -254,6 +254,12 @@ def handler(event, context):
         if event.get('resource') == '/reorder-matches' and method == 'POST':
             return reorder_matches(event)
 
+        # SuperAdmin-triggered full recompute of ratings + XP + coins across
+        # all history. Handy after a manual data fix, and the way to backfill
+        # XP/levels onto players who predate the XP system.
+        if event.get('resource') == '/recompute' and method == 'POST':
+            return recompute_now(event)
+
         # Epic 7 extension: profile viewing is now genuinely restricted -
         # guests can't view any profile at all; logged-in members can only
         # view profiles of players sharing at least one group with them
@@ -278,6 +284,16 @@ def handler(event, context):
         return _response(404, {'error': 'not found'})
     except Exception as e:
         return _response(500, {'error': str(e)})
+
+
+def recompute_now(event):
+    """SuperAdmin-only: replay every match to rebuild ratings, XP, levels
+    and coin balances from scratch. Idempotent - safe to run any time."""
+    claims = _caller_claims(event)
+    if not _is_super_admin(claims):
+        return _response(403, {'error': 'only a SuperAdmin can trigger a recompute'})
+    recompute_all_ratings()
+    return _response(200, {'ok': True, 'note': 'Ratings, XP, levels and coins recomputed from full match history.'})
 
 
 def reorder_matches(event):

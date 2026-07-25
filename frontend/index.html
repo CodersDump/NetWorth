@@ -367,6 +367,7 @@
       <h1>NetWorth</h1>
     </div>
     <div style="display:flex; align-items:center; gap:10px; position:relative;">
+      <span id="header-coins" style="display:none; font-size:13px; font-weight:700; background:rgba(255,255,255,0.12); padding:3px 10px; border-radius:12px;" title="Your coin balance">🪙 <span id="header-coins-num">0</span></span>
       <span id="auth-status" style="font-size:13px; opacity:0.85;"></span>
       <button class="secondary" id="auth-login-btn" type="button">Log in</button>
       <button class="theme-toggle" id="header-menu-btn" type="button" onclick="toggleHeaderMenu()">&#9776;</button>
@@ -1120,6 +1121,7 @@
             </div>
             <div style="position:absolute; left:112px; bottom:10px; color:#fff; text-shadow:0 1px 3px rgba(0,0,0,0.5);">
               <div id="profile-banner-name" style="font-weight:700; font-size:16px;"></div>
+              <div id="profile-banner-level" style="font-size:12px; font-weight:600; opacity:0.9; display:none;"></div>
             </div>
           </div>
         </div>
@@ -1181,25 +1183,13 @@
       </div>
 
       <div class="card" id="profile-xp-card" style="display:none;">
-        <h2>Level &amp; XP <span style="font-size:12px; font-weight:normal; opacity:0.6;">(admin preview)</span></h2>
-        <div style="display:flex; align-items:center; gap:14px; margin-bottom:10px;">
-          <div id="profile-level-badge" style="min-width:56px; height:56px; border-radius:50%; background:var(--court); color:#fff; display:flex; flex-direction:column; align-items:center; justify-content:center; font-weight:800;">
-            <span style="font-size:10px; opacity:0.8; line-height:1;">LVL</span>
-            <span id="profile-level-num" style="font-size:20px; line-height:1.1;">1</span>
-          </div>
-          <div style="flex:1;">
-            <div style="display:flex; justify-content:space-between; font-size:12px; margin-bottom:3px;">
-              <span id="profile-xp-current">0 XP</span>
-              <span id="profile-xp-next" style="opacity:0.6;"></span>
-            </div>
-            <div style="height:10px; background:var(--surface-2); border-radius:5px; overflow:hidden;">
-              <div id="profile-xp-bar" style="height:100%; width:0%; background:linear-gradient(90deg, var(--court), #2FA968); transition:width 0.4s;"></div>
-            </div>
-          </div>
-          <div style="text-align:center;">
-            <div style="font-size:20px;">🪙</div>
-            <div id="profile-coins" style="font-weight:700;">0</div>
-          </div>
+        <h2>Level progress <span style="font-size:12px; font-weight:normal; opacity:0.6;">(admin preview)</span></h2>
+        <div style="display:flex; justify-content:space-between; font-size:12px; margin-bottom:3px;">
+          <span id="profile-xp-current">0 XP</span>
+          <span id="profile-xp-next" style="opacity:0.6;"></span>
+        </div>
+        <div style="height:12px; background:var(--surface-2); border-radius:6px; overflow:hidden;">
+          <div id="profile-xp-bar" style="height:100%; width:0%; background:linear-gradient(90deg, var(--court), #2FA968); transition:width 0.4s;"></div>
         </div>
       </div>
 
@@ -1281,6 +1271,15 @@
             </label>
             <p class="card-sub" style="margin:6px 0 0;">Off by default: a new sign-up's "create profile" goes to the request queue above. Turn on during a busy session so new people can start playing without waiting for you to approve each one. Claiming an existing profile always needs approval regardless.</p>
             <span id="app-instant-create-status" style="font-size:12px;"></span>
+          </div>
+        </details>
+
+        <details class="review-section">
+          <summary>Maintenance</summary>
+          <div style="padding:10px 0;">
+            <p class="card-sub" style="margin:0 0 8px;">Replays every match to rebuild ratings, XP, levels and coins from scratch. Use after a manual data fix, or to backfill XP onto players from before the XP system.</p>
+            <button type="button" class="secondary" onclick="recomputeNow()">Recompute all ratings &amp; XP</button>
+            <span id="recompute-status" style="font-size:12px; margin-left:8px;"></span>
           </div>
         </details>
 
@@ -3267,6 +3266,20 @@
       }
     }
 
+    async function recomputeNow() {
+      const statusEl = document.getElementById('recompute-status');
+      if (!confirm('Recompute all ratings, XP, levels and coins from the full match history? This is safe but may take a few seconds.')) return;
+      statusEl.textContent = 'Recomputing...';
+      try {
+        const { res, data, error } = await authedFetch(`${API_BASE_URL}/recompute`, { method: 'POST' });
+        if (!res.ok) { statusEl.textContent = `Error: ${error}`; return; }
+        statusEl.textContent = 'Done. Reloading players...';
+        await loadPlayers();
+        updateHeaderCoins();
+        statusEl.textContent = 'Done - ratings and XP rebuilt.';
+      } catch (e) { statusEl.textContent = `Failed: ${e.message}`; }
+    }
+
     async function loadAppSettings() {
       try {
         const res = await fetch(`${API_BASE_URL}/app-settings`);
@@ -3990,15 +4003,10 @@
       if (profileRatingChart) { profileRatingChart.destroy(); profileRatingChart = null; }
     }
 
-    /** Admin-only for now: shows a player's level, XP progress to the next
-     *  level, and coin balance. The curve mirrors the backend exactly
-     *  (total XP to reach level N = 5*N^2), so the bar fills between the
-     *  current level's threshold and the next one's. */
     function renderXpPanel(player) {
       const card = document.getElementById('profile-xp-card');
-      if (!card) return;
-      if (!isSuperAdmin() || !player) { card.style.display = 'none'; return; }
-      card.style.display = 'block';
+      const bannerLevel = document.getElementById('profile-banner-level');
+      if (!player) { if (card) card.style.display = 'none'; if (bannerLevel) bannerLevel.style.display = 'none'; return; }
 
       const xp = Number(player.xp || 0);
       const COEFF = 5;
@@ -4010,11 +4018,35 @@
       const span = Math.max(1, nextFloor - curFloor);
       const pct = Math.min(100, Math.round((into / span) * 100));
 
-      document.getElementById('profile-level-num').textContent = level;
+      // Level shows under the banner name for everyone viewing this card.
+      // (Admin-only gate stays on the detailed progress bar for now.)
+      if (bannerLevel) {
+        bannerLevel.textContent = `Level ${level}`;
+        bannerLevel.style.display = isSuperAdmin() ? 'block' : 'none';
+      }
+
+      // The XP progress bar stays admin-only during soft launch.
+      if (!card) return;
+      if (!isSuperAdmin()) { card.style.display = 'none'; return; }
+      card.style.display = 'block';
       document.getElementById('profile-xp-current').textContent = `${xp.toLocaleString()} XP`;
       document.getElementById('profile-xp-next').textContent = `${(nextFloor - xp).toLocaleString()} to level ${level + 1}`;
       document.getElementById('profile-xp-bar').style.width = `${pct}%`;
-      document.getElementById('profile-coins').textContent = Number(player.coins || 0).toLocaleString();
+    }
+
+    /** The coin chip in the header shows ONLY the logged-in user's own
+     *  balance - never anyone else's, even when viewing their card. Private
+     *  by design. Admin-gated during soft launch like the rest of the XP UI. */
+    function updateHeaderCoins() {
+      const chip = document.getElementById('header-coins');
+      if (!chip) return;
+      const me = allPlayers.find(p => p.player_id === myPlayerId());
+      if (me && isSuperAdmin()) {
+        document.getElementById('header-coins-num').textContent = Number(me.coins || 0).toLocaleString();
+        chip.style.display = 'inline-block';
+      } else {
+        chip.style.display = 'none';
+      }
     }
 
     async function loadProfile() {
@@ -5285,6 +5317,7 @@
       // hidden entirely for everyone else rather than just disabled.
       const reviewBtn = document.getElementById('review-tab-btn');
       if (reviewBtn) reviewBtn.style.display = isSuperAdmin() ? '' : 'none';
+      if (typeof updateHeaderCoins === 'function') updateHeaderCoins();
 
       // Epic 7: guests see a login prompt instead of the match/tournament
       // creation forms - genuinely enforced server-side too, this is just
