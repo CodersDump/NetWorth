@@ -127,6 +127,11 @@ def list_players():
             'avatar_uploads': i.get('avatar_uploads') or [],
             'banner_uploads': i.get('banner_uploads') or [],
             'background_uploads': i.get('background_uploads') or [],
+            # The admin finance dropdown reads this to show the current role.
+            # Without it, a player set to 'view' read back as 'none' because
+            # setting finance_role clears the legacy finance_access boolean,
+            # leaving the client with nothing to key off.
+            'finance_role': i.get('finance_role') or ('write' if i.get('finance_access') else 'none'),
             'claimed': bool(i.get('email'))  # signal only, never the actual email - that stays private
         }
         for i in items
