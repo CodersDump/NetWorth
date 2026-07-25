@@ -194,6 +194,11 @@ def handler(event, context):
         if event.get('resource') == '/record-match' and method == 'POST':
             return record_match_enforced(event)
 
+        # Reorder a single day's matches by swapping their timestamps, then
+        # replay ratings. SuperAdmin only - it rewrites history.
+        if event.get('resource') == '/reorder-matches' and method == 'POST':
+            return reorder_matches(event)
+
         # Epic 7 extension: profile viewing is now genuinely restricted -
         # guests can't view any profile at all; logged-in members can only
         # view profiles of players sharing at least one group with them
@@ -218,6 +223,59 @@ def handler(event, context):
         return _response(404, {'error': 'not found'})
     except Exception as e:
         return _response(500, {'error': str(e)})
+
+
+def reorder_matches(event):
+    """Reorders a set of matches by reassigning their timestamps.
+
+    The client sends match_ids in the desired order. We take the set of
+    timestamps those matches currently hold, sort them, and hand them back
+    out in the new order - so match now-first gets the earliest of the
+    day's times, and so on. This keeps every timestamp within the same day
+    (they're just permuted among that day's matches), then replays every
+    rating from scratch in the corrected order.
+
+    Only a SuperAdmin may do this: reordering silently rewrites every
+    player's rating from the earliest changed match onward.
+    """
+    claims = _caller_claims(event)
+    if not _is_super_admin(claims):
+        return _response(403, {'error': 'only a SuperAdmin can reorder matches'})
+
+    body = json.loads(event.get('body') or '{}')
+    ordered_ids = body.get('match_ids') or []
+    if len(ordered_ids) < 2:
+        return _response(400, {'error': 'need at least two matches to reorder'})
+
+    # Fetch exactly these matches.
+    found = {}
+    for mid in ordered_ids:
+        item = matches_table.get_item(Key={'match_id': mid}).get('Item')
+        if not item:
+            return _response(404, {'error': f'match {mid} not found'})
+        found[mid] = item
+
+    # Guard: they must all be the same calendar day. Reordering across days
+    # is almost never intended and is where months of ratings get nuked.
+    days = {(found[mid].get('date') or '')[:10] for mid in ordered_ids}
+    if len(days) > 1:
+        return _response(400, {'error': 'all matches in a reorder must be from the same day'})
+
+    # The pool of timestamps to redistribute, earliest first.
+    timestamps = sorted(found[mid].get('date') for mid in ordered_ids)
+
+    # Assign the earliest time to the match the admin put first, etc.
+    for new_time, mid in zip(timestamps, ordered_ids):
+        if found[mid].get('date') != new_time:
+            matches_table.update_item(
+                Key={'match_id': mid},
+                UpdateExpression='SET #d = :d',
+                ExpressionAttributeNames={'#d': 'date'},
+                ExpressionAttributeValues={':d': new_time}
+            )
+
+    recompute_all_ratings()
+    return _response(200, {'reordered': len(ordered_ids)})
 
 
 def record_match(event):

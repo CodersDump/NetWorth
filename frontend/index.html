@@ -549,6 +549,7 @@
     <button class="tab-btn" data-tab="stats">Stats</button>
     <button class="tab-btn" data-tab="finance">Finance</button>
     <button class="tab-btn" data-tab="profile">Player Card</button>
+    <button class="tab-btn" data-tab="review" id="review-tab-btn" style="display:none;">Match Review</button>
   </nav>
 
   <div class="app-shell">
@@ -1230,6 +1231,21 @@
         <p id="profile-streak-line" style="font-size:14px; margin:0 0 12px;"></p>
         <div id="profile-achievements-result" class="achievement-grid"></div>
       </div>
+      </div>
+    </div>
+
+
+    <div class="tab-panel" id="tab-review">
+      <div class="card">
+        <h2>Match Review &amp; Reorder</h2>
+        <p class="card-sub">Matches count in timestamp order, which sets every Elo change. If a match was logged out of sequence, pick its day, drag the rows into the real order, and apply - the timestamps swap among that day's matches and all ratings recompute. This rewrites history, so it's SuperAdmin-only.</p>
+        <label>Day
+          <input type="date" id="review-date">
+        </label>
+        <button type="button" id="review-load-btn" class="secondary">Load that day's matches</button>
+        <p id="review-status" style="font-size:13px; margin-top:8px;"></p>
+        <ul id="review-list" style="list-style:none; padding:0; margin:14px 0;"></ul>
+        <button type="button" id="review-apply-btn" style="display:none;">Apply new order &amp; recompute</button>
       </div>
     </div>
 
@@ -2790,14 +2806,11 @@
         const labeledVisible = visible.map(p => ({
           ...p, label: `${formatPlayerLabel(p.name, p.nickname)} (${p.rating})`
         }));
-        // created_by only comes back for SuperAdmin, and it's the whole
-        // point of the audit trail - surface it where the roster is
-        // actually browsed rather than making it a DynamoDB lookup.
-        if (isSuperAdmin()) {
-          labeledVisible.forEach(p => {
-            if (p.created_by) p.label += ` - added by ${p.created_by}`;
-          });
-        }
+        // Note: the "added by <email>" audit tag used to be appended here
+        // for SuperAdmins, but this is the Player Card picker - a viewing
+        // control, not an admin one - so the extra text just cluttered
+        // every option. The audit trail still lives on the record and in
+        // the request queue; it doesn't belong in this dropdown.
         // Capture whatever's currently selected BEFORE repopulating (e.g.
         // from a display-mode toggle re-render) so re-populating the
         // options doesn't silently yank the view back to your own card
@@ -4998,10 +5011,90 @@
     // Everything else auth-related (login/signup/logout flows, the modal)
     // stays here, since those only ever run from event handlers, never
     // as immediately-executing top-level code.
+    // ---------- Match Review & Reorder (SuperAdmin) ----------
+    let reviewMatches = [];  // the loaded day's matches, in current display order
+
+    async function loadReviewDay() {
+      const statusEl = document.getElementById('review-status');
+      const listEl = document.getElementById('review-list');
+      const applyBtn = document.getElementById('review-apply-btn');
+      const day = document.getElementById('review-date').value;
+      if (!day) { statusEl.textContent = 'Pick a day first.'; return; }
+      statusEl.textContent = 'Loading...';
+      listEl.innerHTML = ''; applyBtn.style.display = 'none';
+      try {
+        const res = await fetch(`${API_BASE_URL}/matches?date_from=${day}&date_to=${day}`);
+        const data = await res.json();
+        if (!res.ok) { statusEl.textContent = `Error: ${data.error}`; return; }
+        // Oldest first, so the list reads top-to-bottom as play order.
+        reviewMatches = (data.matches || []).slice().sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+        if (reviewMatches.length < 2) {
+          statusEl.textContent = reviewMatches.length ? 'Only one match that day - nothing to reorder.' : 'No matches that day.';
+          return;
+        }
+        statusEl.textContent = `${reviewMatches.length} matches. Drag to reorder, then apply.`;
+        renderReviewList();
+        applyBtn.style.display = 'inline-block';
+      } catch (e) { statusEl.textContent = `Failed: ${e.message}`; }
+    }
+
+    function renderReviewList() {
+      const listEl = document.getElementById('review-list');
+      listEl.innerHTML = '';
+      reviewMatches.forEach((m, idx) => {
+        const li = document.createElement('li');
+        li.draggable = true;
+        li.dataset.idx = idx;
+        li.style.cssText = 'display:flex; align-items:center; gap:10px; padding:10px 12px; margin:6px 0; border:1px solid var(--border); border-radius:8px; background:var(--surface-2); cursor:grab;';
+        const time = (m.date || '').slice(11, 19) || '';
+        const teamA = playerLabelsById(m.team_a, m.team_a_names).join(' & ');
+        const teamB = playerLabelsById(m.team_b, m.team_b_names).join(' & ');
+        li.innerHTML = `<span style="opacity:0.5; font-size:12px; min-width:64px;">${time}</span>
+          <span style="flex:1;">${escapeHtml(teamA)} <strong>${m.score_a}-${m.score_b}</strong> ${escapeHtml(teamB)}</span>
+          <span style="opacity:0.4;">⠿</span>`;
+        li.addEventListener('dragstart', e => { e.dataTransfer.setData('text/plain', idx); li.style.opacity = '0.4'; });
+        li.addEventListener('dragend', () => { li.style.opacity = ''; });
+        li.addEventListener('dragover', e => e.preventDefault());
+        li.addEventListener('drop', e => {
+          e.preventDefault();
+          const from = parseInt(e.dataTransfer.getData('text/plain'), 10);
+          const to = idx;
+          if (from === to) return;
+          const [moved] = reviewMatches.splice(from, 1);
+          reviewMatches.splice(to, 0, moved);
+          renderReviewList();
+        });
+        listEl.appendChild(li);
+      });
+    }
+
+    async function applyReviewOrder() {
+      const statusEl = document.getElementById('review-status');
+      if (!confirm('Apply this order?\n\nThe timestamps for this day\'s matches will be swapped to match, and every player\'s rating recomputed from scratch. This cannot be undone automatically.')) return;
+      statusEl.textContent = 'Applying and recomputing...';
+      try {
+        const { res, error } = await authedFetch(`${API_BASE_URL}/reorder-matches`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ match_ids: reviewMatches.map(m => m.match_id) })
+        });
+        if (!res.ok) { statusEl.textContent = `Error: ${error}`; return; }
+        statusEl.textContent = 'Done - order applied and ratings recomputed.';
+        loadReviewDay();  // reload to show the corrected times
+      } catch (e) { statusEl.textContent = `Failed: ${e.message}`; }
+    }
+
+    document.getElementById('review-load-btn').addEventListener('click', loadReviewDay);
+    document.getElementById('review-apply-btn').addEventListener('click', applyReviewOrder);
+
     function updateAuthUI() {
       const statusEl = document.getElementById('auth-status');
       const loginBtn = document.getElementById('auth-login-btn');
       const logoutBtn = document.getElementById('auth-logout-btn');
+
+      // The reorder tool rewrites rating history, so it's SuperAdmin-only -
+      // hidden entirely for everyone else rather than just disabled.
+      const reviewBtn = document.getElementById('review-tab-btn');
+      if (reviewBtn) reviewBtn.style.display = isSuperAdmin() ? '' : 'none';
 
       // Epic 7: guests see a login prompt instead of the match/tournament
       // creation forms - genuinely enforced server-side too, this is just
