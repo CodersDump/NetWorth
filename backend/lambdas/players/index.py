@@ -67,6 +67,14 @@ def handler(event, context):
             return get_app_settings(event)
         if event.get('resource') == '/app-settings' and method == 'POST':
             return set_app_setting(event)
+        if event.get('resource') == '/store' and method == 'GET':
+            return list_store(event)
+        if event.get('resource') == '/store' and method == 'POST':
+            return save_store_item(event)
+        if event.get('resource') == '/store' and method == 'DELETE':
+            return delete_store_item(event)
+        if event.get('resource') == '/store-purchase' and method == 'POST':
+            return purchase_store_item(event)
         if method == 'GET' and not player_id:
             return list_players()
         elif method == 'PUT' and player_id:
@@ -116,7 +124,7 @@ def lookup_email_for_login(identifier):
 def list_players():
     items = table.scan().get('Items', [])
     # The reserved app-settings row lives in this table but isn't a player.
-    items = [i for i in items if i.get('player_id') != _APP_SETTINGS_ID]
+    items = [i for i in items if i.get('player_id') not in (_APP_SETTINGS_ID, _STORE_CATALOG_ID)]
     players = [
         {
             'player_id': i['player_id'],
@@ -128,6 +136,7 @@ def list_players():
             'xp': int(i.get('xp', 0) or 0),
             'level': int(i.get('level', 1) or 1),
             'coins': int(i.get('coins', 0) or 0),
+            'owned_items': i.get('owned_items') or {},
             'avatar_id': i.get('avatar_id'),
             'banner_id': i.get('banner_id'),
             'background_id': i.get('background_id'),
@@ -438,6 +447,7 @@ def _create_new_profile_request(claims, body):
 
 # ---------- app-wide settings (single reserved row in the players table) ----------
 _APP_SETTINGS_ID = '__app_settings__'
+_STORE_CATALOG_ID = '__store_catalog__'
 
 def _get_app_setting(key, default=False):
     """App-wide flags live in one reserved row of the players table, keyed
@@ -468,6 +478,112 @@ def set_app_setting(event):
         ExpressionAttributeValues={':v': bool(body.get('value'))}
     )
     return _response(200, {key: bool(body.get('value'))})
+
+
+# ---------- store: catalog, purchase, inventory ----------
+# The catalog lives in one reserved row. Each item: item_id, name, type
+# ('cosmetic' | 'perk'), cost (coins), and a small payload describing what it
+# grants (e.g. an avatar frame id, or 'rename_token'). Purchases deduct coins
+# by bumping the player's coins_spent (which the recompute preserves) and add
+# the item to their owned list. Perks like rename tokens are consumable.
+_STORE_ITEM_TYPES = ('cosmetic', 'perk')
+
+def _load_catalog():
+    item = table.get_item(Key={'player_id': _STORE_CATALOG_ID}).get('Item') or {}
+    return item.get('items', [])
+
+
+def list_store(event):
+    """Public read - anyone can browse the store. Returns the catalog."""
+    items = _load_catalog()
+    return _response(200, {'items': items})
+
+
+def save_store_item(event):
+    claims = _caller_claims(event)
+    if not _is_super_admin(claims):
+        return _response(403, {'error': 'only a SuperAdmin can manage the store'})
+    body = json.loads(event.get('body') or '{}')
+    name = (body.get('name') or '').strip()
+    itype = body.get('type')
+    if not name:
+        return _response(400, {'error': 'name is required'})
+    if itype not in _STORE_ITEM_TYPES:
+        return _response(400, {'error': f'type must be one of {_STORE_ITEM_TYPES}'})
+    try:
+        cost = int(body.get('cost'))
+    except (TypeError, ValueError):
+        return _response(400, {'error': 'cost must be a whole number of coins'})
+    if cost < 0:
+        return _response(400, {'error': 'cost cannot be negative'})
+
+    items = _load_catalog()
+    iid = body.get('item_id') or str(uuid.uuid4())
+    row = {'item_id': iid, 'name': name, 'type': itype, 'cost': cost,
+           'payload': body.get('payload') or {},
+           'active': bool(body.get('active', True))}
+    items = [i for i in items if i.get('item_id') != iid]
+    items.append(row)
+    table.put_item(Item={'player_id': _STORE_CATALOG_ID, 'items': items})
+    return _response(200, {'item': row})
+
+
+def delete_store_item(event):
+    claims = _caller_claims(event)
+    if not _is_super_admin(claims):
+        return _response(403, {'error': 'only a SuperAdmin can manage the store'})
+    body = json.loads(event.get('body') or '{}')
+    iid = body.get('item_id')
+    if not iid:
+        return _response(400, {'error': 'item_id is required'})
+    items = [i for i in _load_catalog() if i.get('item_id') != iid]
+    table.put_item(Item={'player_id': _STORE_CATALOG_ID, 'items': items})
+    return _response(200, {'ok': True})
+
+
+def purchase_store_item(event):
+    """A player spends coins on an item. Coins are deducted by bumping
+    coins_spent (preserved across recompute); the item is added to their
+    owned inventory. Consumable perks (rename tokens) can be bought
+    repeatedly and stack as a count."""
+    claims = _caller_claims(event)
+    pid = claims.get('custom:player_id')
+    if not pid:
+        return _response(403, {'error': 'link a profile before buying'})
+    player = table.get_item(Key={'player_id': pid}).get('Item')
+    if not player:
+        return _response(404, {'error': 'player not found'})
+
+    body = json.loads(event.get('body') or '{}')
+    iid = body.get('item_id')
+    item = next((i for i in _load_catalog() if i.get('item_id') == iid), None)
+    if not item or not item.get('active', True):
+        return _response(404, {'error': 'item not available'})
+
+    cost = int(item.get('cost', 0))
+    balance = int(player.get('coins', 0) or 0)
+    if balance < cost:
+        return _response(400, {'error': f'not enough coins - need {cost}, you have {balance}'})
+
+    owned = player.get('owned_items') or {}
+    is_perk = item.get('type') == 'perk'
+    # Cosmetics are owned once; perks stack as a consumable count.
+    if not is_perk and iid in owned:
+        return _response(400, {'error': 'you already own this'})
+
+    new_spent = int(player.get('coins_spent', 0) or 0) + cost
+    new_balance = balance - cost
+    if is_perk:
+        owned[iid] = int(owned.get(iid, 0) or 0) + 1
+    else:
+        owned[iid] = True
+
+    table.update_item(
+        Key={'player_id': pid},
+        UpdateExpression='SET coins = :c, coins_spent = :cs, owned_items = :o',
+        ExpressionAttributeValues={':c': new_balance, ':cs': new_spent, ':o': owned}
+    )
+    return _response(200, {'ok': True, 'coins': new_balance, 'owned_items': owned})
 
 
 def _create_edit_name_request(claims, body):

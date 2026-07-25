@@ -558,6 +558,7 @@
     <button class="tab-btn" data-tab="stats">Stats</button>
     <button class="tab-btn" data-tab="finance">Finance</button>
     <button class="tab-btn" data-tab="profile">Player Card</button>
+    <button class="tab-btn" data-tab="store" id="store-tab-btn" style="display:none;">Store</button>
     <button class="tab-btn" data-tab="review" id="review-tab-btn" style="display:none;">Reviews &amp; Approvals</button>
   </nav>
 
@@ -1096,6 +1097,15 @@
       </div>
     </div>
 
+    <div class="tab-panel" id="tab-store">
+      <div class="card">
+        <h2>Store <span style="font-size:12px; font-weight:normal; opacity:0.6;">(admin preview)</span></h2>
+        <p class="card-sub">Spend the coins you earn levelling up. Cosmetics are yours once bought; perks like rename tokens can be bought again.</p>
+        <p style="font-size:14px; margin:8px 0;">Your balance: <strong id="store-balance">0</strong> 🪙</p>
+        <div id="store-items" style="display:grid; grid-template-columns:repeat(auto-fill,minmax(200px,1fr)); gap:12px; margin-top:12px;"></div>
+      </div>
+    </div>
+
     <div class="tab-panel" id="tab-profile">
       <div class="card" id="profile-guest-notice" style="display:none;">
         <h2>Player Card</h2>
@@ -1271,6 +1281,26 @@
             </label>
             <p class="card-sub" style="margin:6px 0 0;">Off by default: a new sign-up's "create profile" goes to the request queue above. Turn on during a busy session so new people can start playing without waiting for you to approve each one. Claiming an existing profile always needs approval regardless.</p>
             <span id="app-instant-create-status" style="font-size:12px;"></span>
+          </div>
+        </details>
+
+        <details class="review-section">
+          <summary>Store catalog</summary>
+          <div style="padding:10px 0;">
+            <p class="card-sub" style="margin:0 0 10px;">Items players buy with coins. Cosmetics are owned once; perks (like rename tokens) can be re-bought.</p>
+            <div id="store-admin-list" style="font-size:13px; margin-bottom:12px;"></div>
+            <div style="border-top:1px solid var(--border); padding-top:10px;">
+              <p style="font-size:13px; font-weight:600; margin:0 0 6px;">Add an item</p>
+              <label>Name <input type="text" id="store-item-name" placeholder="Gold Avatar Frame"></label>
+              <div class="row">
+                <div><label>Type
+                  <select id="store-item-type"><option value="cosmetic">Cosmetic</option><option value="perk">Perk</option></select>
+                </label></div>
+                <div><label>Cost (coins) <input type="number" id="store-item-cost" min="0" step="10" placeholder="80"></label></div>
+              </div>
+              <button type="button" class="secondary" onclick="saveStoreItem()">Add item</button>
+              <span id="store-save-status" style="font-size:12px; margin-left:8px;"></span>
+            </div>
           </div>
         </details>
 
@@ -3321,6 +3351,103 @@
       } catch (e) { statusEl.textContent = `Failed: ${e.message}`; }
     }
 
+    // ---------- Store ----------
+    async function loadStore() {
+      const grid = document.getElementById('store-items');
+      const balEl = document.getElementById('store-balance');
+      if (!grid) return;
+      const me = allPlayers.find(p => p.player_id === myPlayerId());
+      const balance = me ? Number(me.coins || 0) : 0;
+      const owned = (me && me.owned_items) || {};
+      if (balEl) balEl.textContent = balance.toLocaleString();
+      grid.innerHTML = 'Loading...';
+      try {
+        const res = await fetch(`${API_BASE_URL}/store`);
+        const data = await res.json();
+        const items = (data.items || []).filter(i => i.active !== false);
+        if (!items.length) { grid.innerHTML = '<p class="card-sub">Nothing in the store yet.</p>'; return; }
+        grid.innerHTML = items.map(i => {
+          const ownsIt = owned[i.item_id];
+          const isPerk = i.type === 'perk';
+          const canAfford = balance >= i.cost;
+          let btn;
+          if (!isPerk && ownsIt) {
+            btn = `<button class="secondary" disabled style="width:100%; opacity:0.6;">Owned</button>`;
+          } else {
+            const label = isPerk && ownsIt ? `Buy again (own ${ownsIt})` : 'Buy';
+            btn = `<button ${canAfford ? '' : 'disabled'} style="width:100%; ${canAfford ? '' : 'opacity:0.5;'}" onclick="buyStoreItem('${i.item_id}')">${label} — ${i.cost} 🪙</button>`;
+          }
+          return `<div style="border:1px solid var(--border); border-radius:10px; padding:14px; background:var(--surface-2);">
+            <div style="font-weight:700; margin-bottom:4px;">${escapeHtml(i.name)}</div>
+            <div style="font-size:11px; text-transform:uppercase; opacity:0.6; margin-bottom:10px;">${i.type}</div>
+            ${btn}
+          </div>`;
+        }).join('');
+      } catch (e) { grid.innerHTML = 'Could not load the store.'; }
+    }
+
+    async function buyStoreItem(itemId) {
+      if (!confirm('Spend coins on this item?')) return;
+      try {
+        const { res, data, error } = await authedFetch(`${API_BASE_URL}/store-purchase`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ item_id: itemId })
+        });
+        if (!res.ok) { alert(`Error: ${error}`); return; }
+        await loadPlayers();          // refresh coin balance + owned
+        updateHeaderCoins();
+        loadStore();
+      } catch (e) { alert(`Failed: ${e.message}`); }
+    }
+
+    // Admin catalog management (in Reviews & Approvals)
+    async function loadStoreAdmin() {
+      const listEl = document.getElementById('store-admin-list');
+      if (!listEl) return;
+      try {
+        const res = await fetch(`${API_BASE_URL}/store`);
+        const data = await res.json();
+        const items = data.items || [];
+        if (!items.length) { listEl.innerHTML = '<p class="card-sub" style="margin:0;">No items yet.</p>'; return; }
+        listEl.innerHTML = items.map(i => `
+          <div style="display:flex; justify-content:space-between; align-items:center; padding:6px 0; border-bottom:1px solid var(--border);">
+            <span><strong>${escapeHtml(i.name)}</strong> — ${i.cost} 🪙 <span style="opacity:0.6;">(${i.type})</span></span>
+            <button class="secondary" style="margin:0; padding:2px 8px; font-size:11px;" onclick="deleteStoreItem('${i.item_id}')">Delete</button>
+          </div>`).join('');
+      } catch (e) { listEl.textContent = 'Could not load items.'; }
+    }
+
+    async function saveStoreItem() {
+      const statusEl = document.getElementById('store-save-status');
+      const body = {
+        name: document.getElementById('store-item-name').value.trim(),
+        type: document.getElementById('store-item-type').value,
+        cost: parseInt(document.getElementById('store-item-cost').value, 10)
+      };
+      if (!body.name || isNaN(body.cost)) { statusEl.textContent = 'Name and cost required.'; return; }
+      statusEl.textContent = 'Saving...';
+      try {
+        const { res, error } = await authedFetch(`${API_BASE_URL}/store`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+        });
+        if (!res.ok) { statusEl.textContent = `Error: ${error}`; return; }
+        statusEl.textContent = 'Saved.';
+        document.getElementById('store-item-name').value = '';
+        document.getElementById('store-item-cost').value = '';
+        loadStoreAdmin();
+      } catch (e) { statusEl.textContent = `Failed: ${e.message}`; }
+    }
+
+    async function deleteStoreItem(itemId) {
+      if (!confirm('Delete this store item? Players who already bought it keep it.')) return;
+      try {
+        const { res, error } = await authedFetch(`${API_BASE_URL}/store`, {
+          method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ item_id: itemId })
+        });
+        if (!res.ok) { alert(`Error: ${error}`); return; }
+        loadStoreAdmin();
+      } catch (e) { alert(`Failed: ${e.message}`); }
+    }
+
     async function loadEventsAdmin() {
       const listEl = document.getElementById('events-list');
       if (!listEl) return;
@@ -4989,7 +5116,18 @@
       if (!res.ok) { alert('Error: ' + data.error); return; }
       const prevYes = (data.memberships || []).filter(m => m.status === 'Yes');
       if (!prevYes.length) { alert(`No Yes members found for ${prevMonth} ${prevYear} ${slot}.`); return; }
-      const existingNames = new Set(lastMemberships.map(m => m.player_id || `name:${m.display_name}`));
+      // Dedup against the CURRENT month/slot as it actually is on the server
+      // right now - not against lastMemberships, which may still hold a
+      // different month/slot the user was viewing (that stale compare was
+      // making an empty target wrongly report "everyone's already here").
+      const curQs = finQS({ month, year, slot });
+      let currentMembers = [];
+      try {
+        const curRes = await fetch(`${financeBaseUrl()}/memberships?${curQs}`, { headers: getAuthHeaders() });
+        const curData = await curRes.json();
+        if (curRes.ok) currentMembers = curData.memberships || [];
+      } catch (_) { /* treat as empty target */ }
+      const existingNames = new Set(currentMembers.map(m => m.player_id || `name:${m.display_name}`));
       const toAdd = prevYes.filter(m => !existingNames.has(m.player_id || `name:${m.display_name}`));
       if (!toAdd.length) { alert('Everyone from last month is already on this month/slot.'); return; }
       if (!confirm(`Add ${toAdd.length} member(s) from ${prevMonth} ${prevYear} to ${month} ${year} ${slot}, status No (pending renewal)?`)) return;
@@ -5417,6 +5555,8 @@
       // hidden entirely for everyone else rather than just disabled.
       const reviewBtn = document.getElementById('review-tab-btn');
       if (reviewBtn) reviewBtn.style.display = isSuperAdmin() ? '' : 'none';
+      const storeBtn = document.getElementById('store-tab-btn');
+      if (storeBtn) storeBtn.style.display = isSuperAdmin() ? '' : 'none';
       if (typeof updateHeaderCoins === 'function') updateHeaderCoins();
 
       // Epic 7: guests see a login prompt instead of the match/tournament
@@ -7145,6 +7285,10 @@
           loadFinanceAccessList();
           loadAppSettings();
           loadEventsAdmin();
+          loadStoreAdmin();
+        }
+        if (btn.dataset.tab === 'store') {
+          loadStore();
         }
         if (btn.dataset.tab === 'finance'
             && document.getElementById('finance-content').style.display !== 'block') {
