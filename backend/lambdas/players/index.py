@@ -63,6 +63,10 @@ def handler(event, context):
             return list_claim_requests(event)
         if event.get('resource') == '/claim-request-decide' and method == 'POST':
             return decide_claim_request(event)
+        if event.get('resource') == '/app-settings' and method == 'GET':
+            return get_app_settings(event)
+        if event.get('resource') == '/app-settings' and method == 'POST':
+            return set_app_setting(event)
         if method == 'GET' and not player_id:
             return list_players()
         elif method == 'PUT' and player_id:
@@ -111,6 +115,8 @@ def lookup_email_for_login(identifier):
 
 def list_players():
     items = table.scan().get('Items', [])
+    # The reserved app-settings row lives in this table but isn't a player.
+    items = [i for i in items if i.get('player_id') != _APP_SETTINGS_ID]
     players = [
         {
             'player_id': i['player_id'],
@@ -118,6 +124,7 @@ def list_players():
             'nickname': i.get('nickname'),
             'skill_level': i.get('skill_level'),
             'rating': i.get('rating', 1000),
+            'previous_rating': i.get('previous_rating', i.get('rating', 1000)),
             'avatar_id': i.get('avatar_id'),
             'banner_id': i.get('banner_id'),
             'background_id': i.get('background_id'),
@@ -362,10 +369,16 @@ def create_action_request(event):
 
 
 def _create_new_profile_request(claims, body):
-    """Self-signup used to create a player outright, which instantly made
-    the signer-upper a 'member' - so gating anything on membership was
-    circular. Creating a brand new profile is now a request like any
-    other, and an account stays inert until someone approves it."""
+    """Creating a brand-new profile. By default this is a REQUEST an admin
+    approves - an account stays inert until then. A SuperAdmin can flip the
+    'instant_create' app setting to make it create-and-link immediately
+    instead (useful during a session when lots of new people are joining
+    and an admin doesn't want to approve each one).
+
+    Either way, if the chosen nickname already exists as an UNCLAIMED
+    profile, that's very likely the same person - we refuse and point them
+    at claiming it rather than making a duplicate history.
+    """
     if _linked_player_is_live(claims):
         return _response(400, {'error': 'your account is already linked to a player'})
 
@@ -375,9 +388,33 @@ def _create_new_profile_request(claims, body):
     nickname = sanitize_nickname(body.get('nickname') or '') or sanitize_nickname(name)
 
     existing = table.scan().get('Items', [])
-    if any((p.get('nickname') or '').strip().lower() == nickname for p in existing):
-        return _response(400, {'error': f'nickname "{nickname}" is already taken - pick another, or claim that profile instead'})
+    clash = next((p for p in existing
+                  if (p.get('nickname') or '').strip().lower() == nickname), None)
+    if clash:
+        if not clash.get('email'):
+            return _response(409, {
+                'error': f'A profile with nickname "{nickname}" already exists and looks like it could be you. Claim it instead of creating a new one.',
+                'suggest_claim_player_id': clash['player_id']
+            })
+        return _response(400, {'error': f'nickname "{nickname}" is already taken - pick another'})
 
+    # Instant path, only when a SuperAdmin has enabled it.
+    if _get_app_setting('instant_create'):
+        player_id = str(uuid.uuid4())
+        now = datetime.now(timezone.utc).isoformat()
+        table.put_item(Item={
+            'player_id': player_id,
+            'name': name,
+            'nickname': nickname,
+            'skill_level': 'intermediate',
+            'rating': 1000,
+            'email': claims.get('email'),
+            'created_at': now,
+            'created_by': claims.get('email')
+        })
+        return _response(200, {'player_id': player_id, 'name': name, 'nickname': nickname, 'linked': True})
+
+    # Default guarded path: file a request for admin approval.
     pending = claim_requests_table.scan().get('Items', [])
     if any(r.get('status') == 'pending' and r.get('requester_email') == claims.get('email') for r in pending):
         return _response(400, {'error': 'you already have a request waiting for approval'})
@@ -394,6 +431,40 @@ def _create_new_profile_request(claims, body):
         'created_at': datetime.now(timezone.utc).isoformat()
     })
     return _response(200, {'request_id': request_id, 'status': 'pending'})
+
+
+# ---------- app-wide settings (single reserved row in the players table) ----------
+_APP_SETTINGS_ID = '__app_settings__'
+
+def _get_app_setting(key, default=False):
+    """App-wide flags live in one reserved row of the players table, keyed
+    by a player_id that can never collide with a real UUID. Kept here rather
+    than a new table to avoid extra infra for what's just a handful of
+    booleans."""
+    item = table.get_item(Key={'player_id': _APP_SETTINGS_ID}).get('Item') or {}
+    return item.get(key, default)
+
+
+def get_app_settings(event):
+    item = table.get_item(Key={'player_id': _APP_SETTINGS_ID}).get('Item') or {}
+    return _response(200, {'instant_create': bool(item.get('instant_create', False))})
+
+
+def set_app_setting(event):
+    claims = _caller_claims(event)
+    if not _is_super_admin(claims):
+        return _response(403, {'error': 'only a SuperAdmin can change app settings'})
+    body = json.loads(event.get('body') or '{}')
+    key = body.get('key')
+    if key not in ('instant_create',):
+        return _response(400, {'error': 'unknown setting'})
+    table.update_item(
+        Key={'player_id': _APP_SETTINGS_ID},
+        UpdateExpression='SET #k = :v',
+        ExpressionAttributeNames={'#k': key},
+        ExpressionAttributeValues={':v': bool(body.get('value'))}
+    )
+    return _response(200, {key: bool(body.get('value'))})
 
 
 def _create_edit_name_request(claims, body):

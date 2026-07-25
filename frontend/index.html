@@ -1250,6 +1250,18 @@
         </details>
 
         <details class="review-section">
+          <summary>Onboarding settings</summary>
+          <div style="padding:10px 0;">
+            <label style="display:flex; align-items:center; gap:8px;">
+              <input type="checkbox" id="app-instant-create" style="width:auto;" onchange="setInstantCreate(this.checked)">
+              Let new players create a profile instantly (skip approval)
+            </label>
+            <p class="card-sub" style="margin:6px 0 0;">Off by default: a new sign-up's "create profile" goes to the request queue above. Turn on during a busy session so new people can start playing without waiting for you to approve each one. Claiming an existing profile always needs approval regardless.</p>
+            <span id="app-instant-create-status" style="font-size:12px;"></span>
+          </div>
+        </details>
+
+        <details class="review-section">
           <summary>Match reorder</summary>
           <div style="padding:10px 0;">
             <p class="card-sub" style="margin:0 0 10px;">Matches count in timestamp order, which sets every Elo change. Pick a day this week, drag rows into the real order, and apply - timestamps swap and ratings recompute. Past weeks are settled and locked.</p>
@@ -2778,10 +2790,25 @@
         if (!rankedPlayers.length) { resultEl.innerHTML = '<p style="font-size:13px;color:var(--text-secondary);">No players to rank.</p>'; return; }
 
         const sorted = [...rankedPlayers].sort((a, b) => Number(b.rating) - Number(a.rating));
-        let html = '<table><tr><th>#</th><th>Player</th><th>Rating</th></tr>';
+        // Rank each player a second time by their previous rating, so we can
+        // show whether they climbed or fell after their most recent match.
+        // Green up-arrow = moved up, red down = fell, dash = unchanged/new.
+        const prevSorted = [...rankedPlayers].sort((a, b) =>
+          Number(b.previous_rating ?? b.rating) - Number(a.previous_rating ?? a.rating));
+        const prevRankById = {};
+        prevSorted.forEach((p, i) => { prevRankById[p.player_id] = i; });
+
+        let html = '<table><tr><th>#</th><th></th><th>Player</th><th>Rating</th></tr>';
         sorted.forEach((p, idx) => {
           const label = formatPlayerLabel(p.name, p.nickname);
-          html += `<tr><td>${idx + 1}</td><td>${label}</td><td class="rating">${p.rating}</td></tr>`;
+          const prevRank = prevRankById[p.player_id];
+          let arrow = '<span style="color:var(--text-secondary);">–</span>';
+          if (prevRank !== undefined) {
+            const moved = prevRank - idx;  // positive = climbed
+            if (moved > 0) arrow = `<span style="color:#2FA968;" title="Up ${moved}">▲</span>`;
+            else if (moved < 0) arrow = `<span style="color:#d6403f;" title="Down ${-moved}">▼</span>`;
+          }
+          html += `<tr><td>${idx + 1}</td><td>${arrow}</td><td>${label}</td><td class="rating">${p.rating}</td></tr>`;
         });
         html += '</table>';
         resultEl.innerHTML = html;
@@ -3215,6 +3242,27 @@
       } else {
         el.textContent = 'Not approved yet. Check back once an admin has reviewed it.';
       }
+    }
+
+    async function loadAppSettings() {
+      try {
+        const res = await fetch(`${API_BASE_URL}/app-settings`);
+        const data = await res.json();
+        const cb = document.getElementById('app-instant-create');
+        if (cb) cb.checked = !!data.instant_create;
+      } catch (_) { /* leave unchecked */ }
+    }
+
+    async function setInstantCreate(value) {
+      const statusEl = document.getElementById('app-instant-create-status');
+      statusEl.textContent = 'Saving...';
+      try {
+        const { res, error } = await authedFetch(`${API_BASE_URL}/app-settings`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ key: 'instant_create', value })
+        });
+        statusEl.textContent = res.ok ? (value ? 'Instant create is ON.' : 'Instant create is OFF - new profiles need approval.') : `Error: ${error}`;
+      } catch (e) { statusEl.textContent = `Failed: ${e.message}`; }
     }
 
     async function loadClaimRequests() {
@@ -5274,12 +5322,19 @@
       }
     }
 
-    function openCompleteProfileModal() {
+    async function openCompleteProfileModal() {
       document.getElementById('complete-profile-modal').style.display = 'flex';
-      // Always land on the chooser. Defaulting to 'create' was half the
-      // problem - returning players were dropped straight into the
-      // new-profile form without being asked which they were.
-      showCompleteProfileMode('chooser');
+      // If there's nothing to claim, the chooser is a pointless extra step -
+      // send them straight to create-new. Otherwise show the chooser so a
+      // returning player can claim their existing history.
+      try {
+        const res = await fetch(`${API_BASE_URL}/players`);
+        const data = await res.json();
+        const hasClaimable = (data.players || []).some(p => !p.claimed);
+        showCompleteProfileMode(hasClaimable ? 'chooser' : 'create');
+      } catch (_) {
+        showCompleteProfileMode('chooser');  // on error, don't hide the option
+      }
     }
 
     function showCompleteProfileMode(mode, preselectPlayerId) {
@@ -5458,15 +5513,52 @@
       const proceed = await checkForExistingPlayer(name, nickname, statusEl);
       if (!proceed) return;
 
-      statusEl.textContent = 'Sending your request...';
+      statusEl.textContent = 'Creating your profile...';
 
       try {
-        const { res, error } = await authedFetch(`${API_BASE_URL}/action-request`, {
+        const { res, data, error } = await authedFetch(`${API_BASE_URL}/action-request`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ type: 'new_profile', name, nickname })
         });
+
+        // 409 = the nickname already exists as an unclaimed profile, which
+        // is probably this same person. Offer to claim it instead of
+        // creating a duplicate history.
+        if (res.status === 409 && data && data.suggest_claim_player_id) {
+          statusEl.textContent = '';
+          const claimIt = confirm(`${data.error}\n\nClaim that existing profile instead?`);
+          if (claimIt) { showCompleteProfileMode('claim', data.suggest_claim_player_id); }
+          return;
+        }
         if (!res.ok) { statusEl.textContent = `Error: ${error}`; return; }
+
+        // Instant create: the profile is made and linked to this account
+        // server-side, so link the token and log straight in - no approval,
+        // no sign-out. A brand-new name needs no admin check.
+        if (data && data.linked && data.player_id) {
+          statusEl.textContent = 'Profile created - logging you in...';
+          const cognitoUser = authSession.cognitoUser;
+          if (!cognitoUser) { location.reload(); return; }
+          cognitoUser.updateAttributes(
+            [new AmazonCognitoIdentity.CognitoUserAttribute({ Name: 'custom:player_id', Value: data.player_id })],
+            (err) => {
+              if (err) { statusEl.textContent = `Created, but linking failed: ${err.message}. Try logging out and back in.`; return; }
+              cognitoUser.getSession((sessionErr, session) => {
+                if (!sessionErr && session) {
+                  cognitoUser.refreshSession(session.getRefreshToken(), (refreshErr, newSession) => {
+                    if (!refreshErr && newSession) {
+                      setAuthSession(newSession, cognitoUser, { silent: true });
+                      closeCompleteProfileModal();
+                      location.reload();  // fresh page as the newly-linked player
+                    } else { location.reload(); }
+                  });
+                } else { location.reload(); }
+              });
+            });
+          return;
+        }
+        // Fallback (shouldn't happen now): treat as a request.
         finishRequestAndSignOut(`Thanks ${name} - your profile request has been sent to the admin.`);
         return;
       } catch (err) {
@@ -5538,6 +5630,10 @@
       userPool.signUp(email, password, attrs, null, (err) => {
         if (err) { statusEl.textContent = err.message; return; }
         document.getElementById('auth-confirm-code').dataset.email = email;
+        // Stash the password briefly so confirmation can log them straight
+        // in and into the profile chooser, rather than stranding them at a
+        // login screen (which is where the onboarding flow was breaking).
+        window._pendingSignupPassword = password;
         showAuthView('confirm');
       });
     }
@@ -5549,8 +5645,24 @@
       const user = new AmazonCognitoIdentity.CognitoUser({ Username: email, Pool: userPool });
       user.confirmRegistration(code, true, (err) => {
         if (err) { statusEl.textContent = err.message; return; }
-        statusEl.textContent = 'Confirmed! You can log in now.';
-        setTimeout(() => showAuthView('login'), 1200);
+        // Log them straight in (using the password from signup) so the
+        // profile chooser opens automatically via setAuthSession's
+        // unlinked-account check. Falls back to the login screen if the
+        // password isn't around (e.g. they reloaded between steps).
+        const pw = window._pendingSignupPassword;
+        window._pendingSignupPassword = null;
+        if (pw) {
+          statusEl.textContent = 'Confirmed! Logging you in...';
+          const authDetails = new AmazonCognitoIdentity.AuthenticationDetails({ Username: email, Password: pw });
+          const loginUser = new AmazonCognitoIdentity.CognitoUser({ Username: email, Pool: userPool });
+          loginUser.authenticateUser(authDetails, {
+            onSuccess: (session) => { setAuthSession(session, loginUser); },
+            onFailure: () => { statusEl.textContent = 'Confirmed! You can log in now.'; setTimeout(() => showAuthView('login'), 1000); }
+          });
+        } else {
+          statusEl.textContent = 'Confirmed! You can log in now.';
+          setTimeout(() => showAuthView('login'), 1200);
+        }
       });
     }
 
@@ -6846,6 +6958,7 @@
         if (btn.dataset.tab === 'review' && isSuperAdmin()) {
           loadClaimRequests();
           loadFinanceAccessList();
+          loadAppSettings();
         }
         if (btn.dataset.tab === 'finance'
             && document.getElementById('finance-content').style.display !== 'block') {

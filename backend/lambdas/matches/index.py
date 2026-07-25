@@ -595,8 +595,16 @@ def _play_and_log(match_type, team_a_ids, team_b_ids, score_a, score_b, group_id
         new_ratings[p['player_id']] = int(round(float(p.get('rating', 1000)) + delta_b))
 
     for pid, new_rating in new_ratings.items():
-        players_table.update_item(Key={'player_id': pid}, UpdateExpression='SET rating = :r',
-                                   ExpressionAttributeValues={':r': new_rating})
+        # Snapshot the rating this player held BEFORE this match as
+        # previous_rating. Ranking players by previous_rating vs current
+        # rating is what powers the up/down arrow next to their rank - it
+        # captures the single most recent move without storing full history.
+        prev = next((int(round(float(p.get('rating', 1000))))
+                     for p in team_a_players + team_b_players if p['player_id'] == pid), 1000)
+        players_table.update_item(
+            Key={'player_id': pid},
+            UpdateExpression='SET rating = :r, previous_rating = :pr',
+            ExpressionAttributeValues={':r': new_rating, ':pr': prev})
 
     item = {
         'match_id': str(uuid.uuid4()),
