@@ -351,7 +351,13 @@ def create_group(event):
 def list_groups():
     items = groups_table.scan().get('Items', [])
     result = [
-        {'group_id': i['group_id'], 'group_name': i['group_name'], 'member_count': len(i.get('member_ids', []))}
+        {'group_id': i['group_id'], 'group_name': i['group_name'],
+         'member_count': len(i.get('member_ids', [])),
+         # Included so the client can decide who may see edit/delete
+         # controls (a group member, or the owner) without a call per group.
+         # Not sensitive: names are already public, and roles only gate UI.
+         'member_ids': i.get('member_ids', []),
+         'roles': i.get('roles', {})}
         for i in items
     ]
     return _response(200, {'groups': result})

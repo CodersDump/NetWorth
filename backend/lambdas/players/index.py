@@ -305,7 +305,8 @@ def create_action_request(event):
 
     body = json.loads(event.get('body') or '{}')
     action_type = body.get('type')
-    if action_type not in ('delete_player', 'new_profile', 'edit_own_name', 'finance_access'):
+    if action_type not in ('delete_player', 'new_profile', 'edit_own_name', 'finance_access',
+                           'match_edit', 'match_delete'):
         return _response(400, {'error': "unknown request type"})
 
     # new_profile is the one request an unlinked account SHOULD be able to
@@ -322,6 +323,8 @@ def create_action_request(event):
         return _create_edit_name_request(claims, body)
     if action_type == 'finance_access':
         return _create_finance_access_request(claims, body)
+    if action_type in ('match_edit', 'match_delete'):
+        return _create_match_request(claims, body, action_type)
 
     player_id = body.get('player_id')
     reason = (body.get('reason') or '').strip()
@@ -485,6 +488,55 @@ def _approve_new_profile(req, claims):
 FINANCE_LEVELS = {'none': 0, 'view': 1, 'write': 2, 'delete': 3}
 
 
+
+def _create_match_request(claims, body, action_type):
+    """A match edit or delete, filed as a request rather than executed. The
+    match's group_id is stored on the row now so approval can later be
+    routed to that group's owner as well as the SuperAdmin - without a
+    schema migration when that lands. A reason is required so the approver
+    has context.
+    """
+    match_id = body.get('match_id')
+    reason = (body.get('reason') or '').strip()
+    if not match_id:
+        return _response(400, {'error': 'match_id is required'})
+    if not reason:
+        return _response(400, {'error': 'a reason is required for match changes'})
+
+    # We don't have the matches table in this Lambda, so trust the client's
+    # supplied context (group_id, label, proposed scores) for display and
+    # routing. The matches Lambda re-validates on execution, so a spoofed
+    # field can only mislabel a request, never force an unauthorized change.
+    row = {
+        'request_id': str(uuid.uuid4()),
+        'type': action_type,
+        'match_id': match_id,
+        'group_id': body.get('group_id') or None,
+        'match_label': body.get('match_label') or match_id,
+        'reason': reason,
+        'requester_email': claims.get('email'),
+        'requester_username': claims.get('cognito:username') or claims.get('email'),
+        'requester_player_id': claims.get('custom:player_id'),
+        'status': 'pending',
+        'created_at': datetime.now(timezone.utc).isoformat()
+    }
+    if action_type == 'match_edit':
+        try:
+            row['new_score_a'] = int(body.get('new_score_a'))
+            row['new_score_b'] = int(body.get('new_score_b'))
+        except (TypeError, ValueError):
+            return _response(400, {'error': 'valid new scores are required for an edit'})
+
+    # One pending request per match is enough - collapse duplicates.
+    pending = claim_requests_table.scan().get('Items', [])
+    if any(r.get('status') == 'pending' and r.get('type') == action_type
+           and r.get('match_id') == match_id for r in pending):
+        return _response(400, {'error': 'a request for this match is already waiting'})
+
+    claim_requests_table.put_item(Item=row)
+    return _response(200, {'request_id': row['request_id'], 'status': 'pending'})
+
+
 def _create_finance_access_request(claims, body):
     """A member asking for a finance role (view / write / delete). Approving
     it sets that role - handled in decide_claim_request so the same
@@ -569,6 +621,38 @@ def decide_claim_request(event):
         failed = _approve_edit_name(req, claims)
         if failed:
             return failed
+
+    elif action == 'approve' and req.get('type') in ('match_edit', 'match_delete'):
+        # Run the real change through the matches function so its rating
+        # recompute happens exactly as it would for a direct admin edit -
+        # no duplicated logic here. The confirmation code is supplied
+        # server-side; the requester never sees or needs it.
+        import os as _os
+        fn = _os.environ.get('MATCHES_FUNCTION')
+        if not fn:
+            return _response(500, {'error': 'matches function not configured'})
+        if req['type'] == 'match_delete':
+            payload = {
+                'resource': '/matches/{match_id}', 'httpMethod': 'DELETE',
+                'pathParameters': {'match_id': req['match_id']},
+                'body': json.dumps({'confirm': CONFIRMATION_CODE}),
+                'requestContext': {'authorizer': {'claims': claims}}
+            }
+        else:
+            payload = {
+                'resource': '/matches/{match_id}', 'httpMethod': 'PUT',
+                'pathParameters': {'match_id': req['match_id']},
+                'body': json.dumps({'score_a': req['new_score_a'], 'score_b': req['new_score_b'],
+                                    'confirm': CONFIRMATION_CODE}),
+                'requestContext': {'authorizer': {'claims': claims}}
+            }
+        resp = boto3.client('lambda').invoke(
+            FunctionName=fn, InvocationType='RequestResponse',
+            Payload=json.dumps(payload).encode('utf-8'))
+        inner = json.loads(resp['Payload'].read() or '{}')
+        if inner.get('statusCode') != 200:
+            body_err = json.loads(inner.get('body') or '{}').get('error', 'match change failed')
+            return _response(400, {'error': f'could not apply change: {body_err}'})
 
     elif action == 'approve' and req.get('type') == 'new_profile':
         failed = _approve_new_profile(req, claims)

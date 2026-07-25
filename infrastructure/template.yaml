@@ -142,6 +142,12 @@ Resources:
                   - logs:CreateLogStream
                   - logs:PutLogEvents
                 Resource: 'arn:aws:logs:*:*:*'
+              # Approving a match edit/delete request re-invokes the matches
+              # function to run the real change (and its rating recompute),
+              # rather than reimplementing that logic in the players Lambda.
+              - Effect: Allow
+                Action: lambda:InvokeFunction
+                Resource: !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${AppName}-matches'
               - Effect: Allow
                 Action:
                   - dynamodb:PutItem
@@ -320,6 +326,7 @@ Resources:
           USER_POOL_ID: !Ref UserPool
           UPLOADS_BUCKET: !Ref WebsiteBucket
           CONFIRMATION_CODE: !Ref ConfirmationCode
+          MATCHES_FUNCTION: !Sub '${AppName}-matches'
       Code: ../backend/lambdas/players
 
   GroupsFunction:

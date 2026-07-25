@@ -2518,7 +2518,17 @@
           if (m.momentum && m.momentum.winner_overcame_deficit > 0) {
             notes = `Comeback: overcame a ${m.momentum.winner_overcame_deficit}-point deficit`;
           }
-          html += `<tr><td>${date}</td><td>${teamA}</td><td>${teamB}</td><td>${m.score_a} - ${m.score_b}</td><td>${notes}</td><td><button class="secondary" style="margin-top:0;padding:4px 8px;font-size:11px;" onclick="editMatchScore('${m.match_id}', ${m.score_a}, ${m.score_b})">Edit</button> <button class="secondary" style="margin-top:0;padding:4px 8px;font-size:11px;" onclick="deleteMatch('${m.match_id}')">Delete</button></td></tr>`;
+          const perm = matchPermissions(m);
+          const label = `${teamA} vs ${teamB}`;
+          let actions = '';
+          if (perm.canSee) {
+            const editLabel = perm.canActDirectly ? 'Edit' : 'Request edit';
+            const delLabel = perm.canActDirectly ? 'Delete' : 'Request delete';
+            const gid = m.group_id || '';
+            actions = `<button class="secondary" style="margin-top:0;padding:4px 8px;font-size:11px;" onclick="editMatchScore('${m.match_id}', ${m.score_a}, ${m.score_b}, '${encodeURIComponent(label)}', '${gid}')">${editLabel}</button> `
+                    + `<button class="secondary" style="margin-top:0;padding:4px 8px;font-size:11px;" onclick="deleteMatch('${m.match_id}', '${encodeURIComponent(label)}', '${gid}')">${delLabel}</button>`;
+          }
+          html += `<tr><td>${date}</td><td>${teamA}</td><td>${teamB}</td><td>${m.score_a} - ${m.score_b}</td><td>${notes}</td><td>${actions}</td></tr>`;
         });
         html += '</table>';
         logEl.innerHTML = html;
@@ -2531,11 +2541,63 @@
       document.getElementById(id).addEventListener('change', loadGameLog);
     });
 
-    async function editMatchScore(matchId, currentScoreA, currentScoreB) {
+    /**
+     * Who may see Edit/Delete on a match. Precedence, highest first:
+     *   SuperAdmin      -> everything
+     *   group owner     -> matches in their group
+     *   group member    -> matches in their group
+     *   match player    -> their own matches
+     * Returns { canSee, canActDirectly }. Only SuperAdmin acts directly
+     * (they're the approver); everyone else files a request.
+     */
+    function matchPermissions(m) {
+      if (isSuperAdmin()) return { canSee: true, canActDirectly: true };
+      const me = myPlayerId();
+      if (!me) return { canSee: false, canActDirectly: false };
+      // participant?
+      const inMatch = [...(m.team_a || []), ...(m.team_b || [])].includes(me);
+      // member (any role) of the match's group?
+      let inGroup = false;
+      if (m.group_id) {
+        const g = allGroups.find(x => x.group_id === m.group_id);
+        if (g && (g.member_ids || []).includes(me)) inGroup = true;
+      }
+      return { canSee: inMatch || inGroup, canActDirectly: false };
+    }
+
+    function matchGroupLabel(m) {
+      const g = m.group_id && allGroups.find(x => x.group_id === m.group_id);
+      return g ? g.group_name : '';
+    }
+
+    async function requestMatchChange(matchId, type, label, groupId, extra) {
+      const reason = prompt(type === 'match_delete'
+        ? `Request deletion of "${label}"?\n\nGive a reason for the admin:`
+        : `Request a score correction for "${label}"?\n\nGive a reason for the admin:`);
+      if (reason === null) return;
+      if (!reason.trim()) { alert('A reason is required.'); return; }
+      try {
+        const { res, error } = await authedFetch(`${API_BASE_URL}/action-request`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ type, match_id: matchId, match_label: label,
+                                 group_id: groupId || null, reason: reason.trim(), ...(extra || {}) })
+        });
+        alert(res.ok ? 'Request sent to the admin for approval.' : `Error: ${error}`);
+      } catch (e) { alert(`Request failed: ${e.message}`); }
+    }
+
+    async function editMatchScore(matchId, currentScoreA, currentScoreB, encLabel, groupId) {
+      const label = encLabel ? decodeURIComponent(encLabel) : matchId;
       const newScoreA = prompt(`Current score: ${currentScoreA} - ${currentScoreB}\nEnter corrected Team A score:`, currentScoreA);
       if (newScoreA === null) return;
       const newScoreB = prompt('Enter corrected Team B score:', currentScoreB);
       if (newScoreB === null) return;
+
+      // Non-admins file a request with a reason; only SuperAdmin edits live.
+      if (!isSuperAdmin()) {
+        return requestMatchChange(matchId, 'match_edit', label, groupId,
+          { new_score_a: parseInt(newScoreA, 10), new_score_b: parseInt(newScoreB, 10) });
+      }
 
       const confirmText = prompt('Enter the confirmation code to save this correction. Note: this will recompute every player\'s rating from the corrected history.');
       if (!confirmText) return;
@@ -2559,7 +2621,13 @@
       }
     }
 
-    async function deleteMatch(matchId) {
+    async function deleteMatch(matchId, encLabel, groupId) {
+      const label = encLabel ? decodeURIComponent(encLabel) : matchId;
+      // Non-admins file a request with a reason; only SuperAdmin deletes live.
+      if (!isSuperAdmin()) {
+        return requestMatchChange(matchId, 'match_delete', label, groupId);
+      }
+
       if (!confirm('Permanently delete this match? This cannot be undone, and every player\'s rating will be recomputed from the remaining history.')) return;
 
       const confirmText = prompt('Enter the confirmation code to permanently delete this match.');
@@ -3098,6 +3166,8 @@
             delete_player: `wants to <strong style="color:var(--smash);">delete</strong> ${target}`,
             new_profile:   `wants a <strong>new profile</strong>: ${target}`,
             finance_access: `wants <strong>${escapeHtml(r.requested_role || 'view')}</strong> finance access (${target})`,
+            match_delete: `wants to <strong style="color:var(--smash);">delete match</strong> ${escapeHtml(r.match_label || '')}${r.reason ? ' - "' + escapeHtml(r.reason) + '"' : ''}`,
+            match_edit: `wants to <strong>correct</strong> ${escapeHtml(r.match_label || '')} to <strong>${r.new_score_a}-${r.new_score_b}</strong>${r.reason ? ' - "' + escapeHtml(r.reason) + '"' : ''}`,
             edit_own_name: `wants to rename ${target} to <strong>${escapeHtml(r.new_name || '')} (${escapeHtml(r.new_nickname || '')})</strong>`,
             claim:         `wants to be ${target}`
           }[r.type || 'claim'];
@@ -3123,6 +3193,8 @@
           delete_player: 'Approve this deletion?\n\nThe player record and any login linked to it are removed permanently. Their match history stays, but the player is gone.',
           new_profile:   'Approve this new profile?\n\nA new player is created and linked to their login. They become a full member and can add players and record matches.',
           finance_access: 'Grant finance access?\n\nThey will be able to view the Finance tab.',
+          match_delete: 'Approve this match deletion?\n\nThe match is removed and every rating recomputed from the remaining history.',
+          match_edit: 'Approve this score correction?\n\nThe match is updated and every rating recomputed.',
           edit_own_name: 'Approve this rename?\n\nTheir display name and nickname change everywhere, including past matches.',
           claim:         'Approve this request?\n\nThis links their login to that player permanently - their match history and rating become theirs.'
         }[requestType || 'claim'];
