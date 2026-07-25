@@ -2562,7 +2562,13 @@
         const g = allGroups.find(x => x.group_id === m.group_id);
         if (g && (g.member_ids || []).includes(me)) inGroup = true;
       }
-      return { canSee: inMatch || inGroup, canActDirectly: false };
+      // An ungrouped match belongs to no one in particular, so any linked
+      // player may request a change to it - there's no group boundary to
+      // respect. Grouped matches stay restricted to their members and
+      // participants. Either way, only SuperAdmin acts directly; everyone
+      // else files a request.
+      const ungrouped = !m.group_id;
+      return { canSee: inMatch || inGroup || ungrouped, canActDirectly: false };
     }
 
     function matchGroupLabel(m) {
