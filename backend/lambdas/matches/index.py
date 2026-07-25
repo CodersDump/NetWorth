@@ -46,6 +46,50 @@ history_table = dynamodb.Table(os.environ['PROGRESS_HISTORY_TABLE'])
 
 K_FACTOR = 32
 
+# ---------- XP / levels / coins ----------
+# XP is a participation reward: it only ever goes UP (win or lose), unlike
+# Elo which moves both ways. It's accumulated in the same recompute loop as
+# ratings - one pass, no separate calculation - so it stays consistent after
+# any correction or reorder.
+#
+# XP per match, keyed by (stage, won). Regular matches have stage None.
+# Tournament stages escalate: group < knockout < final. A win always adds a
+# bonus on top of the "played" amount.
+XP_PLAYED = {None: 10, 'group': 15, 'knockout': 25, 'third_place': 15, 'final': 40}
+XP_WIN_BONUS = {None: 5, 'group': 8, 'knockout': 15, 'third_place': 8, 'final': 30}
+XP_TOURNAMENT_WIN = 100          # one-off, awarded when a tournament is won
+
+# Escalating curve: total XP needed to REACH level N is 5 * N^2. So level 10
+# = 500, level 50 = 12,500, level 100 = 50,000, level 1000 = 5,000,000 -
+# early levels are quick, high levels are a genuine long-term grind (chosen
+# deliberately after seeing 50 matches logged in a single week).
+XP_LEVEL_COEFF = 5
+
+COINS_PER_LEVEL = 50             # granted each time a player gains a level
+
+
+def level_from_xp(xp):
+    """Inverse of xp = 5*N^2, floored: the highest level fully paid for by
+    this much XP. Level starts at 1 (0 XP)."""
+    if xp <= 0:
+        return 1
+    import math
+    return max(1, int(math.isqrt(int(xp) // XP_LEVEL_COEFF)))
+
+
+def xp_for_level(level):
+    """Total XP needed to reach a given level - used for progress bars."""
+    return XP_LEVEL_COEFF * level * level
+
+
+def xp_for_match(stage, won):
+    """Base XP a single player earns for one match (before any event
+    multiplier, which is applied at the point of accumulation)."""
+    played = XP_PLAYED.get(stage, XP_PLAYED[None])
+    bonus = XP_WIN_BONUS.get(stage, XP_WIN_BONUS[None]) if won else 0
+    return played + bonus
+
+
 
 def display_name(player_item, fallback=None):
     """Single source of truth for name formatting: 'Nickname (Real Name)'
@@ -401,6 +445,10 @@ def recompute_all_ratings():
     exactly as it would have been at that point in time."""
     players = players_table.scan().get('Items', [])
     current_ratings = {p['player_id']: 1000.0 for p in players}
+    # XP is rebuilt from scratch alongside ratings so a correction/reorder
+    # keeps it consistent. It only accumulates (never subtracts), keyed by
+    # player, replaying every match's award in order.
+    xp_totals = {p['player_id']: 0 for p in players}
     pairing_counts = {}  # frozenset({p1,p2}) -> matches played together so far
 
     matches = matches_table.scan().get('Items', [])
@@ -452,6 +500,18 @@ def recompute_all_ratings():
         for pid in team_b:
             current_ratings[pid] = current_ratings.get(pid, 1000.0) + delta_b
 
+        # XP: every player who played earns the base for this match's stage,
+        # winners earn a bonus. Stage is None for a regular match. (Event
+        # multipliers will hook in here in a later stage, keyed off the
+        # match date so recompute stays reproducible.)
+        stage = m.get('stage')
+        won_a = (winner == 'A')
+        won_b = (winner == 'B')
+        for pid in team_a:
+            xp_totals[pid] = xp_totals.get(pid, 0) + xp_for_match(stage, won_a)
+        for pid in team_b:
+            xp_totals[pid] = xp_totals.get(pid, 0) + xp_for_match(stage, won_b)
+
         # The rating history graph reads ratings_after directly off each
         # match record - if we don't write the corrected values back here,
         # a correction fixes everyone's current rating but leaves the
@@ -465,8 +525,24 @@ def recompute_all_ratings():
             )
 
     for pid, rating in current_ratings.items():
-        players_table.update_item(Key={'player_id': pid}, UpdateExpression='SET rating = :r',
-                                   ExpressionAttributeValues={':r': int(round(rating))})
+        xp = xp_totals.get(pid, 0)
+        level = level_from_xp(xp)
+        # Coins are earned per level gained. On a full recompute we recompute
+        # total coins EARNED (50 per level above 1), but must not clobber
+        # coins the player has SPENT. We track coins_spent separately, so
+        # spendable balance = earned - spent, never going negative.
+        earned = COINS_PER_LEVEL * (level - 1)
+        player = next((p for p in players if p['player_id'] == pid), {})
+        spent = int(player.get('coins_spent', 0) or 0)
+        balance = max(0, earned - spent)
+        players_table.update_item(
+            Key={'player_id': pid},
+            UpdateExpression='SET rating = :r, xp = :xp, #lvl = :lvl, coins = :c, coins_earned = :ce',
+            ExpressionAttributeNames={'#lvl': 'level'},
+            ExpressionAttributeValues={
+                ':r': int(round(rating)), ':xp': xp, ':lvl': level,
+                ':c': balance, ':ce': earned
+            })
 
 
 def compute_momentum_stats(point_log, winner):
@@ -599,12 +675,24 @@ def _play_and_log(match_type, team_a_ids, team_b_ids, score_a, score_b, group_id
         # previous_rating. Ranking players by previous_rating vs current
         # rating is what powers the up/down arrow next to their rank - it
         # captures the single most recent move without storing full history.
-        prev = next((int(round(float(p.get('rating', 1000))))
-                     for p in team_a_players + team_b_players if p['player_id'] == pid), 1000)
+        player_obj = next((p for p in team_a_players + team_b_players if p['player_id'] == pid), {})
+        prev = int(round(float(player_obj.get('rating', 1000))))
+        # XP earned live for this match. Mirrors the recompute award so a
+        # later recompute reproduces the same totals. Level and coin balance
+        # are recomputed from the new XP total (coins = earned - spent).
+        won = ((winner == 'A' and pid in team_a_ids) or (winner == 'B' and pid in team_b_ids))
+        gained = xp_for_match(stage, won)
+        new_xp = int(player_obj.get('xp', 0) or 0) + gained
+        new_level = level_from_xp(new_xp)
+        earned = COINS_PER_LEVEL * (new_level - 1)
+        spent = int(player_obj.get('coins_spent', 0) or 0)
+        balance = max(0, earned - spent)
         players_table.update_item(
             Key={'player_id': pid},
-            UpdateExpression='SET rating = :r, previous_rating = :pr',
-            ExpressionAttributeValues={':r': new_rating, ':pr': prev})
+            UpdateExpression='SET rating = :r, previous_rating = :pr, xp = :xp, #lvl = :lvl, coins = :c, coins_earned = :ce',
+            ExpressionAttributeNames={'#lvl': 'level'},
+            ExpressionAttributeValues={':r': new_rating, ':pr': prev, ':xp': new_xp,
+                                       ':lvl': new_level, ':c': balance, ':ce': earned})
 
     item = {
         'match_id': str(uuid.uuid4()),
