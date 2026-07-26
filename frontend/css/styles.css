@@ -1,0 +1,357 @@
+:root {
+    --court: #1F7A4D;
+    --court-dark: #14532D;
+    --shuttle: #FFD23F;
+    --smash: #FF4757;
+    --rally: #00B4D8;
+    --bg: #F5F9F6;
+    --surface: #FFFFFF;
+    --surface-2: #EEF4EF;
+    --text: #12181D;
+    --text-secondary: #52605A;
+    --border: #DCE6DF;
+    --radius: 10px;
+    /* Page background theming. --page-bg is swapped at runtime to the
+       selected player's chosen background pattern; --veil is the flat
+       scrim laid over it. The veil is the SAME colour as --bg, so with no
+       background chosen the page is pixel-identical to plain. */
+    --veil: rgba(245, 249, 246, 0.86);
+    --page-bg: none;
+  }
+  [data-theme="dark"] {
+    --bg: #0F1B15;
+    --surface: #16241C;
+    --surface-2: #1D2E23;
+    --text: #E8F1EA;
+    --text-secondary: #9FB3A6;
+    --border: #2A3D31;
+    --court: #2FA968;
+    --court-dark: #1F7A4D;
+    /* Thinner than light mode: a saturated pattern reads far harder
+       against white than against near-black, so an identical value makes
+       dark mode look untinted. Dark is also where this look belongs, so
+       it gets to show more of the artwork. */
+    --veil: rgba(15, 27, 21, 0.74);
+  }
+  * { box-sizing: border-box; }
+  html { background: var(--bg); }
+  /* ---------- VS match card ---------- */
+  .vsc { position:relative; height:150px; border-radius:var(--radius); overflow:hidden; margin:6px 0; }
+  .vsc-layer { position:absolute; inset:0; background-size:cover; background-position:center; }
+  .vsc-av { width:52px; height:52px; border-radius:50%; border:3px solid rgba(255,255,255,.92);
+            background-size:cover; background-position:center; box-shadow:0 2px 10px rgba(0,0,0,.55);
+            display:flex; align-items:center; justify-content:center; font-size:22px; }
+  .vsc-nm { color:#fff; font-size:11px; font-weight:600; text-shadow:0 1px 4px rgba(0,0,0,.9);
+            margin-top:3px; text-align:center; max-width:66px; overflow:hidden;
+            text-overflow:ellipsis; white-space:nowrap; }
+  .vsc-pl { display:flex; flex-direction:column; align-items:center; }
+  /* Electric: a cyan/white core with layered coloured glows, plus a fast
+     flicker. Built from text-shadow rather than a filter so it stays crisp
+     at any size and costs nothing to animate. */
+  .vsc-badge { position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); z-index:5;
+    font-family:'Rajdhani',sans-serif; font-weight:800; font-style:italic; font-size:30px;
+    letter-spacing:2px; color:#fff;
+    text-shadow:0 0 4px #fff, 0 0 10px #7df9ff, 0 0 22px #00b4d8, 0 0 40px #0077b6, 0 2px 6px rgba(0,0,0,.9);
+    animation:vsc-arc 2.4s infinite; }
+  @keyframes vsc-arc {
+    0%,100% { opacity:1; }
+    42% { opacity:1; }
+    45% { opacity:.55; text-shadow:0 0 2px #fff, 0 0 6px #7df9ff, 0 0 12px #00b4d8; }
+    47% { opacity:1; }
+    52% { opacity:.7; }
+    54% { opacity:1; }
+  }
+  .vsc-cup { position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); z-index:5;
+             display:flex; flex-direction:column; align-items:center; gap:1px; }
+  .vsc-cup svg { filter:drop-shadow(0 0 6px #F5C542) drop-shadow(0 2px 6px rgba(0,0,0,.9));
+                 animation:vsc-arc 2.4s infinite; }
+  .vsc-cupl { font-family:'Rajdhani',sans-serif; font-size:10px; font-weight:800; letter-spacing:3px;
+              color:#F5C542; text-shadow:0 0 8px #F5C542, 0 1px 5px rgba(0,0,0,.95); }
+  @media (prefers-reduced-motion: reduce) {
+    .vsc-badge, .vsc-cup svg { animation:none; }
+  }
+
+  /* Full-bleed fixture block: the card was previously crammed into a table
+     cell, which squeezed it to a couple of hundred pixels and overlapped
+     the names with the VS badge. */
+  .vsc { width:100%; height:170px; }
+  .fixture { margin:14px 0; padding-bottom:12px; border-bottom:1px solid var(--border); }
+  .fixture-controls { display:flex; flex-wrap:wrap; align-items:center; gap:8px;
+                      margin-top:10px; font-size:14px; }
+  .fixture-controls input[type=number] { width:64px; display:inline-block; margin:0; }
+  .vsc-score { position:absolute; z-index:6; font-family:'Rajdhani',sans-serif; font-weight:800;
+               font-size:30px; color:#fff; text-shadow:0 2px 8px rgba(0,0,0,.95);
+               padding:1px 10px; border-radius:8px; background:rgba(0,0,0,.34); }
+  .vsc-score-a { left:14px; bottom:14px; }
+  .vsc-score-b { right:14px; top:16px; }
+  /* Winner gets the shuttle-yellow ring rather than a separate tick, so the
+     result reads at a glance without adding another glyph to a busy card. */
+  .vsc-won { color:#F5C542; box-shadow:0 0 0 2px #F5C542, 0 0 14px rgba(245,197,66,.7); }
+  @media (max-width: 600px) {
+    .vsc { height:150px; }
+    .vsc-score { font-size:24px; }
+  }
+
+  /* Winner reads three ways at once - gold number, gold ring on their
+     avatars, and a W badge - because on a busy photo banner any single
+     one of those can get lost. */
+  .vsc-av-won { border-color:#F5C542; box-shadow:0 0 0 2px rgba(245,197,66,.5), 0 0 16px rgba(245,197,66,.85), 0 2px 10px rgba(0,0,0,.55); }
+  .vsc-w { font-size:12px; margin-left:6px; vertical-align:middle; letter-spacing:1px;
+           background:#F5C542; color:#12200f; padding:1px 5px; border-radius:4px; font-weight:800; }
+
+  .review-section { border:1px solid var(--border); border-radius:8px; margin:10px 0; padding:0 12px; }
+  .review-section > summary { cursor:pointer; padding:12px 0; font-weight:600; font-size:14px; list-style:none; display:flex; align-items:center; gap:8px; }
+  .review-section > summary::-webkit-details-marker { display:none; }
+  .review-section > summary::before { content:'▸'; transition:transform 0.15s; opacity:0.6; }
+  .review-section[open] > summary::before { transform:rotate(90deg); }
+  .review-badge { background:var(--smash); color:#fff; border-radius:10px; padding:1px 8px; font-size:11px; font-weight:700; }
+  .review-badge:empty { display:none; }
+
+  /* Capsule slider toggle - wrap a checkbox in <label class="switch"> with
+     a <span class="slider"></span> after the input. */
+  .switch { position:relative; display:inline-block; width:44px; height:24px; flex:none; }
+  .switch input { opacity:0; width:0; height:0; position:absolute; }
+  .switch .slider { position:absolute; inset:0; cursor:pointer; background:var(--surface-2);
+    border:1px solid var(--border); border-radius:24px; transition:0.2s; }
+  .switch .slider::before { content:''; position:absolute; height:18px; width:18px; left:2px; top:2px;
+    background:#fff; border-radius:50%; transition:0.2s; box-shadow:0 1px 3px rgba(0,0,0,0.3); }
+  .switch input:checked + .slider { background:var(--court); border-color:var(--court); }
+  .switch input:checked + .slider::before { transform:translateX(20px); }
+  .switch-row { display:flex; align-items:center; gap:10px; }
+
+  body {
+    font-family: 'Inter', sans-serif;
+    background: transparent;
+    color: var(--text);
+    margin: 0;
+    padding: 0;
+    transition: background 0.2s, color 0.2s;
+  }
+  /* Two stacked fixed layers rather than one. The pattern presets each
+     carry their own per-layer sizes and repeat rules inside a single
+     `background` shorthand, which is impossible to express if a veil
+     gradient is sharing the same background-image list. Separating them
+     means a preset can be an arbitrarily complex pattern and the veil
+     stays a flat, predictable scrim on top of it. */
+  body::before,
+  body::after {
+    content: '';
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+  }
+  body::before {
+    z-index: -2;
+    background: var(--page-bg, none);
+  }
+  body::after {
+    z-index: -1;
+    background: var(--veil);
+    transition: background 0.2s;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    body::after { transition: none; }
+  }
+  .app-shell { max-width: 880px; margin: 0 auto; padding: 0 16px 64px; }
+  header.app-header {
+    position: sticky; top: 0; z-index: 20;
+    background: var(--court);
+    color: #fff;
+    padding: 14px 16px;
+    display: flex; align-items: center; justify-content: space-between;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.12);
+  }
+  /* Buttons everywhere else on the site sit below a form label and need
+     that top margin; header buttons are inline/flex-aligned next to plain
+     text and don't - without this reset they sit visibly lower than the
+     email status text beside them. */
+  header.app-header button { margin-top: 0; }
+  .app-title { display: flex; align-items: center; gap: 10px; }
+  .app-title h1 {
+    font-family: 'Rajdhani', sans-serif;
+    font-weight: 700;
+    font-size: 26px;
+    letter-spacing: 0.5px;
+    margin: 0;
+    color: #fff;
+  }
+  .theme-toggle {
+    background: rgba(255,255,255,0.15);
+    border: none;
+    color: #fff;
+    border-radius: 20px;
+    padding: 8px 14px;
+    font-size: 13px;
+    cursor: pointer;
+    font-family: 'Inter', sans-serif;
+  }
+  .theme-toggle:hover { background: rgba(255,255,255,0.28); }
+
+  nav.tab-strip {
+    position: sticky; top: 58px; z-index: 19;
+    display: flex;
+    overflow-x: auto;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    -webkit-overflow-scrolling: touch;
+  }
+  nav.tab-strip::-webkit-scrollbar { display: none; }
+  .tab-btn {
+    flex: 0 0 auto;
+    font-family: 'Rajdhani', sans-serif;
+    font-weight: 700;
+    font-size: 15px;
+    letter-spacing: 0.3px;
+    background: none;
+    border: none;
+    color: var(--text-secondary);
+    padding: 14px 18px 12px;
+    cursor: pointer;
+    border-bottom: 3px solid transparent;
+    white-space: nowrap;
+    margin: 0;
+  }
+  .tab-btn.active { color: var(--court); border-bottom-color: var(--shuttle); }
+  [data-theme="dark"] .tab-btn.active { color: var(--court); }
+
+  .tab-panel { display: none; padding-top: 20px; }
+  .tab-panel.active { display: block; }
+
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 18px;
+    margin-bottom: 16px;
+  }
+  .card h2 {
+    font-family: 'Rajdhani', sans-serif;
+    font-weight: 700;
+    font-size: 20px;
+    margin: 0 0 4px;
+    letter-spacing: 0.2px;
+  }
+  .card h4 { font-family: 'Rajdhani', sans-serif; font-weight: 700; font-size: 16px; }
+  .card-sub { color: var(--text-secondary); font-size: 13px; margin: 0 0 14px; }
+
+  .achievement-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }
+  .achievement-card {
+    border-radius: 10px; padding: 14px; border: 1px solid var(--border);
+    background: var(--surface-2);
+  }
+  .achievement-card.achieved {
+    background: linear-gradient(135deg, var(--court) 0%, var(--court-dark) 100%);
+    border-color: var(--shuttle); color: #fff;
+  }
+  .achievement-card.locked { opacity: 0.55; }
+  .achievement-icon { font-size: 26px; }
+  .achievement-name { font-family: 'Rajdhani', sans-serif; font-weight: 700; font-size: 15px; margin: 4px 0 2px; }
+  .achievement-desc { font-size: 12px; opacity: 0.85; margin-bottom: 8px; }
+  .achievement-progress-track { background: rgba(128,128,128,0.3); border-radius: 6px; height: 8px; overflow: hidden; }
+  .achievement-progress-fill { background: var(--shuttle); height: 100%; }
+  .achievement-progress-text { font-size: 11px; margin-top: 4px; font-family: 'JetBrains Mono', monospace; }
+
+  .form-chip {
+    width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+    font-family: 'Rajdhani', sans-serif; font-weight: 700; font-size: 14px; color: #fff;
+  }
+  .form-chip.win { background: var(--court); }
+  .form-chip.loss { background: var(--smash); }
+
+  .h2h-row { margin-bottom: 12px; }
+  .h2h-row-header { display: flex; justify-content: space-between; font-size: 13px; margin-bottom: 4px; }
+  .h2h-bar { display: flex; height: 8px; border-radius: 4px; overflow: hidden; background: var(--surface-2); }
+
+  .overall-record-bar { display: flex; height: 14px; border-radius: 5px; overflow: hidden; margin: 8px 0; }
+  .overall-record-legend { display: flex; flex-wrap: wrap; gap: 12px; font-size: 12px; color: var(--text-secondary); }
+  .overall-record-legend span { display: inline-flex; align-items: center; gap: 5px; }
+  .overall-record-legend .swatch { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
+  .h2h-bar-wins { background: var(--court); }
+  .h2h-bar-losses { background: var(--smash); }
+
+  .skeleton-line {
+    height: 14px; border-radius: 4px; margin-bottom: 8px;
+    background: linear-gradient(90deg, var(--surface-2) 25%, var(--border) 50%, var(--surface-2) 75%);
+    background-size: 200% 100%;
+    animation: skeleton-pulse 1.2s ease-in-out infinite;
+  }
+  @keyframes skeleton-pulse {
+    0% { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+  }
+
+  label { display: block; margin-top: 12px; font-size: 13px; font-weight: 500; color: var(--text-secondary); }
+  input, select, textarea {
+    width: 100%; padding: 10px; margin-top: 4px; box-sizing: border-box;
+    background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius);
+    color: var(--text); font-family: 'Inter', sans-serif; font-size: 14px;
+  }
+  input:focus, select:focus { outline: 2px solid var(--rally); outline-offset: 1px; }
+  input[type="checkbox"] { width: auto; padding: 0; margin: 0 6px 0 0; vertical-align: middle; }
+
+  button {
+    margin-top: 12px; padding: 10px 18px; cursor: pointer;
+    background: var(--court); color: #fff; border: none; border-radius: var(--radius);
+    font-family: 'Inter', sans-serif; font-weight: 600; font-size: 13px;
+    transition: transform 0.08s, background 0.15s;
+  }
+  a { color: var(--court); }
+  a:visited { color: var(--court); }
+  a:hover { opacity: 0.85; }
+  button:hover { background: var(--court-dark); }
+  button:active { transform: scale(0.97); }
+  button.secondary { background: var(--surface-2); color: var(--text); border: 1px solid var(--border); }
+  button.secondary:hover { background: var(--border); }
+  button.danger { background: var(--smash); }
+  button.danger:hover { background: #d63447; }
+
+  #live-point-a-btn, #live-point-b-btn { transition: transform 0.06s, background 0.12s; }
+  #live-point-a-btn:active, #live-point-b-btn:active { transform: scale(0.94); background: var(--shuttle); color: #1a1a1a; }
+
+  .result { margin-top: 12px; font-size: 13px; color: var(--text-secondary); }
+  .row { display: flex; gap: 12px; flex-wrap: wrap; }
+  .row > div { flex: 1; min-width: 140px; }
+  table { width: 100%; border-collapse: collapse; margin-top: 12px; font-size: 13px; }
+  /* Wide tables (settlement, expenses, walk-ins, HoF) scroll sideways inside
+     their card on narrow screens instead of bleeding past the edge. */
+  [id$="-result"] { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  /* Native date pickers bring their own intrinsic width/centering (iOS
+     especially) and break the form grid - pin them to the same box model
+     and alignment as every other input. */
+  input[type="date"] { width: 100%; max-width: 100%; box-sizing: border-box;
+    -webkit-appearance: none; appearance: none; text-align: left; display: block; }
+  input[type="date"]::-webkit-date-and-time-value { text-align: left; }
+  [id$="-result"] table th { white-space: nowrap; }
+  th, td { text-align: left; padding: 8px; border-bottom: 1px solid var(--border); }
+  th { font-family: 'Rajdhani', sans-serif; font-weight: 700; color: var(--text-secondary); font-size: 12px; text-transform: uppercase; letter-spacing: 0.4px; }
+  td { font-variant-numeric: tabular-nums; }
+  .rating, .score-num { font-family: 'JetBrains Mono', monospace; }
+  .member-row { display: flex; justify-content: space-between; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--border); }
+  .member-row:last-child { border-bottom: none; }
+  .member-row button { margin-top: 0; padding: 5px 10px; font-size: 12px; }
+  hr { border: none; border-top: 1px solid var(--border); margin: 20px 0; }
+  .row strong { display: block; margin-bottom: 4px; font-size: 13px; }
+  .row select { margin-top: 4px; }
+  .fin-mem-card { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; margin-top: 8px; }
+  .fin-mem-card-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+  .fin-mem-card-name { font-weight: 600; }
+  .fin-mem-card select { width: auto; min-width: 90px; }
+  .fin-mem-card-pay { margin-top: 6px; font-size: 13px; }
+  .fin-mem-card-actions { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+  .fin-mem-card-actions button { padding: 6px 10px; font-size: 12px; margin-top: 0; white-space: nowrap; }
+  .bulk-roster-list { max-height: 260px; overflow-y: auto; border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; margin: 8px 0; }
+  .bulk-roster-item { display: flex; align-items: center; gap: 8px; padding: 4px 0; }
+  .bulk-roster-item input { width: auto; }
+
+  @media (max-width: 640px) {
+    .app-shell { padding: 0 10px 48px; }
+    .card { padding: 14px; border-radius: 10px; }
+    .row { flex-direction: column; }
+    .tab-btn { padding: 12px 14px 10px; font-size: 14px; }
+    .app-title h1 { font-size: 22px; }
+    .achievement-grid { grid-template-columns: repeat(2, 1fr); gap: 8px; }
+    .achievement-card { padding: 10px; }
+    .achievement-icon { font-size: 20px; }
+    .achievement-name { font-size: 13px; }
+    .achievement-desc { font-size: 11px; }
+  }

@@ -99,7 +99,7 @@ def classify(players, users):
         user_by_email[e] = u
         pid_by_email[e] = attr(u, 'custom:player_id')
 
-    buckets = {'healthy': [], 'claimed_unlinked': [], 'misstamp': [], 'unclaimed': []}
+    buckets = {'healthy': [], 'claimed_unlinked': [], 'misstamp': [], 'orphan_email': [], 'unclaimed': []}
     for p in players:
         email = (p.get('email') or '').lower()
         if not email:
@@ -107,8 +107,14 @@ def classify(players, users):
             continue
         owner_pid = pid_by_email.get(email)          # what that email's account owns
         if email not in user_by_email:
-            # email on the row but no Cognito account has it -> orphan stamp
-            buckets['misstamp'].append((p, email, '(no account)'))
+            # Email on the row but no Cognito account currently has it. This is
+            # NOT auto-stripped: it's usually a REAL claim whose account was
+            # later deleted (e.g. a user's duplicate login was removed), so the
+            # email is still rightfully theirs and the row is their profile.
+            # Stripping would wrongly un-claim them. Reported for a human to
+            # decide: relink a re-created account, or strip only if it really
+            # was a recorder using an address that never had an account.
+            buckets['orphan_email'].append((p, email))
         elif owner_pid == p['player_id']:
             buckets['healthy'].append(p)
         elif owner_pid is None:
@@ -131,6 +137,7 @@ def report(buckets):
     print(f"\nhealthy links ............. {len(buckets['healthy'])}")
     print(f"claimed but unlinked ...... {len(buckets['claimed_unlinked'])}   (--fix-links)")
     print(f"recorder mis-stamps ....... {len(buckets['misstamp'])}   (--fix-misstamps)")
+    print(f"orphaned email (no acct) .. {len(buckets['orphan_email'])}   (review by hand)")
     print(f"unclaimed profiles ........ {len(buckets['unclaimed'])}")
     print(f"accounts with no profile .. {len(buckets['unlinked_account'])}")
 
@@ -142,6 +149,11 @@ def report(buckets):
         print("\n-- recorder mis-stamps (wrong email on the row) --")
         for p, email, owner in buckets['misstamp']:
             print(f"   {label(p):28} stamped by {email} (that account owns {owner})")
+    if buckets['orphan_email']:
+        print("\n-- orphaned email: on the row, but no account has it now --")
+        print("   (likely a real claim whose login was deleted - NOT auto-stripped)")
+        for p, email in buckets['orphan_email']:
+            print(f"   {label(p):28} email {email}")
     if buckets['unclaimed']:
         print("\n-- unclaimed profiles (open to claim) --")
         for p in buckets['unclaimed']:
