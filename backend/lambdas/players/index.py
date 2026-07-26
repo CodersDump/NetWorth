@@ -524,6 +524,12 @@ def save_store_item(event):
     iid = body.get('item_id') or str(uuid.uuid4())
     row = {'item_id': iid, 'name': name, 'type': itype, 'cost': cost,
            'payload': body.get('payload') or {},
+           # The effect is what the item DOES - an identifier the app checks.
+           # cosmetics: {kind:'avatar_frame'|'name_color'|'banner_image'|
+           #   'background_image'|'title', value/image_url}; perks:
+           #   {kind:'rename_token'|'extra_group'|'xp_boost_token'}.
+           'effect': body.get('effect') or {},
+           'image_url': body.get('image_url') or None,
            'active': bool(body.get('active', True))}
     items = [i for i in items if i.get('item_id') != iid]
     items.append(row)
@@ -940,10 +946,27 @@ def create_upload_url(event):
     body = json.loads(event.get('body') or '{}')
     kind = body.get('kind')
     content_type = body.get('content_type')
-    if kind not in UPLOAD_KINDS:
-        return _response(400, {'error': "kind must be 'avatar' or 'banner'"})
     if content_type not in ALLOWED_UPLOAD_TYPES:
         return _response(400, {'error': 'only JPEG, PNG and WebP images are allowed'})
+
+    # Store cosmetic images are admin-uploaded and shared (not per-player),
+    # so they go in a store/ folder and require SuperAdmin.
+    if kind == 'store':
+        if not _is_super_admin(claims):
+            return _response(403, {'error': 'only a SuperAdmin can upload store images'})
+        ext = ALLOWED_UPLOAD_TYPES[content_type]
+        fingerprint = (body.get('fingerprint') or '').lower()
+        if not re.fullmatch(r'[0-9a-f]{8,64}', fingerprint):
+            fingerprint = uuid.uuid4().hex
+        key = f'uploads/store/{fingerprint}.{ext}'
+        s3 = boto3.client('s3')
+        url = s3.generate_presigned_url('put_object',
+            Params={'Bucket': UPLOADS_BUCKET, 'Key': key, 'ContentType': content_type},
+            ExpiresIn=300, HttpMethod='PUT')
+        return _response(200, {'upload_url': url, 'key': key})
+
+    if kind not in UPLOAD_KINDS:
+        return _response(400, {'error': "kind must be 'avatar' or 'banner'"})
 
     # The player_id is taken from the token, never the request body, so a
     # presigned URL can only ever write into the caller's own folder.
@@ -1112,19 +1135,48 @@ def update_my_card(event):
     return _response(200, {'player_id': player_id, 'avatar_id': avatar_id, 'banner_id': banner_id})
 
 
+def _consume_perk(player, player_id, effect_kind):
+    """Spends one token of a perk the player owns (by store item effect
+    kind). Returns True if a token was available and consumed, False if the
+    player has none. Owned perks are counts in owned_items keyed by item_id;
+    we resolve which owned items have this effect via the store catalog."""
+    catalog = _load_catalog()
+    owned = player.get('owned_items') or {}
+    # Find an owned perk item whose effect matches and still has a count.
+    for item in catalog:
+        eff = (item.get('payload') or {}).get('effect') or item.get('effect') or {}
+        if eff.get('kind') != effect_kind:
+            continue
+        iid = item.get('item_id')
+        have = int(owned.get(iid, 0) or 0)
+        if have > 0:
+            owned[iid] = have - 1
+            table.update_item(
+                Key={'player_id': player_id},
+                UpdateExpression='SET owned_items = :o',
+                ExpressionAttributeValues={':o': owned}
+            )
+            return True
+    return False
+
+
+# One free rename per player; further renames spend a rename_token perk.
+FREE_RENAMES = 1
+
+
 def rename_self(event):
-    """Self-service nickname change for the CALLER'S OWN linked player -
-    no CONFIRMATION_CODE needed (that's for admin actions on arbitrary
-    players), just being logged in, linked to a player, and passing the
-    gate above."""
+    """Self-service nickname change for the CALLER'S OWN linked player.
+    First rename is free; subsequent ones require a rename_token bought
+    from the store."""
     claims = _caller_claims(event)
     if not claims:
         return _response(403, {'error': 'log in to rename yourself'})
     player_id = claims.get('custom:player_id')
     if not player_id:
         return _response(403, {'error': 'your account is not linked to a player yet'})
-    if not _can_self_rename(claims):
-        return _response(403, {'error': 'renaming is not unlocked for your account yet'})
+
+    player = table.get_item(Key={'player_id': player_id}).get('Item') or {}
+    used = int(player.get('renames_used', 0) or 0)
 
     body = json.loads(event.get('body') or '{}')
     new_nickname = (body.get('nickname') or '').strip()
@@ -1136,12 +1188,20 @@ def rename_self(event):
     if any(p['player_id'] != player_id and p.get('nickname', '').strip().lower() == new_nickname for p in other_players):
         return _response(400, {'error': f'nickname "{new_nickname}" is already taken - nicknames must be unique'})
 
+    # Free allowance first, then a rename_token perk.
+    used_token = False
+    if used >= FREE_RENAMES:
+        if not _consume_perk(player, player_id, 'rename_token'):
+            return _response(402, {'error': 'You have used your free rename. Buy a rename token from the store to change your nickname again.',
+                                   'needs_perk': 'rename_token'})
+        used_token = True
+
     table.update_item(
         Key={'player_id': player_id},
-        UpdateExpression='SET nickname = :nk',
-        ExpressionAttributeValues={':nk': new_nickname}
+        UpdateExpression='SET nickname = :nk, renames_used = :ru',
+        ExpressionAttributeValues={':nk': new_nickname, ':ru': used + 1}
     )
-    return _response(200, {'player_id': player_id, 'nickname': new_nickname})
+    return _response(200, {'player_id': player_id, 'nickname': new_nickname, 'used_token': used_token})
 
 
 def update_player(player_id, event):

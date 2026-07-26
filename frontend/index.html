@@ -1348,9 +1348,33 @@
               <label>Name <input type="text" id="store-item-name" placeholder="Gold Avatar Frame"></label>
               <div class="row">
                 <div><label>Type
-                  <select id="store-item-type"><option value="cosmetic">Cosmetic</option><option value="perk">Perk</option></select>
+                  <select id="store-item-type" onchange="onStoreTypeChange()"><option value="cosmetic">Cosmetic</option><option value="perk">Perk</option></select>
                 </label></div>
                 <div><label>Cost (coins) <input type="number" id="store-item-cost" min="0" step="10" placeholder="80"></label></div>
+              </div>
+              <label>Effect
+                <select id="store-item-effect" onchange="onStoreEffectChange()">
+                  <optgroup label="Cosmetic" id="effect-group-cosmetic">
+                    <option value="avatar_frame">Avatar frame (image)</option>
+                    <option value="name_color">Name colour</option>
+                    <option value="banner_image">Premium banner (image)</option>
+                    <option value="background_image">Premium background (image)</option>
+                    <option value="title">Title / flair (text)</option>
+                    <option value="profile_effect">Profile effect</option>
+                  </optgroup>
+                  <optgroup label="Perk" id="effect-group-perk">
+                    <option value="rename_token">Rename token</option>
+                    <option value="extra_group">Extra group</option>
+                    <option value="xp_boost_token">XP boost token</option>
+                    <option value="streak_freeze">Streak freeze</option>
+                  </optgroup>
+                </select>
+              </label>
+              <label id="store-effect-value-row">Value (colour hex, title text, etc.) <input type="text" id="store-item-value" placeholder="#FFD700 or 'Champion'"></label>
+              <div id="store-image-row" style="display:none;">
+                <label>Image <input type="file" id="store-item-image" accept="image/jpeg,image/png,image/webp"></label>
+                <span id="store-image-status" style="font-size:12px;"></span>
+                <input type="hidden" id="store-item-image-key">
               </div>
               <button type="button" class="secondary" onclick="saveStoreItem()">Add item</button>
               <span id="store-save-status" style="font-size:12px; margin-left:8px;"></span>
@@ -2449,6 +2473,8 @@
           resultEl.textContent = `Created group: ${data.group_name}`;
           document.getElementById('group_name').value = '';
           loadGroups();
+        } else if (res.status === 402) {
+          resultEl.textContent = data.error + ' (Check the Store tab.)';
         } else {
           resultEl.textContent = `Error: ${data.error}`;
         }
@@ -3592,12 +3618,73 @@
       } catch (e) { listEl.textContent = 'Could not load items.'; }
     }
 
+    const STORE_IMAGE_EFFECTS = ['avatar_frame', 'banner_image', 'background_image', 'profile_effect'];
+
+    function onStoreTypeChange() {
+      const type = document.getElementById('store-item-type').value;
+      // Show only the matching effect optgroup by disabling the other's options.
+      document.querySelectorAll('#effect-group-cosmetic option').forEach(o => o.disabled = (type !== 'cosmetic'));
+      document.querySelectorAll('#effect-group-perk option').forEach(o => o.disabled = (type !== 'perk'));
+      // Jump selection to the first enabled option.
+      const sel = document.getElementById('store-item-effect');
+      const firstEnabled = Array.from(sel.options).find(o => !o.disabled);
+      if (firstEnabled) sel.value = firstEnabled.value;
+      onStoreEffectChange();
+    }
+
+    function onStoreEffectChange() {
+      const eff = document.getElementById('store-item-effect').value;
+      const needsImage = STORE_IMAGE_EFFECTS.includes(eff);
+      document.getElementById('store-image-row').style.display = needsImage ? 'block' : 'none';
+      document.getElementById('store-effect-value-row').style.display = needsImage ? 'none' : 'block';
+    }
+
+    async function uploadStoreImage(file) {
+      const statusEl = document.getElementById('store-image-status');
+      statusEl.textContent = 'Uploading...';
+      const buf = await file.arrayBuffer();
+      const hashBuf = await crypto.subtle.digest('SHA-256', buf);
+      const fingerprint = Array.from(new Uint8Array(hashBuf)).map(b => b.toString(16).padStart(2, '0')).join('').slice(0, 32);
+      const { res, data, error } = await authedFetch(`${API_BASE_URL}/upload-url`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ kind: 'store', content_type: file.type, fingerprint })
+      });
+      if (!res.ok) { statusEl.textContent = `Error: ${error}`; return null; }
+      const put = await fetch(data.upload_url, { method: 'PUT', headers: { 'Content-Type': file.type }, body: file });
+      if (!put.ok) { statusEl.textContent = 'Upload failed.'; return null; }
+      statusEl.textContent = 'Uploaded ✓';
+      return data.key;
+    }
+
     async function saveStoreItem() {
       const statusEl = document.getElementById('store-save-status');
+      const effKind = document.getElementById('store-item-effect').value;
+      const type = document.getElementById('store-item-type').value;
+      let effect = { kind: effKind };
+      let image_url = null;
+
+      if (STORE_IMAGE_EFFECTS.includes(effKind)) {
+        const fileInput = document.getElementById('store-item-image');
+        const existingKey = document.getElementById('store-item-image-key').value;
+        if (fileInput.files[0]) {
+          const key = await uploadStoreImage(fileInput.files[0]);
+          if (!key) { statusEl.textContent = 'Image upload failed.'; return; }
+          image_url = key;
+        } else if (existingKey) {
+          image_url = existingKey;
+        } else {
+          statusEl.textContent = 'Pick an image for this cosmetic.'; return;
+        }
+        effect.image_url = image_url;
+      } else {
+        const val = document.getElementById('store-item-value').value.trim();
+        if (val) effect.value = val;
+      }
+
       const body = {
         name: document.getElementById('store-item-name').value.trim(),
-        type: document.getElementById('store-item-type').value,
-        cost: parseInt(document.getElementById('store-item-cost').value, 10)
+        type, cost: parseInt(document.getElementById('store-item-cost').value, 10),
+        effect, image_url
       };
       if (!body.name || isNaN(body.cost)) { statusEl.textContent = 'Name and cost required.'; return; }
       statusEl.textContent = 'Saving...';
@@ -3609,6 +3696,7 @@
         statusEl.textContent = 'Saved.';
         document.getElementById('store-item-name').value = '';
         document.getElementById('store-item-cost').value = '';
+        document.getElementById('store-item-image-key').value = '';
         loadStoreAdmin();
       } catch (e) { statusEl.textContent = `Failed: ${e.message}`; }
     }
@@ -7475,6 +7563,7 @@
           loadEventsAdmin();
           loadStoreAdmin();
           loadQuestsAdmin();
+          if (typeof onStoreTypeChange === 'function') onStoreTypeChange();
         }
         if (btn.dataset.tab === 'store') {
           loadStore();

@@ -267,10 +267,49 @@ def create_group_enforced(event):
     had - not worse, just not improved for unlinked accounts either)."""
     claims = _caller_claims(event)
     body = json.loads(event.get('body') or '{}')
-    body['creator_player_id'] = claims.get('custom:player_id')  # overrides anything the client sent
+    creator_pid = claims.get('custom:player_id')
+    body['creator_player_id'] = creator_pid  # overrides anything the client sent
+
+    # One group free per person; a second+ needs an extra_group perk bought
+    # from the store. SuperAdmins are exempt (they manage the club).
+    if creator_pid and not _is_super_admin(claims):
+        all_groups = groups_table.scan().get('Items', [])
+        owned_count = sum(1 for g in all_groups
+                          if (g.get('roles') or {}).get(creator_pid) == 'owner'
+                          or g.get('creator_player_id') == creator_pid)
+        FREE_GROUPS = 1
+        if owned_count >= FREE_GROUPS:
+            if not _consume_extra_group_perk(creator_pid):
+                return _response(402, {'error': 'You already have your free group. Buy an "extra group" perk from the store to create another.',
+                                       'needs_perk': 'extra_group'})
+
     patched_event = dict(event)
     patched_event['body'] = json.dumps(body)
     return create_group(patched_event)
+
+
+def _consume_extra_group_perk(player_id):
+    """Spend one extra_group token if the player owns one. Mirrors the
+    players-Lambda perk consumption, reading the shared player record and
+    store catalog (both in the players table)."""
+    player = players_table.get_item(Key={'player_id': player_id}).get('Item') or {}
+    owned = player.get('owned_items') or {}
+    catalog_row = players_table.get_item(Key={'player_id': '__store_catalog__'}).get('Item') or {}
+    for item in catalog_row.get('items', []):
+        eff = item.get('effect') or (item.get('payload') or {}).get('effect') or {}
+        if eff.get('kind') != 'extra_group':
+            continue
+        iid = item.get('item_id')
+        have = int(owned.get(iid, 0) or 0)
+        if have > 0:
+            owned[iid] = have - 1
+            players_table.update_item(
+                Key={'player_id': player_id},
+                UpdateExpression='SET owned_items = :o',
+                ExpressionAttributeValues={':o': owned}
+            )
+            return True
+    return False
 
 
 def visible_players_for_caller(event):
