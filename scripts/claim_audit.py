@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """
+<<<<<<< HEAD
 Audit (and optionally repair) NetWorth claim linkage.
 
 Two facts define ownership, in two systems:
@@ -38,6 +39,44 @@ profile/env. Overrides: NETWORTH_STACK, NETWORTH_POOL_ID, NETWORTH_TABLE.
 
 After --fix-links, affected users must log out/in (ID token is baked at login).
 After --fix-misstamps, the freed profiles show up in the claim picker again.
+=======
+Audit (and optionally repair) NetWorth claim-linkage drift.
+
+Background
+----------
+A player profile counts as "claimed" the moment its DynamoDB row has an
+`email` (players Lambda: `'claimed': bool(i.get('email'))`). The account is
+actually usable only when the matching Cognito user carries `custom:player_id`.
+Those are two separate writes in two separate systems.
+
+The old self-service /claim-player wrote the DynamoDB email server-side but
+left the Cognito `custom:player_id` to a client-side updateAttributes call.
+When that client call didn't land, the profile was left claimed-but-unlinked
+and un-retryable (the "email already set" guard blocks a second attempt).
+
+This script finds those accounts: a Cognito user whose email matches a
+player row, but whose custom:player_id is empty. With --fix it writes the
+missing custom:player_id via the admin API.
+
+The backend fix (claim_player now links both sides server-side) stops NEW
+drift; this script cleans up anyone already stranded.
+
+Usage
+-----
+    python scripts/claim_audit.py          # report only, changes nothing
+    python scripts/claim_audit.py --fix    # repair the accounts it finds
+
+POOL_ID auto-resolves from the `networth-app` CloudFormation stack outputs.
+Region comes from your default AWS profile/env (AWS_REGION or ~/.aws/config).
+Override either with the env vars below if you need to.
+
+    NETWORTH_STACK      default: networth-app
+    NETWORTH_POOL_ID    skip stack lookup and use this pool id directly
+    NETWORTH_TABLE      default: networth-players
+
+Repaired users must log out and back in for the restored link to appear in
+their session (ID tokens are baked at login).
+>>>>>>> 19cfaf1e885a0dd4b17b392a1464d0cf69a64da4
 """
 import argparse
 import os
@@ -57,7 +96,12 @@ def resolve_pool_id():
     for o in outs:
         if o['OutputKey'] == 'UserPoolId':
             return o['OutputValue']
+<<<<<<< HEAD
     sys.exit(f"No UserPoolId output on stack '{STACK}'. Set NETWORTH_POOL_ID.")
+=======
+    sys.exit(f"Could not find UserPoolId output on stack '{STACK}'. "
+             f"Set NETWORTH_POOL_ID to override.")
+>>>>>>> 19cfaf1e885a0dd4b17b392a1464d0cf69a64da4
 
 
 def scan_all(table):
@@ -84,6 +128,7 @@ def attr(user, name):
     return next((a['Value'] for a in user['Attributes'] if a['Name'] == name), None)
 
 
+<<<<<<< HEAD
 def classify(players, users):
     """Returns dict of bucket -> list of rows, plus the lookup maps."""
     # config rows aren't players
@@ -194,13 +239,55 @@ def main(args):
         fix_misstamps(table, buckets)
     else:
         report(buckets)
+=======
+def main(fix):
+    pool_id = resolve_pool_id()
+    ddb = boto3.resource('dynamodb').Table(TABLE)
+    idp = boto3.client('cognito-idp')
+
+    by_email = {p['email'].lower(): p for p in scan_all(ddb) if p.get('email')}
+
+    stuck = []
+    for u in users_all(idp, pool_id):
+        email = (attr(u, 'email') or '').lower()
+        pid = attr(u, 'custom:player_id')
+        p = by_email.get(email)
+        if p and not pid:                     # claimed in DDB, unlinked in Cognito
+            stuck.append((u['Username'], email, p['player_id'], p.get('nickname')))
+
+    if not stuck:
+        print('No drift: every claimed profile has a linked account.')
+        return
+
+    print(f'{len(stuck)} claimed-but-unlinked account(s):\n')
+    for username, email, pid, nick in stuck:
+        print(f'  {email:32} -> player {pid}  ({nick})')
+        if fix:
+            idp.admin_update_user_attributes(
+                UserPoolId=pool_id,
+                Username=username,
+                UserAttributes=[{'Name': 'custom:player_id', 'Value': pid}])
+            print('      linked.')
+
+    if fix:
+        print('\nDone. Tell these users to log out and back in so the link '
+              'shows up in their session.')
+    else:
+        print('\nRe-run with --fix to write custom:player_id for these.')
+>>>>>>> 19cfaf1e885a0dd4b17b392a1464d0cf69a64da4
 
 
 if __name__ == '__main__':
     ap = argparse.ArgumentParser(description='Audit/repair NetWorth claim linkage.')
+<<<<<<< HEAD
     g = ap.add_mutually_exclusive_group()
     g.add_argument('--fix-links', action='store_true',
                    help='set custom:player_id for claimed-but-unlinked accounts')
     g.add_argument('--fix-misstamps', action='store_true',
                    help='strip the wrong recorder email off mis-stamped player rows')
     main(ap.parse_args())
+=======
+    ap.add_argument('--fix', action='store_true',
+                    help='write the missing custom:player_id (default: report only)')
+    main(ap.parse_args().fix)
+>>>>>>> 19cfaf1e885a0dd4b17b392a1464d0cf69a64da4
