@@ -33,6 +33,7 @@ import os
 import re
 import uuid
 import boto3
+from datetime import datetime, timezone
 
 dynamodb = boto3.resource('dynamodb')
 groups_table = dynamodb.Table(os.environ['GROUPS_TABLE'])
@@ -220,12 +221,17 @@ def register_and_join(event):
     player_id = str(uuid.uuid4())
     players_table.put_item(Item={
         'player_id': player_id, 'name': name, 'nickname': nickname, 'skill_level': skill_level, 'rating': 1000,
-        # Without this, login-by-name/nickname (lookup_email_for_login in
-        # the players Lambda) silently can't find this account - only
-        # the admin bulk-provisioning script wrote email back before this
-        # fix, so anyone who came through self-signup was invisible to
-        # that lookup despite having a perfectly valid linked account.
-        'email': claims.get('email')
+        # Attribution only - who added this roster entry - matching the
+        # /register route in register_player. This deliberately does NOT set
+        # `email`: a player added through here is almost always someone ELSE
+        # (a teammate/opponent added from the match screen), so writing the
+        # recorder's email marked the new player claimed-by-recorder, hid
+        # them from their own claim picker, and blocked them from ever
+        # claiming themselves. `email` is the claim signal and is set only
+        # when the real person claims (claim_player) or self-creates a
+        # profile (new_profile) - both of which set it to their OWN email.
+        'created_by': claims.get('email'),
+        'created_at': datetime.now(timezone.utc).isoformat()
     })
 
     added_to = None
@@ -322,6 +328,14 @@ def visible_players_for_caller(event):
         return _response(403, {'error': 'log in to see visible players'})
 
     all_players = players_table.scan().get('Items', [])
+    # The players table also holds reserved config rows (__app_settings__,
+    # __store_catalog__) that aren't players and have no `name`. GET /players
+    # filters these; this route did not - so a SuperAdmin (who gets every
+    # row) hit shape()'s p['name'] on a nameless sentinel, 500'd, and the
+    # frontend silently blanked the Player Card picker. Filtering by the
+    # `__` prefix also catches any future sentinel without another edit here.
+    all_players = [p for p in all_players
+                   if not str(p.get('player_id', '')).startswith('__')]
     if _is_super_admin(claims):
         visible = all_players
     else:
@@ -344,7 +358,7 @@ def visible_players_for_caller(event):
     show_audit = _is_super_admin(claims)
 
     def shape(p):
-        row = {'player_id': p['player_id'], 'name': p['name'], 'nickname': p.get('nickname'),
+        row = {'player_id': p['player_id'], 'name': p.get('name'), 'nickname': p.get('nickname'),
                'rating': p.get('rating', 1000), 'avatar_id': p.get('avatar_id'),
                'banner_id': p.get('banner_id'), 'background_id': p.get('background_id'),
                'avatar_url': p.get('avatar_url'), 'banner_url': p.get('banner_url'),
