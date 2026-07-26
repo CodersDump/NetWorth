@@ -229,6 +229,24 @@ def claim_player(event):
     if player.get('email'):
         return _response(400, {'error': 'this player is already linked to an account'})
 
+    # Link BOTH sides here, server-side, exactly like decide_claim_request's
+    # approve branch does. The old version wrote only the DynamoDB email and
+    # left custom:player_id to a client-side updateAttributes call. When that
+    # client call didn't land (flaky network, tab closed, stale token), the
+    # profile was left claimed (email set -> bool(email) True) but the account
+    # was never linked - and the `if player.get('email')` guard above then
+    # blocked any retry, stranding the user permanently.
+    #
+    # Cognito FIRST, on purpose: if admin_update_user_attributes raises, the
+    # email write below never runs, so a failure leaves the profile still
+    # claimable rather than half-claimed.
+    username = claims.get('cognito:username') or claims.get('email')
+    if USER_POOL_ID:
+        boto3.client('cognito-idp').admin_update_user_attributes(
+            UserPoolId=USER_POOL_ID,
+            Username=username,
+            UserAttributes=[{'Name': 'custom:player_id', 'Value': player_id}]
+        )
     table.update_item(
         Key={'player_id': player_id},
         UpdateExpression='SET email = :e',
