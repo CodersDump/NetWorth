@@ -119,6 +119,18 @@
   .review-badge { background:var(--smash); color:#fff; border-radius:10px; padding:1px 8px; font-size:11px; font-weight:700; }
   .review-badge:empty { display:none; }
 
+  /* Capsule slider toggle - wrap a checkbox in <label class="switch"> with
+     a <span class="slider"></span> after the input. */
+  .switch { position:relative; display:inline-block; width:44px; height:24px; flex:none; }
+  .switch input { opacity:0; width:0; height:0; position:absolute; }
+  .switch .slider { position:absolute; inset:0; cursor:pointer; background:var(--surface-2);
+    border:1px solid var(--border); border-radius:24px; transition:0.2s; }
+  .switch .slider::before { content:''; position:absolute; height:18px; width:18px; left:2px; top:2px;
+    background:#fff; border-radius:50%; transition:0.2s; box-shadow:0 1px 3px rgba(0,0,0,0.3); }
+  .switch input:checked + .slider { background:var(--court); border-color:var(--court); }
+  .switch input:checked + .slider::before { transform:translateX(20px); }
+  .switch-row { display:flex; align-items:center; gap:10px; }
+
   body {
     font-family: 'Inter', sans-serif;
     background: transparent;
@@ -1082,9 +1094,10 @@
         <div class="card">
           <h2>Finance settings</h2>
           <p class="card-sub">When enabled, a "Walk-in guests" card appears on the Stats tab for everyone - names, dates and slots only. Fees, skill ratings and recruit verdicts are never exposed there.</p>
-          <label style="display:flex; align-items:center; gap:8px;">
-            <input type="checkbox" id="finance_walkins_public" style="width:auto;"> Walk-in list visible to everyone
-          </label>
+          <div class="switch-row">
+            <label class="switch"><input type="checkbox" id="finance_walkins_public"><span class="slider"></span></label>
+            <span>Walk-in list visible to everyone</span>
+          </div>
           <div data-fin-min="write" style="margin-top:14px; border-top:1px solid var(--border); padding-top:12px;">
             <p style="font-size:13px; font-weight:600; margin:0 0 4px;">UPI payment details</p>
             <p class="card-sub" style="margin:0 0 8px;">Shown on the public "Pay the club" card. The QR is generated from this ID automatically.</p>
@@ -1103,6 +1116,12 @@
         <p class="card-sub">Spend the coins you earn levelling up. Cosmetics are yours once bought; perks like rename tokens can be bought again.</p>
         <p style="font-size:14px; margin:8px 0;">Your balance: <strong id="store-balance">0</strong> 🪙</p>
         <div id="store-items" style="display:grid; grid-template-columns:repeat(auto-fill,minmax(200px,1fr)); gap:12px; margin-top:12px;"></div>
+      </div>
+
+      <div class="card">
+        <h2>Weekly quests</h2>
+        <p class="card-sub">Complete these before the week resets (Monday). Claim each reward once it's done.</p>
+        <div id="quests-list" style="margin-top:12px;"></div>
       </div>
     </div>
 
@@ -1273,14 +1292,49 @@
         </details>
 
         <details class="review-section">
-          <summary>Onboarding settings</summary>
+          <summary>Feature settings</summary>
           <div style="padding:10px 0;">
-            <label style="display:flex; align-items:center; gap:8px;">
-              <input type="checkbox" id="app-instant-create" style="width:auto;" onchange="setInstantCreate(this.checked)">
-              Let new players create a profile instantly (skip approval)
-            </label>
-            <p class="card-sub" style="margin:6px 0 0;">Off by default: a new sign-up's "create profile" goes to the request queue above. Turn on during a busy session so new people can start playing without waiting for you to approve each one. Claiming an existing profile always needs approval regardless.</p>
+            <div class="switch-row">
+              <label class="switch"><input type="checkbox" id="app-instant-create" onchange="setInstantCreate(this.checked)"><span class="slider"></span></label>
+              <span>Let new players create a profile instantly (skip approval)</span>
+            </div>
+            <p class="card-sub" style="margin:6px 0 14px;">Off by default: a new sign-up's "create profile" goes to the request queue above. Turn on during a busy session so new people can start playing without waiting. Claiming an existing profile always needs approval.</p>
             <span id="app-instant-create-status" style="font-size:12px;"></span>
+
+            <div class="switch-row" style="margin-top:12px;">
+              <label class="switch"><input type="checkbox" id="app-xp-public" onchange="setXpPublic(this.checked)"><span class="slider"></span></label>
+              <span>Show levels, coins, store &amp; quests to everyone</span>
+            </div>
+            <p class="card-sub" style="margin:6px 0 0;">Off during soft launch (admin-only preview). Flip on to reveal the whole gamification layer - level under the banner, coin balance, the Store tab, and weekly quests - to all players.</p>
+            <span id="app-xp-public-status" style="font-size:12px;"></span>
+          </div>
+        </details>
+
+        <details class="review-section">
+          <summary>Weekly quests</summary>
+          <div style="padding:10px 0;">
+            <p class="card-sub" style="margin:0 0 10px;">Tasks players complete during the week for XP, coins, or a cosmetic. Progress is checked against real match history; players claim when done. Resets each Monday.</p>
+            <div id="quests-admin-list" style="font-size:13px; margin-bottom:12px;"></div>
+            <div style="border-top:1px solid var(--border); padding-top:10px;">
+              <p style="font-size:13px; font-weight:600; margin:0 0 6px;">Add a quest</p>
+              <label>Task
+                <select id="quest-type">
+                  <option value="win_count">Win N matches</option>
+                  <option value="play_count">Play N matches</option>
+                  <option value="win_margin">Win N matches by 10+ points</option>
+                  <option value="win_deuce">Win N deuce matches</option>
+                  <option value="beat_higher">Beat a higher-rated opponent N times</option>
+                </select>
+              </label>
+              <div class="row">
+                <div><label>Target (N) <input type="number" id="quest-target" min="1" value="5"></label></div>
+                <div><label>Reward XP <input type="number" id="quest-xp" min="0" step="10" value="50"></label></div>
+                <div><label>Reward coins <input type="number" id="quest-coins" min="0" step="10" value="0"></label></div>
+              </div>
+              <label>Reward cosmetic (optional, store item id) <input type="text" id="quest-cosmetic" placeholder="leave blank for none"></label>
+              <button type="button" class="secondary" onclick="saveQuest()">Add quest</button>
+              <span id="quest-save-status" style="font-size:12px; margin-left:8px;"></span>
+            </div>
           </div>
         </details>
 
@@ -3336,7 +3390,25 @@
         const data = await res.json();
         const cb = document.getElementById('app-instant-create');
         if (cb) cb.checked = !!data.instant_create;
+        const xc = document.getElementById('app-xp-public');
+        if (xc) xc.checked = !!data.xp_public;
+        xpPublic = !!data.xp_public;
       } catch (_) { /* leave unchecked */ }
+    }
+
+    async function setXpPublic(value) {
+      const statusEl = document.getElementById('app-xp-public-status');
+      statusEl.textContent = 'Saving...';
+      try {
+        const { res, error } = await authedFetch(`${API_BASE_URL}/app-settings`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ key: 'xp_public', value })
+        });
+        if (!res.ok) { statusEl.textContent = `Error: ${error}`; return; }
+        xpPublic = value;
+        statusEl.textContent = value ? 'Everyone can now see levels, coins, store & quests.' : 'Gamification is admin-only again.';
+        updateAuthUI();
+      } catch (e) { statusEl.textContent = `Failed: ${e.message}`; }
     }
 
     async function setInstantCreate(value) {
@@ -3349,6 +3421,110 @@
         });
         statusEl.textContent = res.ok ? (value ? 'Instant create is ON.' : 'Instant create is OFF - new profiles need approval.') : `Error: ${error}`;
       } catch (e) { statusEl.textContent = `Failed: ${e.message}`; }
+    }
+
+    // ---------- Quests ----------
+    async function loadQuests() {
+      const el = document.getElementById('quests-list');
+      if (!el) return;
+      el.innerHTML = 'Loading...';
+      try {
+        const { res, data } = await authedFetch(`${API_BASE_URL}/quests`);
+        if (!res.ok) { el.innerHTML = '<p class="card-sub">Could not load quests.</p>'; return; }
+        const quests = data.quests || [];
+        if (!quests.length) { el.innerHTML = '<p class="card-sub" style="margin:0;">No quests this week.</p>'; return; }
+        el.innerHTML = quests.map(q => {
+          const pct = Math.min(100, Math.round((q.progress / q.target) * 100));
+          const rewards = [];
+          if (q.reward_xp) rewards.push(`${q.reward_xp} XP`);
+          if (q.reward_coins) rewards.push(`${q.reward_coins} 🪙`);
+          if (q.reward_cosmetic_id) rewards.push('a cosmetic');
+          let action;
+          if (q.claimed) action = '<span style="color:#2FA968; font-weight:600; font-size:13px;">Claimed ✓</span>';
+          else if (q.complete) action = `<button style="margin:0; padding:4px 12px; font-size:12px;" onclick="claimQuest('${q.quest_id}')">Claim ${rewards.join(' + ')}</button>`;
+          else action = `<span style="font-size:12px; opacity:0.6;">Reward: ${rewards.join(' + ')}</span>`;
+          return `<div style="padding:10px 0; border-bottom:1px solid var(--border);">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+              <span style="font-weight:600;">${escapeHtml(q.label)}</span>${action}
+            </div>
+            <div style="display:flex; align-items:center; gap:8px;">
+              <div style="flex:1; height:8px; background:var(--surface-2); border-radius:4px; overflow:hidden;">
+                <div style="height:100%; width:${pct}%; background:linear-gradient(90deg, var(--court), #2FA968);"></div>
+              </div>
+              <span style="font-size:12px; opacity:0.7;">${q.progress}/${q.target}</span>
+            </div>
+          </div>`;
+        }).join('');
+      } catch (e) { el.innerHTML = '<p class="card-sub">Could not load quests.</p>'; }
+    }
+
+    async function claimQuest(questId) {
+      try {
+        const { res, data, error } = await authedFetch(`${API_BASE_URL}/quest-claim`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ quest_id: questId })
+        });
+        if (!res.ok) { alert(`Error: ${error}`); return; }
+        const bits = [];
+        if (data.reward_xp) bits.push(`${data.reward_xp} XP`);
+        if (data.reward_coins) bits.push(`${data.reward_coins} coins`);
+        if (data.reward_cosmetic) bits.push('a cosmetic');
+        alert(`Claimed! You earned ${bits.join(' + ')}.`);
+        await loadPlayers(); updateHeaderCoins(); loadQuests(); loadStore();
+      } catch (e) { alert(`Failed: ${e.message}`); }
+    }
+
+    // Admin quest management (in Reviews & Approvals)
+    async function loadQuestsAdmin() {
+      const listEl = document.getElementById('quests-admin-list');
+      if (!listEl) return;
+      try {
+        const { res, data } = await authedFetch(`${API_BASE_URL}/quests`);
+        if (!res.ok) { listEl.textContent = 'Could not load.'; return; }
+        const quests = data.quests || [];
+        if (!quests.length) { listEl.innerHTML = '<p class="card-sub" style="margin:0;">No quests yet.</p>'; return; }
+        listEl.innerHTML = quests.map(q => {
+          const r = [];
+          if (q.reward_xp) r.push(`${q.reward_xp}XP`);
+          if (q.reward_coins) r.push(`${q.reward_coins}🪙`);
+          if (q.reward_cosmetic_id) r.push('cosmetic');
+          return `<div style="display:flex; justify-content:space-between; align-items:center; padding:6px 0; border-bottom:1px solid var(--border);">
+            <span><strong>${escapeHtml(q.label)}</strong> <span style="opacity:0.6;">→ ${r.join(' + ') || 'no reward'}</span></span>
+            <button class="secondary" style="margin:0; padding:2px 8px; font-size:11px;" onclick="deleteQuest('${q.quest_id}')">Delete</button>
+          </div>`;
+        }).join('');
+      } catch (e) { listEl.textContent = 'Could not load.'; }
+    }
+
+    async function saveQuest() {
+      const statusEl = document.getElementById('quest-save-status');
+      const body = {
+        type: document.getElementById('quest-type').value,
+        target: parseInt(document.getElementById('quest-target').value, 10),
+        reward_xp: parseInt(document.getElementById('quest-xp').value, 10) || 0,
+        reward_coins: parseInt(document.getElementById('quest-coins').value, 10) || 0,
+        reward_cosmetic_id: document.getElementById('quest-cosmetic').value || null
+      };
+      if (isNaN(body.target) || body.target < 1) { statusEl.textContent = 'Target must be at least 1.'; return; }
+      statusEl.textContent = 'Saving...';
+      try {
+        const { res, error } = await authedFetch(`${API_BASE_URL}/quests`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+        });
+        if (!res.ok) { statusEl.textContent = `Error: ${error}`; return; }
+        statusEl.textContent = 'Saved.';
+        loadQuestsAdmin();
+      } catch (e) { statusEl.textContent = `Failed: ${e.message}`; }
+    }
+
+    async function deleteQuest(questId) {
+      if (!confirm('Delete this quest? Players who already claimed it keep their reward.')) return;
+      try {
+        const { res, error } = await authedFetch(`${API_BASE_URL}/quests`, {
+          method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ quest_id: questId })
+        });
+        if (!res.ok) { alert(`Error: ${error}`); return; }
+        loadQuestsAdmin();
+      } catch (e) { alert(`Failed: ${e.message}`); }
     }
 
     // ---------- Store ----------
@@ -4248,13 +4424,13 @@
       // Level under the banner name.
       if (bannerLevel) {
         bannerLevel.textContent = `Level ${level}`;
-        bannerLevel.style.display = isSuperAdmin() ? 'block' : 'none';
+        bannerLevel.style.display = xpVisible() ? 'block' : 'none';
       }
 
       // The progress bar now sits inside the Player Card, right under the
       // banner - admin-only during soft launch.
       if (!inline) return;
-      if (!isSuperAdmin()) { inline.style.display = 'none'; return; }
+      if (!xpVisible()) { inline.style.display = 'none'; return; }
       inline.style.display = 'block';
       document.getElementById('profile-xp-current').textContent = `${xp.toLocaleString()} XP`;
       document.getElementById('profile-xp-next').textContent = `${(nextFloor - xp).toLocaleString()} to level ${level + 1}`;
@@ -4268,7 +4444,7 @@
       const chip = document.getElementById('header-coins');
       if (!chip) return;
       const me = allPlayers.find(p => p.player_id === myPlayerId());
-      if (me && isSuperAdmin()) {
+      if (me && xpVisible()) {
         document.getElementById('header-coins-num').textContent = Number(me.coins || 0).toLocaleString();
         chip.style.display = 'inline-block';
       } else {
@@ -4774,6 +4950,11 @@
 
     let financeKey = sessionStorage.getItem('nw_finance_key') || '';
     let myFinanceRole = 'none';  // none < view < write < delete
+    let xpPublic = false;  // when a SuperAdmin flips it on, the XP/level/coins/store/quests UI shows for everyone
+    /** Whether the gamification UI (levels, coins, store, quests) is visible
+     *  to the current user: always for admins, and for everyone once the
+     *  admin has made it public. */
+    function xpVisible() { return isSuperAdmin() || xpPublic; }
     const FIN_LEVEL = { none:0, view:1, write:2, delete:3 };
 
     /** Hides finance controls above the caller's role. View-only users see
@@ -5556,7 +5737,7 @@
       const reviewBtn = document.getElementById('review-tab-btn');
       if (reviewBtn) reviewBtn.style.display = isSuperAdmin() ? '' : 'none';
       const storeBtn = document.getElementById('store-tab-btn');
-      if (storeBtn) storeBtn.style.display = isSuperAdmin() ? '' : 'none';
+      if (storeBtn) storeBtn.style.display = xpVisible() ? '' : 'none';
       if (typeof updateHeaderCoins === 'function') updateHeaderCoins();
 
       // Epic 7: guests see a login prompt instead of the match/tournament
@@ -6111,6 +6292,13 @@
       await loadPlayers();
       await loadGroups();
       refreshEventBanner();
+      // Learn whether the admin has made the gamification UI public, so
+      // non-admins see levels/coins/store/quests when it's enabled.
+      try {
+        const asRes = await fetch(`${API_BASE_URL}/app-settings`);
+        if (asRes.ok) { xpPublic = !!(await asRes.json()).xp_public; }
+      } catch (_) {}
+      if (typeof updateAuthUI === 'function') updateAuthUI();
       loadTournamentGroupOptions();
       loadTournamentsList();
       loadRankings();
@@ -7286,9 +7474,11 @@
           loadAppSettings();
           loadEventsAdmin();
           loadStoreAdmin();
+          loadQuestsAdmin();
         }
         if (btn.dataset.tab === 'store') {
           loadStore();
+          loadQuests();
         }
         if (btn.dataset.tab === 'finance'
             && document.getElementById('finance-content').style.display !== 'block') {

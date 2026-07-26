@@ -108,6 +108,217 @@ def xp_for_match(stage, won, margin=0):
 # covers ITS date - not "now" - so a recompute always reproduces the same
 # totals. Overlapping events take the highest multiplier.
 _EVENTS_ROW_ID = '__events__'
+_QUESTS_ROW_ID = '__quests__'
+
+# Weekly quest condition types. Each is a rule evaluated against a player's
+# matches for the current week. The admin picks a type + target + reward.
+# Detection reads existing match fields (winner, scores, ratings_after) - no
+# new capture needed. Adding a new type here is the only code change a new
+# kind of task requires.
+QUEST_TYPES = {
+    'win_count':   'Win {target} matches',
+    'play_count':  'Play {target} matches',
+    'win_margin':  'Win {target} matches by 10+ points',
+    'win_deuce':   'Win {target} deuce matches (won by exactly 2 after 20)',
+    'beat_higher': 'Beat a higher-rated opponent {target} times',
+}
+
+
+def _load_quests():
+    item = matches_table.get_item(Key={'match_id': _QUESTS_ROW_ID}).get('Item') or {}
+    return item.get('quests', [])
+
+
+def _week_bounds_utc(now=None):
+    """Monday 00:00 (inclusive) to next Monday (exclusive), as ISO date
+    strings - the same week boundary the reorder lock and scheduler use."""
+    from datetime import datetime as _dt, timezone as _tz, timedelta as _td
+    now = now or _dt.now(_tz.utc)
+    monday = (now - _td(days=now.weekday())).strftime('%Y-%m-%d')
+    next_monday = (now - _td(days=now.weekday()) + _td(days=7)).strftime('%Y-%m-%d')
+    return monday, next_monday
+
+
+def _evaluate_quest(quest, player_id, week_matches, player_rating_by_id):
+    """Returns how many times the player has satisfied this quest's condition
+    among the week's matches. Capped display against target happens in the
+    caller."""
+    qtype = quest.get('type')
+    count = 0
+    for m in week_matches:
+        team_a = m.get('team_a') or []
+        team_b = m.get('team_b') or []
+        in_a = player_id in team_a
+        in_b = player_id in team_b
+        if not (in_a or in_b):
+            continue
+        winner = m.get('winner')
+        won = (winner == 'A' and in_a) or (winner == 'B' and in_b)
+        try:
+            margin = abs(int(m.get('score_a', 0)) - int(m.get('score_b', 0)))
+            hi = max(int(m.get('score_a', 0)), int(m.get('score_b', 0)))
+        except (TypeError, ValueError):
+            margin, hi = 0, 0
+
+        if qtype == 'play_count':
+            count += 1
+        elif qtype == 'win_count' and won:
+            count += 1
+        elif qtype == 'win_margin' and won and margin >= 10:
+            count += 1
+        elif qtype == 'win_deuce' and won and hi > 21 and margin == 2:
+            count += 1
+        elif qtype == 'beat_higher' and won:
+            # Beat someone whose pre-match rating was higher than yours.
+            after = m.get('ratings_after') or {}
+            opp_ids = team_b if in_a else team_a
+            my_after = after.get(player_id)
+            opp_afters = [after.get(o) for o in opp_ids if after.get(o) is not None]
+            # Fall back to current ratings if a match predates ratings_after.
+            if my_after is None:
+                my_after = player_rating_by_id.get(player_id, 1000)
+            if not opp_afters:
+                opp_afters = [player_rating_by_id.get(o, 1000) for o in opp_ids]
+            if opp_afters and max(opp_afters) > my_after:
+                count += 1
+    return count
+
+
+def list_quests(event):
+    """Returns this week's quests with the caller's progress and claim state.
+    Public-ish: requires a linked player to show progress, but the quest
+    definitions themselves are visible to anyone logged in."""
+    claims = _caller_claims(event)
+    pid = claims.get('custom:player_id')
+    quests = _load_quests()
+
+    monday, next_monday = _week_bounds_utc()
+    all_matches = [m for m in matches_table.scan().get('Items', [])
+                   if m.get('match_id') not in (_EVENTS_ROW_ID, _QUESTS_ROW_ID)]
+    week_matches = [m for m in all_matches
+                    if monday <= (m.get('date') or '')[:10] < next_monday]
+
+    player = players_table.get_item(Key={'player_id': pid}).get('Item') if pid else None
+    rating_by_id = {}  # lazy - only needed for beat_higher fallback
+    claimed = (player or {}).get('quest_claims', {}) if player else {}
+    week_key = monday  # claims are namespaced by week so they reset weekly
+
+    out = []
+    for q in quests:
+        target = int(q.get('target', 1))
+        progress = _evaluate_quest(q, pid, week_matches, rating_by_id) if pid else 0
+        done = progress >= target
+        already = bool(claimed.get(f"{week_key}:{q.get('quest_id')}"))
+        out.append({
+            'quest_id': q.get('quest_id'),
+            'type': q.get('type'),
+            'label': QUEST_TYPES.get(q.get('type'), '').format(target=target),
+            'target': target,
+            'reward_xp': int(q.get('reward_xp', 0)),
+            'reward_coins': int(q.get('reward_coins', 0)),
+            'reward_cosmetic_id': q.get('reward_cosmetic_id') or None,
+            'progress': min(progress, target),
+            'complete': done,
+            'claimed': already,
+        })
+    return _response(200, {'quests': out, 'week_start': monday})
+
+
+def save_quest(event):
+    claims = _caller_claims(event)
+    if not _is_super_admin(claims):
+        return _response(403, {'error': 'only a SuperAdmin can manage quests'})
+    body = json.loads(event.get('body') or '{}')
+    qtype = body.get('type')
+    if qtype not in QUEST_TYPES:
+        return _response(400, {'error': f'type must be one of {list(QUEST_TYPES)}'})
+    try:
+        target = int(body.get('target'))
+    except (TypeError, ValueError):
+        return _response(400, {'error': 'target must be a whole number'})
+    if target < 1:
+        return _response(400, {'error': 'target must be at least 1'})
+
+    quests = _load_quests()
+    qid = body.get('quest_id') or str(uuid.uuid4())
+    row = {
+        'quest_id': qid, 'type': qtype, 'target': target,
+        'reward_xp': int(body.get('reward_xp', 0) or 0),
+        'reward_coins': int(body.get('reward_coins', 0) or 0),
+        'reward_cosmetic_id': body.get('reward_cosmetic_id') or None,
+    }
+    quests = [q for q in quests if q.get('quest_id') != qid]
+    quests.append(row)
+    matches_table.put_item(Item={'match_id': _QUESTS_ROW_ID, 'quests': quests})
+    return _response(200, {'quest': row})
+
+
+def delete_quest(event):
+    claims = _caller_claims(event)
+    if not _is_super_admin(claims):
+        return _response(403, {'error': 'only a SuperAdmin can manage quests'})
+    body = json.loads(event.get('body') or '{}')
+    qid = body.get('quest_id')
+    if not qid:
+        return _response(400, {'error': 'quest_id is required'})
+    quests = [q for q in _load_quests() if q.get('quest_id') != qid]
+    matches_table.put_item(Item={'match_id': _QUESTS_ROW_ID, 'quests': quests})
+    return _response(200, {'ok': True})
+
+
+def claim_quest(event):
+    """Player claims a completed quest's reward. Verified server-side against
+    the actual match history - the client can't fake completion. Idempotent
+    per week: claiming twice is refused."""
+    claims = _caller_claims(event)
+    pid = claims.get('custom:player_id')
+    if not pid:
+        return _response(403, {'error': 'link a profile first'})
+    body = json.loads(event.get('body') or '{}')
+    qid = body.get('quest_id')
+
+    quest = next((q for q in _load_quests() if q.get('quest_id') == qid), None)
+    if not quest:
+        return _response(404, {'error': 'quest not found'})
+
+    monday, next_monday = _week_bounds_utc()
+    week_matches = [m for m in matches_table.scan().get('Items', [])
+                    if m.get('match_id') not in (_EVENTS_ROW_ID, _QUESTS_ROW_ID)
+                    and monday <= (m.get('date') or '')[:10] < next_monday]
+    progress = _evaluate_quest(quest, pid, week_matches, {})
+    if progress < int(quest.get('target', 1)):
+        return _response(400, {'error': 'quest not complete yet'})
+
+    player = players_table.get_item(Key={'player_id': pid}).get('Item') or {}
+    claimed = player.get('quest_claims') or {}
+    claim_key = f"{monday}:{qid}"
+    if claimed.get(claim_key):
+        return _response(400, {'error': 'already claimed this week'})
+
+    # Grant rewards. XP is added on top of match-earned XP (and survives
+    # recompute because we bump a separate quest_xp field the recompute adds
+    # back in). Coins go straight to balance. A cosmetic is added to owned.
+    reward_xp = int(quest.get('reward_xp', 0) or 0)
+    reward_coins = int(quest.get('reward_coins', 0) or 0)
+    cosmetic = quest.get('reward_cosmetic_id')
+
+    claimed[claim_key] = True
+    new_quest_xp = int(player.get('quest_xp', 0) or 0) + reward_xp
+    new_quest_coins = int(player.get('quest_coins', 0) or 0) + reward_coins
+    new_coins = int(player.get('coins', 0) or 0) + reward_coins
+    owned = player.get('owned_items') or {}
+    if cosmetic:
+        owned[cosmetic] = True
+
+    players_table.update_item(
+        Key={'player_id': pid},
+        UpdateExpression='SET quest_claims = :qc, quest_xp = :qx, quest_coins = :qco, coins = :c, owned_items = :o',
+        ExpressionAttributeValues={':qc': claimed, ':qx': new_quest_xp, ':qco': new_quest_coins,
+                                   ':c': new_coins, ':o': owned}
+    )
+    return _response(200, {'ok': True, 'reward_xp': reward_xp, 'reward_coins': reward_coins,
+                           'reward_cosmetic': bool(cosmetic), 'coins': new_coins})
+
 
 def _load_events():
     item = matches_table.get_item(Key={'match_id': _EVENTS_ROW_ID}).get('Item') or {}
@@ -297,6 +508,14 @@ def handler(event, context):
             return save_event(event)
         if event.get('resource') == '/events' and method == 'DELETE':
             return delete_event(event)
+        if event.get('resource') == '/quests' and method == 'GET':
+            return list_quests(event)
+        if event.get('resource') == '/quests' and method == 'POST':
+            return save_quest(event)
+        if event.get('resource') == '/quests' and method == 'DELETE':
+            return delete_quest(event)
+        if event.get('resource') == '/quest-claim' and method == 'POST':
+            return claim_quest(event)
 
         # Epic 7 extension: profile viewing is now genuinely restricted -
         # guests can't view any profile at all; logged-in members can only
@@ -569,7 +788,7 @@ def recompute_all_ratings():
 
     matches = matches_table.scan().get('Items', [])
     # The reserved events row lives in this table but isn't a match.
-    matches = [m for m in matches if m.get('match_id') != _EVENTS_ROW_ID]
+    matches = [m for m in matches if m.get('match_id') not in (_EVENTS_ROW_ID, _QUESTS_ROW_ID)]
     matches.sort(key=lambda m: m.get('date', ''))
     # Load events once for the whole replay rather than per match.
     _events = _load_events()
@@ -649,15 +868,20 @@ def recompute_all_ratings():
 
     for pid, rating in current_ratings.items():
         xp = xp_totals.get(pid, 0)
+        player = next((p for p in players if p['player_id'] == pid), {})
+        # Quest rewards are XP earned outside matches (claimed), so they're
+        # added on top of match XP rather than recomputed - otherwise a
+        # replay would erase them. Stored separately in quest_xp.
+        xp += int(player.get('quest_xp', 0) or 0)
         level = level_from_xp(xp)
         # Coins are earned per level gained. On a full recompute we recompute
         # total coins EARNED (50 per level above 1), but must not clobber
         # coins the player has SPENT. We track coins_spent separately, so
         # spendable balance = earned - spent, never going negative.
         earned = COINS_PER_LEVEL * (level - 1)
-        player = next((p for p in players if p['player_id'] == pid), {})
         spent = int(player.get('coins_spent', 0) or 0)
-        balance = max(0, earned - spent)
+        quest_coins = int(player.get('quest_coins', 0) or 0)
+        balance = max(0, earned + quest_coins - spent)
         players_table.update_item(
             Key={'player_id': pid},
             UpdateExpression='SET rating = :r, xp = :xp, #lvl = :lvl, coins = :c, coins_earned = :ce',
@@ -808,10 +1032,11 @@ def _play_and_log(match_type, team_a_ids, team_b_ids, score_a, score_b, group_id
         won = ((winner == 'A' and pid in team_a_ids) or (winner == 'B' and pid in team_b_ids))
         gained = round(xp_for_match(stage, won, int(abs(score_a - score_b))) * _live_mult)
         new_xp = int(player_obj.get('xp', 0) or 0) + gained
-        new_level = level_from_xp(new_xp)
+        new_level = level_from_xp(new_xp + int(player_obj.get('quest_xp', 0) or 0))
         earned = COINS_PER_LEVEL * (new_level - 1)
         spent = int(player_obj.get('coins_spent', 0) or 0)
-        balance = max(0, earned - spent)
+        quest_coins = int(player_obj.get('quest_coins', 0) or 0)
+        balance = max(0, earned + quest_coins - spent)
         players_table.update_item(
             Key={'player_id': pid},
             UpdateExpression='SET rating = :r, previous_rating = :pr, xp = :xp, #lvl = :lvl, coins = :c, coins_earned = :ce',
@@ -861,7 +1086,7 @@ def list_matches(event):
 
     items = matches_table.scan().get('Items', [])
     # Reserved config rows (events) live in this table but aren't matches.
-    items = [i for i in items if i.get('match_id') != _EVENTS_ROW_ID]
+    items = [i for i in items if i.get('match_id') not in (_EVENTS_ROW_ID, _QUESTS_ROW_ID)]
 
     if partnerships_for or radar_for:
         scoped_items = items
