@@ -90,6 +90,11 @@ jobs:
             --query "Stacks[0].Outputs[?OutputKey=='WebsiteUrl'].OutputValue" \
             --output text | sed -E 's#http://([^.]+)\..*#\1#')
           aws s3 cp frontend/index.html s3://$BUCKET_NAME/index.html
+          # css/ and js/ were split out of index.html. Explicit cp (never
+          # `sync --delete`) because this bucket ALSO holds user uploads
+          # under uploads/ - a --delete would wipe every uploaded cosmetic.
+          aws s3 cp frontend/css/ s3://$BUCKET_NAME/css/ --recursive
+          aws s3 cp frontend/js/  s3://$BUCKET_NAME/js/  --recursive
 
       - name: Invalidate CloudFront cache
         run: |
