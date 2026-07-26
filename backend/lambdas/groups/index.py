@@ -322,6 +322,14 @@ def visible_players_for_caller(event):
         return _response(403, {'error': 'log in to see visible players'})
 
     all_players = players_table.scan().get('Items', [])
+    # The players table also holds reserved config rows (__app_settings__,
+    # __store_catalog__) that aren't players and have no `name`. GET /players
+    # filters these; this route did not - so a SuperAdmin (who gets every
+    # row) hit shape()'s p['name'] on a nameless sentinel, 500'd, and the
+    # frontend silently blanked the Player Card picker. Filtering by the
+    # `__` prefix also catches any future sentinel without another edit here.
+    all_players = [p for p in all_players
+                   if not str(p.get('player_id', '')).startswith('__')]
     if _is_super_admin(claims):
         visible = all_players
     else:
@@ -344,7 +352,7 @@ def visible_players_for_caller(event):
     show_audit = _is_super_admin(claims)
 
     def shape(p):
-        row = {'player_id': p['player_id'], 'name': p['name'], 'nickname': p.get('nickname'),
+        row = {'player_id': p['player_id'], 'name': p.get('name'), 'nickname': p.get('nickname'),
                'rating': p.get('rating', 1000), 'avatar_id': p.get('avatar_id'),
                'banner_id': p.get('banner_id'), 'background_id': p.get('background_id'),
                'avatar_url': p.get('avatar_url'), 'banner_url': p.get('banner_url'),
