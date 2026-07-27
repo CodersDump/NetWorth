@@ -1,0 +1,92 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  NetWorth STAGING frontend hosting. This stack ONLY creates a second
+  website bucket + CloudFront distribution to serve a preview build of the
+  frontend. It deliberately creates NO backend: the staging site is injected
+  with the SAME API URL / Cognito pool / client id as production (from the
+  networth-app stack), so you log in with real accounts and see real data.
+  That means writes on staging hit PRODUCTION data - use it to verify the UI
+  loads and renders, not to record throwaway matches.
+
+  Deploy once, manually:
+    aws cloudformation deploy --stack-name networth-staging \
+      --template-file infrastructure/staging.yaml \
+      --capabilities CAPABILITY_NAMED_IAM
+  Then read the URL:
+    aws cloudformation describe-stacks --stack-name networth-staging \
+      --query "Stacks[0].Outputs[?OutputKey=='CloudFrontUrl'].OutputValue" --output text
+
+Parameters:
+  AppName:
+    Type: String
+    Default: networth
+
+Resources:
+  # A separate bucket from prod - prod's bucket also holds user uploads, so
+  # keeping staging wholly separate means nothing here can ever touch those.
+  StagingWebsiteBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub '${AppName}-staging-site-${AWS::AccountId}'
+      WebsiteConfiguration:
+        IndexDocument: index.html
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: false
+        BlockPublicPolicy: false
+        IgnorePublicAcls: false
+        RestrictPublicBuckets: false
+
+  StagingWebsiteBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref StagingWebsiteBucket
+      PolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal: '*'
+            Action: s3:GetObject
+            Resource: !Sub '${StagingWebsiteBucket.Arn}/*'
+
+  # Same CloudFront pattern as prod (S3 website endpoint as a custom origin,
+  # HTTPS at the edge). Short TTLs so a redeploy shows up quickly.
+  StagingCloudFrontDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        Comment: NetWorth staging preview
+        DefaultRootObject: index.html
+        PriceClass: PriceClass_100
+        Origins:
+          - Id: S3StagingOrigin
+            DomainName: !Select [2, !Split ['/', !GetAtt StagingWebsiteBucket.WebsiteURL]]
+            CustomOriginConfig:
+              OriginProtocolPolicy: http-only
+              HTTPPort: 80
+              HTTPSPort: 443
+              OriginSSLProtocols: [TLSv1.2]
+        DefaultCacheBehavior:
+          TargetOriginId: S3StagingOrigin
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods: [GET, HEAD]
+          CachedMethods: [GET, HEAD]
+          ForwardedValues:
+            QueryString: false
+            Cookies:
+              Forward: none
+          MinTTL: 0
+          DefaultTTL: 30
+          MaxTTL: 60
+
+Outputs:
+  StagingBucketName:
+    Description: S3 bucket the staging workflow uploads to
+    Value: !Ref StagingWebsiteBucket
+
+  StagingDistributionId:
+    Description: CloudFront distribution id (used to invalidate on deploy)
+    Value: !Ref StagingCloudFrontDistribution
+
+  CloudFrontUrl:
+    Description: The staging preview URL (open this on any device)
+    Value: !Sub 'https://${StagingCloudFrontDistribution.DomainName}'

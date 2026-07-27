@@ -1,0 +1,90 @@
+name: Deploy Frontend to Staging
+
+# Fires only for the `staging` branch. Pushing a feature branch here deploys
+# a preview to the staging URL WITHOUT touching prod. Flow:
+#   git checkout -b staging      (once)
+#   git push origin staging      -> deploys to the staging URL
+#   ...verify on the staging URL...
+#   merge staging -> main        -> the existing deploy.yml ships to prod
+#
+# This workflow creates nothing and changes no backend. It injects the SAME
+# API/Cognito config as prod (read from the networth-app stack) and uploads
+# the frontend to the staging bucket (from the networth-staging stack).
+
+on:
+  push:
+    branches: [staging]
+
+jobs:
+  deploy-staging:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Read PROD backend config (same API/Cognito as prod)
+        id: backend
+        run: |
+          API_URL=$(aws cloudformation describe-stacks \
+            --stack-name networth-app \
+            --query "Stacks[0].Outputs[?OutputKey=='ApiUrl'].OutputValue" \
+            --output text)
+          echo "api_url=$API_URL" >> "$GITHUB_OUTPUT"
+          USER_POOL_ID=$(aws cloudformation describe-stacks \
+            --stack-name networth-app \
+            --query "Stacks[0].Outputs[?OutputKey=='UserPoolId'].OutputValue" \
+            --output text)
+          echo "user_pool_id=$USER_POOL_ID" >> "$GITHUB_OUTPUT"
+          CLIENT_ID=$(aws cloudformation describe-stacks \
+            --stack-name networth-app \
+            --query "Stacks[0].Outputs[?OutputKey=='UserPoolClientId'].OutputValue" \
+            --output text)
+          echo "client_id=$CLIENT_ID" >> "$GITHUB_OUTPUT"
+
+      - name: Read STAGING hosting outputs
+        id: hosting
+        run: |
+          BUCKET=$(aws cloudformation describe-stacks \
+            --stack-name networth-staging \
+            --query "Stacks[0].Outputs[?OutputKey=='StagingBucketName'].OutputValue" \
+            --output text)
+          echo "bucket=$BUCKET" >> "$GITHUB_OUTPUT"
+          DIST_ID=$(aws cloudformation describe-stacks \
+            --stack-name networth-staging \
+            --query "Stacks[0].Outputs[?OutputKey=='StagingDistributionId'].OutputValue" \
+            --output text)
+          echo "dist_id=$DIST_ID" >> "$GITHUB_OUTPUT"
+
+      - name: Inject config into frontend
+        run: |
+          sed -i "s#https://REPLACE_ME.execute-api.REGION.amazonaws.com/prod#${{ steps.backend.outputs.api_url }}#g" frontend/index.html
+          sed -i "s#REPLACE_ME_USER_POOL_ID#${{ steps.backend.outputs.user_pool_id }}#g" frontend/index.html
+          sed -i "s#REPLACE_ME_CLIENT_ID#${{ steps.backend.outputs.client_id }}#g" frontend/index.html
+
+      - name: Sync frontend to the STAGING bucket
+        run: |
+          BUCKET_NAME=${{ steps.hosting.outputs.bucket }}
+          aws s3 cp frontend/index.html s3://$BUCKET_NAME/index.html
+          aws s3 cp frontend/css/ s3://$BUCKET_NAME/css/ --recursive
+          aws s3 cp frontend/js/  s3://$BUCKET_NAME/js/  --recursive
+
+      - name: Invalidate staging CloudFront
+        run: |
+          aws cloudfront create-invalidation \
+            --distribution-id ${{ steps.hosting.outputs.dist_id }} \
+            --paths "/*"
+
+      - name: Print staging URL
+        run: |
+          URL=$(aws cloudformation describe-stacks \
+            --stack-name networth-staging \
+            --query "Stacks[0].Outputs[?OutputKey=='CloudFrontUrl'].OutputValue" \
+            --output text)
+          echo "Staging deployed to: $URL"
