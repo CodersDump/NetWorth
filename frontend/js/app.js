@@ -1002,17 +1002,6 @@ let userPool = null;
       return allGroups.filter(g => (g.member_ids || []).includes(me));
     }
 
-    /** Pre-selects the recorder's group when recording a match, so matches
-     *  get attributed by default instead of piling up ungrouped. Picks
-     *  their first group; they can still change it (and a SuperAdmin can
-     *  set None for a genuinely one-off game). */
-    function defaultMatchGroup() {
-      const sel = document.getElementById('match_group_select');
-      if (!sel || sel.value) return;              // don't override a choice already made
-      const mine = myGroups();
-      if (mine.length) sel.value = mine[0].group_id;
-    }
-
     // ================= Voice match entry =================
     // Free, client-side, no LLM: the browser's SpeechRecognition does the
     // speech->text (Chrome/Edge/Safari, no key, no cost), and a small rules
@@ -1023,214 +1012,246 @@ let userPool = null;
     // Phonetic key so Sourabh/Saurabh/Sourav collapse together, while the
     // distinguishing part (C / Devle / T) still separates them via scoring.
     function nwPhon(s) {
-      s = (s || '').toLowerCase().replace(/[^a-z]/g, '');
-      if (!s) return '';
-      const first = s[0];
-      const rest = s.slice(1)
-        .replace(/[aeiouhwy]/g, '')
-        .replace(/z/g, 's').replace(/ck/g, 'k').replace(/c/g, 'k')
-        .replace(/ph/g, 'f').replace(/v/g, 'f')
-        .replace(/(.)\1+/g, '$1');
-      return (first + rest).slice(0, 6);
+       s = (s || '').toLowerCase().replace(/[^a-z]/g, '');
+       if (!s) return '';
+       const first = s[0];
+       const rest = s.slice(1)
+         .replace(/[aeiouhwy]/g, '')
+         .replace(/z/g, 's').replace(/ck/g, 'k').replace(/c/g, 'k')
+         .replace(/ph/g, 'f').replace(/v/g, 'f')
+         .replace(/(.)\1+/g, '$1');
+       return (first + rest).slice(0, 6);
     }
     function nwLev(a, b) {
-      const m = a.length, n = b.length, d = [...Array(m + 1)].map((_, i) => [i, ...Array(n).fill(0)]);
-      for (let j = 0; j <= n; j++) d[0][j] = j;
-      for (let i = 1; i <= m; i++) for (let j = 1; j <= n; j++)
-        d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
-      return d[m][n];
+       const m = a.length, n = b.length, d = [...Array(m + 1)].map((_, i) => [i, ...Array(n).fill(0)]);
+       for (let j = 0; j <= n; j++) d[0][j] = j;
+       for (let i = 1; i <= m; i++) for (let j = 1; j <= n; j++)
+         d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+       return d[m][n];
     }
     function nwScorePlayer(token, p) {
-      const cands = [p.nickname || '', p.name || '', (p.name || '').split(' ')[0]].map(x => x.toLowerCase()).filter(Boolean);
-      let best = 0;
-      for (const c of cands) {
-        if (c === token) best = Math.max(best, 100);
-        else if (nwPhon(c) === nwPhon(token)) best = Math.max(best, 80);
-        else if (c.startsWith(token) || token.startsWith(c)) best = Math.max(best, 70);
-        else { const d = nwLev(nwPhon(c), nwPhon(token)); if (d <= 1) best = Math.max(best, 65); else if (c.includes(token)) best = Math.max(best, 40); }
-      }
-      // If the spoken token has a distinguishing second word (a surname or
-      // initial like "Devle" / "C" / "T"), a player whose full name carries
-      // that word wins decisively - this is what separates the Saurabhs.
-      const words = token.split(' ').filter(Boolean);
-      if (words.length >= 2) {
-        const surname = words[words.length - 1];
-        const nameWords = (p.name || '').toLowerCase().split(' ').filter(Boolean);
-        if (nameWords.some(w => w === surname || nwPhon(w) === nwPhon(surname) || (surname.length > 1 && w.startsWith(surname)))) {
-          best = Math.max(best, 95);
-        }
-      }
-      return best;
+       const cands = [p.nickname || '', p.name || '', (p.name || '').split(' ')[0]].map(x => x.toLowerCase()).filter(Boolean);
+       let best = 0;
+       for (const c of cands) {
+         if (c === token) best = Math.max(best, 100);
+         else if (nwPhon(c) === nwPhon(token)) best = Math.max(best, 80);
+         else if (c.startsWith(token) || token.startsWith(c)) best = Math.max(best, 70);
+         else { const d = nwLev(nwPhon(c), nwPhon(token)); if (d <= 1) best = Math.max(best, 65); else if (c.includes(token)) best = Math.max(best, 40); }
+       }
+       // If the spoken token has a distinguishing second word (a surname or
+       // initial like "Devle" / "C" / "T"), a player whose full name carries
+       // that word wins decisively - this is what separates the Saurabhs.
+       const words = token.split(' ').filter(Boolean);
+       if (words.length >= 2) {
+         const surname = words[words.length - 1];
+         const nameWords = (p.name || '').toLowerCase().split(' ').filter(Boolean);
+         if (nameWords.some(w => w === surname || nwPhon(w) === nwPhon(surname) || (surname.length > 1 && w.startsWith(surname)))) {
+           best = Math.max(best, 95);
+         }
+       }
+       return best;
     }
     // Returns { player } on a confident match, or { player:null, ambiguous, options }
     // when two names are too close to call - so we never silently pick wrong.
     function nwMatchPlayerToken(tokenRaw) {
-      const token = (tokenRaw || '').trim().toLowerCase();
-      if (!token) return { player: null };
-      if (['me', 'i', 'my', 'myself'].includes(token)) {
-        return { player: allPlayers.find(p => p.player_id === myPlayerId()) || null };
-      }
-      const scored = allPlayers.map(p => ({ p, s: nwScorePlayer(token, p) })).sort((a, b) => b.s - a.s);
-      const top = scored[0], second = scored[1];
-      if (!top || top.s < 40) return { player: null };
-      if (second && top.s - second.s < 15 && top.s < 100) {
-        return { player: null, ambiguous: true, options: [top.p, second.p] };
-      }
-      return { player: top.p };
+       const token = (tokenRaw || '').trim().toLowerCase();
+       if (!token) return { player: null };
+       if (['me', 'i', 'my', 'myself'].includes(token)) {
+         return { player: allPlayers.find(p => p.player_id === myPlayerId()) || null };
+       }
+       const scored = allPlayers.map(p => ({ p, s: nwScorePlayer(token, p) })).sort((a, b) => b.s - a.s);
+       const top = scored[0], second = scored[1];
+       if (!top || top.s < 40) return { player: null };
+       if (second && top.s - second.s < 15 && top.s < 100) {
+         return { player: null, ambiguous: true, options: [top.p, second.p] };
+       }
+       return { player: top.p };
     }
 
     function nwWordsToNums(t) {
-      const map = { zero: 0, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16, seventeen: 17, eighteen: 18, nineteen: 19, twenty: 20, thirty: 30 };
-      t = t.replace(/\b(twenty|thirty)\s+(one|two|three|four|five|six|seven|eight|nine)\b/g, (m, a, b) => String(map[a] + map[b]));
-      t = t.replace(/\b(zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty)\b/g, m => String(map[m]));
-      return t;
+       const map = { zero: 0, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16, seventeen: 17, eighteen: 18, nineteen: 19, twenty: 20, thirty: 30 };
+       t = t.replace(/\bto\b/g, ' to '); // keep 'to' isolated for score separators
+       t = t.replace(/\b(twenty|thirty)\s+(one|two|three|four|five|six|seven|eight|nine)\b/g, (m, a, b) => String(map[a] + map[b]));
+       t = t.replace(/\b(zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty)\b/g, m => String(map[m]));
+       return t;
     }
 
     function nwParseMatchTranscript(raw) {
-      const text = nwWordsToNums(' ' + raw.toLowerCase().replace(/[.,!?]/g, ' ').replace(/\s+/g, ' ').trim() + ' ');
-      // A match always ends in two numbers. Take the LAST two 1-2 digit
-      // numbers as the score, whatever separator was heard ("21 18",
-      // "21-18", "21 to 18") - so you never have to say "hyphen".
-      const nums = [...text.matchAll(/\b(\d{1,2})\b/g)];
-      let s1 = null, s2 = null, namesText = text;
-      if (nums.length >= 2) {
-        const a = nums[nums.length - 2], b = nums[nums.length - 1];
-        s1 = +a[1]; s2 = +b[1];
-        namesText = text.slice(0, a.index) + ' ' + text.slice(b.index + b[0].length);
-      }
+       const text = nwWordsToNums(' ' + raw.toLowerCase().replace(/[.,!?]/g, ' ').replace(/\s+/g, ' ').trim() + ' ');
+       const nums = [...text.matchAll(/\b(\d{1,2})\b/g)];
+       let s1 = null, s2 = null, namesText = text;
+       if (nums.length >= 2) {
+         const a = nums[nums.length - 2], b = nums[nums.length - 1];
+         s1 = +a[1]; s2 = +b[1];
+         namesText = text.slice(0, a.index) + ' ' + text.slice(b.index + b[0].length);
+       }
 
-      const loseVerbs = /\b(lost to|lost against|lost)\b/;
-      const winVerbs  = /\b(beat|beats|defeated|smashed|thrashed|crushed|won against|won)\b/;
-      const neutral   = /\b(versus|vs|against)\b/;
-      let m, leftText, rightText, leftIsWinner = null;
-      if ((m = namesText.match(loseVerbs)))      { [leftText, rightText] = namesText.split(m[0]); leftIsWinner = false; }
-      else if ((m = namesText.match(winVerbs)))  { [leftText, rightText] = namesText.split(m[0]); leftIsWinner = true; }
-      else if ((m = namesText.match(neutral)))   { [leftText, rightText] = namesText.split(m[0]); leftIsWinner = null; }
-      else return { error: "Couldn't tell the two sides apart. Try e.g. \"Aditya beat Sohan 21-18\"." };
+       const loseVerbs = /\b(lost to|lost against|lost)\b/;
+       const winVerbs  = /\b(beat|beats|defeated|smashed|thrashed|crushed|won against|won)\b/;
+       const neutral   = /\b(versus|vs|against)\b/;
+       let m, leftText, rightText, leftIsWinner = null;
+       if ((m = namesText.match(loseVerbs)))      { [leftText, rightText] = namesText.split(m[0]); leftIsWinner = false; }
+       else if ((m = namesText.match(winVerbs)))  { [leftText, rightText] = namesText.split(m[0]); leftIsWinner = true; }
+       else if ((m = namesText.match(neutral)))   { [leftText, rightText] = namesText.split(m[0]); leftIsWinner = null; }
+       else return { error: "Couldn't tell the two sides apart. Try e.g. \"Aditya beat Sohan 21-18\"." };
 
-      const splitPlayers = t => (t || '').split(/\band\b|&|\bwith\b|,|\bplus\b/).map(s => s.trim()).filter(Boolean);
-      const resolve = toks => toks.map(tok => { const r = nwMatchPlayerToken(tok); return { token: tok, player: r.player, ambiguous: !!r.ambiguous, options: r.options }; });
-      const teamA = resolve(splitPlayers(leftText));
-      const teamB = resolve(splitPlayers(rightText));
+       const splitPlayers = t => (t || '').split(/\band\b|&|\bwith\b|,|\bplus\b/).map(s => s.trim()).filter(Boolean);
+       const resolve = toks => toks.map(tok => { const r = nwMatchPlayerToken(tok); return { token: tok, player: r.player, ambiguous: !!r.ambiguous, options: r.options }; });
+       const teamA = resolve(splitPlayers(leftText));
+       const teamB = resolve(splitPlayers(rightText));
 
-      let scoreA = null, scoreB = null;
-      if (s1 != null && s2 != null) {
-        const hi = Math.max(s1, s2), lo = Math.min(s1, s2);
-        if (leftIsWinner === true)  { scoreA = hi; scoreB = lo; }
-        else if (leftIsWinner === false) { scoreA = lo; scoreB = hi; }
-        else { scoreA = s1; scoreB = s2; }
-      }
-      if (!teamA.length || !teamB.length) return { error: "Didn't catch both sides. Say who played on each side." };
-      return { teamA, teamB, scoreA, scoreB, matchType: (teamA.length > 1 || teamB.length > 1) ? 'doubles' : 'singles' };
+       let scoreA = null, scoreB = null;
+       if (s1 != null && s2 != null) {
+         const hi = Math.max(s1, s2), lo = Math.min(s1, s2);
+         if (leftIsWinner === true)  { scoreA = hi; scoreB = lo; }
+         else if (leftIsWinner === false) { scoreA = lo; scoreB = hi; }
+         else { scoreA = s1; scoreB = s2; }
+       }
+       if (!teamA.length || !teamB.length) return { error: "Didn't catch both sides. Say who played on each side." };
+       return { teamA, teamB, scoreA, scoreB, matchType: (teamA.length > 1 || teamB.length > 1) ? 'doubles' : 'singles' };
     }
 
     function nwApplyParsedToForm(p) {
-      const mt = document.getElementById('match_type_select');
-      mt.value = p.matchType;
-      mt.dispatchEvent(new Event('change'));  // toggles doubles-only selects
-      const set = (id, entry) => { const el = document.getElementById(id); if (el && entry && entry.player) el.value = entry.player.player_id; };
-      set('team_a1_select', p.teamA[0]); set('team_a2_select', p.teamA[1]);
-      set('team_b1_select', p.teamB[0]); set('team_b2_select', p.teamB[1]);
-      const live = document.getElementById('live_scoring_toggle');
-      if (p.scoreA != null && !(live && live.checked)) {
-        document.getElementById('score_a').value = p.scoreA;
-        document.getElementById('score_b').value = p.scoreB;
-      }
+       const mt = document.getElementById('match_type_select');
+       mt.value = p.matchType;
+       mt.dispatchEvent(new Event('change'));
+       const set = (id, entry) => { const el = document.getElementById(id); if (el && entry && entry.player) el.value = entry.player.player_id; };
+       set('team_a1_select', p.teamA[0]); set('team_a2_select', p.teamA[1]);
+       set('team_b1_select', p.teamB[0]); set('team_b2_select', p.teamB[1]);
+       const live = document.getElementById('live_scoring_toggle');
+       if (p.scoreA != null && !(live && live.checked)) {
+         document.getElementById('score_a').value = p.scoreA;
+         document.getElementById('score_b').value = p.scoreB;
+       }
     }
 
     function nwVoicePreviewHtml(p) {
-      const side = arr => arr.map(e => {
-        if (e.player) return `<b>${formatPlayerLabel(e.player.name, e.player.nickname)}</b>`;
-        if (e.ambiguous && e.options) return `<span style="color:#c0392b;">${e.token}? (${e.options.map(o => o.name).join(' or ')})</span>`;
-        return `<span style="color:#c0392b;">${e.token}?</span>`;
-      }).join(' &amp; ');
-      const anyUnmatched = [...p.teamA, ...p.teamB].some(e => !e.player);
-      const score = p.scoreA != null ? ` &nbsp; <b>${p.scoreA}–${p.scoreB}</b>` : '';
-      return `Heard: ${side(p.teamA)} vs ${side(p.teamB)}${score}` +
-        (anyUnmatched ? `<div style="color:#c0392b;margin-top:4px;">Some names in red weren't matched — pick them manually before recording.</div>` : '');
+       const side = arr => arr.map(e => {
+         if (e.player) return `<b>${formatPlayerLabel(e.player.name, e.player.nickname)}</b>`;
+         if (e.ambiguous && e.options) return `<span style="color:#c0392b;">${e.token}? (${e.options.map(o => o.name).join(' or ')})</span>`;
+         return `<span style="color:#c0392b;">${e.token}?</span>`;
+       }).join(' &amp; ');
+       const anyUnmatched = [...p.teamA, ...p.teamB].some(e => !e.player);
+       const score = p.scoreA != null ? ` &nbsp; <b>${p.scoreA}–${p.scoreB}</b>` : '';
+       return `Heard: ${side(p.teamA)} vs ${side(p.teamB)}${score}` +
+         (anyUnmatched ? `<div style="color:#c0392b;margin-top:4px;">Some names in red weren't matched — pick them manually before recording.</div>` : '');
     }
 
     function nwVoiceMatchInit() {
-      const form = document.getElementById('match-form');
-      if (!form || document.getElementById('nw-voice-wrap')) return;
-      const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+       const form = document.getElementById('match-form');
+       if (!form || document.getElementById('nw-voice-wrap')) return;
+       const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 
-      const wrap = document.createElement('div');
-      wrap.id = 'nw-voice-wrap';
-      wrap.style.cssText = 'margin:0 0 10px;';
-      wrap.innerHTML =
-        '<button type="button" id="nw-voice-btn" style="display:inline-flex;align-items:center;gap:8px;padding:9px 14px;border:0;border-radius:10px;background:var(--court,#2fa968);color:#fff;font-weight:600;cursor:pointer;">🎤 Record by voice</button>' +
-        '<span id="nw-voice-hint" style="margin-left:10px;font-size:12px;color:var(--text-secondary,#888);">e.g. "Aditya and Sohan beat Sourabh and Mayank 21-18"</span>' +
-        '<div id="nw-voice-status" style="margin-top:8px;font-size:13px;"></div>';
-      form.parentNode.insertBefore(wrap, form);
+       const wrap = document.createElement('div');
+       wrap.id = 'nw-voice-wrap';
+       wrap.style.cssText = 'margin:0 0 10px;';
+       wrap.innerHTML =
+         '<button type="button" id="nw-voice-btn" style="display:inline-flex;align-items:center;gap:8px;padding:9px 14px;border:0;border-radius:10px;background:var(--court,#2fa968);color:#fff;font-weight:600;cursor:pointer;">🎤 Record by voice</button>' +
+         '<span id="nw-voice-hint" style="margin-left:10px;font-size:12px;color:var(--text-secondary,#888);">e.g. "Aditya and Sohan beat Sourabh and Mayank 21-18"</span>' +
+         '<div id="nw-voice-status" style="margin-top:8px;font-size:13px;"></div>';
+       form.parentNode.insertBefore(wrap, form);
 
-      const btn = wrap.querySelector('#nw-voice-btn');
-      const status = wrap.querySelector('#nw-voice-status');
+       const btn = wrap.querySelector('#nw-voice-btn');
+       const status = wrap.querySelector('#nw-voice-status');
 
-      if (!SR) {
-        btn.disabled = true; btn.style.opacity = '0.5'; btn.style.cursor = 'not-allowed';
-        wrap.querySelector('#nw-voice-hint').textContent = 'Voice input isn\'t supported in this browser — use Chrome or Safari, or fill the form normally.';
-        return;
-      }
+       if (!SR) {
+         btn.disabled = true; btn.style.opacity = '0.5'; btn.style.cursor = 'not-allowed';
+         wrap.querySelector('#nw-voice-hint').textContent = 'Voice input isn\'t supported in this browser — use Safari/Chrome, or fill the form normally.';
+         return;
+       }
 
-      let listening = false;
-      let recognizer = null;
-      btn.addEventListener('click', () => {
-        // Second tap = stop and parse. Lets you speak at your own pace,
-        // pause between names, and finish when YOU decide - rather than the
-        // recognizer guessing you're done after a short silence.
-        if (listening && recognizer) { recognizer.stop(); return; }
+       let listening = false;
+       let recognizer = null;
+       let fullTranscript = '';
+       const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 
-        const rec = new SR();
-        recognizer = rec;
-        rec.lang = 'en-IN';
-        rec.continuous = true;        // stay open until the user taps Stop
-        rec.interimResults = true;
-        rec.maxAlternatives = 1;
-        listening = true;
-        btn.textContent = '⏹ Stop & fill';
-        status.style.color = 'var(--text-secondary,#888)';
-        status.textContent = 'Listening — say the match, take your time, then tap “Stop & fill”…';
+       const stopListening = () => {
+         if (recognizer) {
+           listening = false;
+           try { recognizer.stop(); } catch(e){}
+         }
+       };
 
-        let finalTranscript = '';
-        rec.onresult = (ev) => {
-          let interim = '';
-          for (let i = ev.resultIndex; i < ev.results.length; i++) {
-            const t = ev.results[i][0].transcript;
-            if (ev.results[i].isFinal) finalTranscript += t + ' '; else interim += t;
-          }
-          status.textContent = '“' + (finalTranscript + interim).trim() + '”';
-        };
-        rec.onerror = (ev) => {
-          if (ev.error === 'no-speech') return;   // just keep listening
-          status.style.color = '#c0392b';
-          status.textContent = ev.error === 'not-allowed'
-            ? 'Microphone blocked — allow mic access for this site and try again.'
-            : 'Voice error: ' + ev.error;
-        };
-        rec.onend = () => {
-          listening = false;
-          recognizer = null;
-          btn.textContent = '🎤 Record by voice';
-          const said = finalTranscript.trim();
-          if (!said) { if (!status.textContent.startsWith('Voice error') && !status.textContent.startsWith('Microphone')) status.textContent = 'Didn\'t catch anything — try again.'; return; }
-          const parsed = nwParseMatchTranscript(said);
-          if (parsed.error) {
-            status.style.color = '#c0392b';
-            status.innerHTML = '“' + said + '”<br>' + parsed.error;
-            return;
-          }
-          nwApplyParsedToForm(parsed);
-          status.style.color = 'var(--text,#111)';
-          status.innerHTML = nwVoicePreviewHtml(parsed) +
-            '<div style="margin-top:4px;color:var(--text-secondary,#888);">Filled the form — review and tap Record match.</div>';
-        };
-        rec.start();
-      });
+       btn.addEventListener('click', () => {
+         if (listening) {
+           stopListening();
+           return;
+         }
+
+         const rec = new SR();
+         recognizer = rec;
+         rec.lang = 'en-IN';
+         rec.continuous = !isIOS; // iOS Safari crashes with continuous: true
+         rec.interimResults = true;
+         rec.maxAlternatives = 1;
+         listening = true;
+         fullTranscript = '';
+
+         btn.textContent = '⌛ Warmup mic...';
+         status.style.color = 'var(--text-secondary,#888)';
+         status.textContent = 'Opening microphone... wait a moment before speaking.';
+
+         rec.onstart = () => {
+           btn.textContent = '⏹ Stop & fill';
+           status.textContent = '🔴 Listening — Speak now!';
+         };
+
+         rec.onresult = (ev) => {
+           let currentSessionText = '';
+           for (let i = 0; i < ev.results.length; i++) {
+             currentSessionText += ev.results[i][0].transcript + ' ';
+           }
+           const combined = (fullTranscript + ' ' + currentSessionText).trim();
+           status.textContent = '“' + combined + '”';
+         };
+
+         rec.onerror = (ev) => {
+           if (ev.error === 'no-speech') return;
+           listening = false;
+           btn.textContent = '🎤 Record by voice';
+           status.style.color = '#c0392b';
+           status.textContent = ev.error === 'not-allowed'
+             ? 'Microphone blocked — allow mic access for this site and try again.'
+             : 'Voice error: ' + ev.error;
+         };
+
+         rec.onend = () => {
+           // On iOS, non-continuous auto-ends when you pause speaking. Re-arm if user didn't tap Stop.
+           const currentSaid = (status.textContent || '').replace(/^“|”$/g, '').trim();
+           if (isIOS && listening && currentSaid) {
+             fullTranscript = currentSaid + ' ';
+             try { rec.start(); return; } catch(e){}
+           }
+
+           listening = false;
+           recognizer = null;
+           btn.textContent = '🎤 Record by voice';
+           const said = currentSaid;
+           if (!said || said.startsWith('Voice error') || said.startsWith('Microphone') || said.startsWith('Opening')) {
+             if (!status.textContent.startsWith('Voice error') && !status.textContent.startsWith('Microphone')) {
+               status.textContent = 'Didn\'t catch anything — tap record, wait for red indicator, then speak.';
+             }
+             return;
+           }
+           const parsed = nwParseMatchTranscript(said);
+           if (parsed.error) {
+             status.style.color = '#c0392b';
+             status.innerHTML = '“' + said + '”<br>' + parsed.error;
+             return;
+           }
+           nwApplyParsedToForm(parsed);
+           status.style.color = 'var(--text,#111)';
+           status.innerHTML = nwVoicePreviewHtml(parsed) +
+             '<div style="margin-top:4px;color:var(--text-secondary,#888);">Filled the form — review and tap Record match.</div>';
+         };
+
+         try { rec.start(); } catch(e){ listening = false; btn.textContent = '🎤 Record by voice'; }
+       });
     }
     nwVoiceMatchInit();
     // ================= end voice match entry =================
 
+    
     // ================= Team pairing preview =================
     // Mirrors the tournament pairing (seeded = sort by Elo then snake-pair
     // strongest+weakest; random = shuffle) so you can preview balanced teams
