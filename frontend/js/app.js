@@ -1174,27 +1174,35 @@ let userPool = null;
       }
 
       let listening = false;
+      let recognizer = null;
       btn.addEventListener('click', () => {
-        if (listening) return;
+        // Second tap = stop and parse. Lets you speak at your own pace,
+        // pause between names, and finish when YOU decide - rather than the
+        // recognizer guessing you're done after a short silence.
+        if (listening && recognizer) { recognizer.stop(); return; }
+
         const rec = new SR();
+        recognizer = rec;
         rec.lang = 'en-IN';
+        rec.continuous = true;        // stay open until the user taps Stop
         rec.interimResults = true;
         rec.maxAlternatives = 1;
         listening = true;
-        btn.textContent = '🎙️ Listening…';
+        btn.textContent = '⏹ Stop & fill';
         status.style.color = 'var(--text-secondary,#888)';
-        status.textContent = 'Listening — say the match…';
+        status.textContent = 'Listening — say the match, take your time, then tap “Stop & fill”…';
 
         let finalTranscript = '';
         rec.onresult = (ev) => {
           let interim = '';
           for (let i = ev.resultIndex; i < ev.results.length; i++) {
             const t = ev.results[i][0].transcript;
-            if (ev.results[i].isFinal) finalTranscript += t; else interim += t;
+            if (ev.results[i].isFinal) finalTranscript += t + ' '; else interim += t;
           }
           status.textContent = '“' + (finalTranscript + interim).trim() + '”';
         };
         rec.onerror = (ev) => {
+          if (ev.error === 'no-speech') return;   // just keep listening
           status.style.color = '#c0392b';
           status.textContent = ev.error === 'not-allowed'
             ? 'Microphone blocked — allow mic access for this site and try again.'
@@ -1202,6 +1210,7 @@ let userPool = null;
         };
         rec.onend = () => {
           listening = false;
+          recognizer = null;
           btn.textContent = '🎤 Record by voice';
           const said = finalTranscript.trim();
           if (!said) { if (!status.textContent.startsWith('Voice error') && !status.textContent.startsWith('Microphone')) status.textContent = 'Didn\'t catch anything — try again.'; return; }
