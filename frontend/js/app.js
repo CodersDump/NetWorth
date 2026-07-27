@@ -254,6 +254,9 @@ let userPool = null;
       renderAddPlayersChecklist();
       populateSelect(document.getElementById('delete_player_id'), labeled, 'player_id', 'label', null);
       populateSelect(document.getElementById('log_player_filter'), labeled, 'player_id', 'label', 'All players');
+      const oppFilter = document.getElementById('log_opponent_filter');
+      if (oppFilter) populateSelect(oppFilter, labeled, 'player_id', 'label', 'Any opponent');
+      if (typeof nwPairingRefreshList === 'function') nwPairingRefreshList();
       // Profile-related selects are populated by loadVisiblePlayers()
       // instead (group-scoped server-side) - not here, which would show
       // the full unrestricted roster regardless of who's actually
@@ -273,6 +276,7 @@ let userPool = null;
       populateSelect(document.getElementById('match_group_select'), allGroups, 'group_id', 'group_name', 'None');
       defaultMatchGroup();  // pre-pick the recorder's group once groups are loaded
       populateSelect(document.getElementById('log_group_filter'), allGroups, 'group_id', 'group_name', 'All groups');
+      if (typeof nwPairingRefreshList === 'function') nwPairingRefreshList();
       populateSelect(document.getElementById('attendance_group_filter'), allGroups, 'group_id', 'group_name', 'All groups');
       populateSelect(document.getElementById('rankings_scope_select'), allGroups, 'group_id', 'group_name', 'All players');
       // Once someone belongs to a group, default the rankings view to it so
@@ -1016,28 +1020,84 @@ let userPool = null;
     // the match form. It never submits blind - it fills the form and you tap
     // Record, so all the existing validation + safety net still apply.
 
+    // Phonetic key so Sourabh/Saurabh/Sourav collapse together, while the
+    // distinguishing part (C / Devle / T) still separates them via scoring.
+    function nwPhon(s) {
+      s = (s || '').toLowerCase().replace(/[^a-z]/g, '');
+      if (!s) return '';
+      const first = s[0];
+      const rest = s.slice(1)
+        .replace(/[aeiouhwy]/g, '')
+        .replace(/z/g, 's').replace(/ck/g, 'k').replace(/c/g, 'k')
+        .replace(/ph/g, 'f').replace(/v/g, 'f')
+        .replace(/(.)\1+/g, '$1');
+      return (first + rest).slice(0, 6);
+    }
+    function nwLev(a, b) {
+      const m = a.length, n = b.length, d = [...Array(m + 1)].map((_, i) => [i, ...Array(n).fill(0)]);
+      for (let j = 0; j <= n; j++) d[0][j] = j;
+      for (let i = 1; i <= m; i++) for (let j = 1; j <= n; j++)
+        d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+      return d[m][n];
+    }
+    function nwScorePlayer(token, p) {
+      const cands = [p.nickname || '', p.name || '', (p.name || '').split(' ')[0]].map(x => x.toLowerCase()).filter(Boolean);
+      let best = 0;
+      for (const c of cands) {
+        if (c === token) best = Math.max(best, 100);
+        else if (nwPhon(c) === nwPhon(token)) best = Math.max(best, 80);
+        else if (c.startsWith(token) || token.startsWith(c)) best = Math.max(best, 70);
+        else { const d = nwLev(nwPhon(c), nwPhon(token)); if (d <= 1) best = Math.max(best, 65); else if (c.includes(token)) best = Math.max(best, 40); }
+      }
+      // If the spoken token has a distinguishing second word (a surname or
+      // initial like "Devle" / "C" / "T"), a player whose full name carries
+      // that word wins decisively - this is what separates the Saurabhs.
+      const words = token.split(' ').filter(Boolean);
+      if (words.length >= 2) {
+        const surname = words[words.length - 1];
+        const nameWords = (p.name || '').toLowerCase().split(' ').filter(Boolean);
+        if (nameWords.some(w => w === surname || nwPhon(w) === nwPhon(surname) || (surname.length > 1 && w.startsWith(surname)))) {
+          best = Math.max(best, 95);
+        }
+      }
+      return best;
+    }
+    // Returns { player } on a confident match, or { player:null, ambiguous, options }
+    // when two names are too close to call - so we never silently pick wrong.
     function nwMatchPlayerToken(tokenRaw) {
       const token = (tokenRaw || '').trim().toLowerCase();
-      if (!token) return null;
+      if (!token) return { player: null };
       if (['me', 'i', 'my', 'myself'].includes(token)) {
-        return allPlayers.find(p => p.player_id === myPlayerId()) || null;
+        return { player: allPlayers.find(p => p.player_id === myPlayerId()) || null };
       }
-      const nk = p => (p.nickname || '').toLowerCase();
-      const nm = p => (p.name || '').toLowerCase();
-      const first = p => nm(p).split(' ')[0];
-      // exact nickname -> exact name/first name -> startsWith -> contains
-      return allPlayers.find(p => nk(p) === token)
-          || allPlayers.find(p => nm(p) === token || first(p) === token)
-          || allPlayers.find(p => nk(p).startsWith(token) || first(p).startsWith(token))
-          || allPlayers.find(p => nm(p).includes(token) || nk(p).includes(token))
-          || null;
+      const scored = allPlayers.map(p => ({ p, s: nwScorePlayer(token, p) })).sort((a, b) => b.s - a.s);
+      const top = scored[0], second = scored[1];
+      if (!top || top.s < 40) return { player: null };
+      if (second && top.s - second.s < 15 && top.s < 100) {
+        return { player: null, ambiguous: true, options: [top.p, second.p] };
+      }
+      return { player: top.p };
+    }
+
+    function nwWordsToNums(t) {
+      const map = { zero: 0, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16, seventeen: 17, eighteen: 18, nineteen: 19, twenty: 20, thirty: 30 };
+      t = t.replace(/\b(twenty|thirty)\s+(one|two|three|four|five|six|seven|eight|nine)\b/g, (m, a, b) => String(map[a] + map[b]));
+      t = t.replace(/\b(zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty)\b/g, m => String(map[m]));
+      return t;
     }
 
     function nwParseMatchTranscript(raw) {
-      const text = ' ' + raw.toLowerCase().replace(/[.,!?]/g, ' ').replace(/\s+/g, ' ').trim() + ' ';
-      const scoreMatch = text.match(/(\d{1,2})\s*(?:-|to| )\s*(\d{1,2})/);
+      const text = nwWordsToNums(' ' + raw.toLowerCase().replace(/[.,!?]/g, ' ').replace(/\s+/g, ' ').trim() + ' ');
+      // A match always ends in two numbers. Take the LAST two 1-2 digit
+      // numbers as the score, whatever separator was heard ("21 18",
+      // "21-18", "21 to 18") - so you never have to say "hyphen".
+      const nums = [...text.matchAll(/\b(\d{1,2})\b/g)];
       let s1 = null, s2 = null, namesText = text;
-      if (scoreMatch) { s1 = +scoreMatch[1]; s2 = +scoreMatch[2]; namesText = namesText.replace(scoreMatch[0], ' '); }
+      if (nums.length >= 2) {
+        const a = nums[nums.length - 2], b = nums[nums.length - 1];
+        s1 = +a[1]; s2 = +b[1];
+        namesText = text.slice(0, a.index) + ' ' + text.slice(b.index + b[0].length);
+      }
 
       const loseVerbs = /\b(lost to|lost against|lost)\b/;
       const winVerbs  = /\b(beat|beats|defeated|smashed|thrashed|crushed|won against|won)\b/;
@@ -1049,7 +1109,7 @@ let userPool = null;
       else return { error: "Couldn't tell the two sides apart. Try e.g. \"Aditya beat Sohan 21-18\"." };
 
       const splitPlayers = t => (t || '').split(/\band\b|&|\bwith\b|,|\bplus\b/).map(s => s.trim()).filter(Boolean);
-      const resolve = toks => toks.map(tok => ({ token: tok, player: nwMatchPlayerToken(tok) }));
+      const resolve = toks => toks.map(tok => { const r = nwMatchPlayerToken(tok); return { token: tok, player: r.player, ambiguous: !!r.ambiguous, options: r.options }; });
       const teamA = resolve(splitPlayers(leftText));
       const teamB = resolve(splitPlayers(rightText));
 
@@ -1079,9 +1139,11 @@ let userPool = null;
     }
 
     function nwVoicePreviewHtml(p) {
-      const side = arr => arr.map(e => e.player
-        ? `<b>${formatPlayerLabel(e.player.name, e.player.nickname)}</b>`
-        : `<span style="color:#c0392b;">${e.token}?</span>`).join(' &amp; ');
+      const side = arr => arr.map(e => {
+        if (e.player) return `<b>${formatPlayerLabel(e.player.name, e.player.nickname)}</b>`;
+        if (e.ambiguous && e.options) return `<span style="color:#c0392b;">${e.token}? (${e.options.map(o => o.name).join(' or ')})</span>`;
+        return `<span style="color:#c0392b;">${e.token}?</span>`;
+      }).join(' &amp; ');
       const anyUnmatched = [...p.teamA, ...p.teamB].some(e => !e.player);
       const score = p.scoreA != null ? ` &nbsp; <b>${p.scoreA}–${p.scoreB}</b>` : '';
       return `Heard: ${side(p.teamA)} vs ${side(p.teamB)}${score}` +
@@ -1159,6 +1221,102 @@ let userPool = null;
     }
     nwVoiceMatchInit();
     // ================= end voice match entry =================
+
+    // ================= Team pairing preview =================
+    // Mirrors the tournament pairing (seeded = sort by Elo then snake-pair
+    // strongest+weakest; random = shuffle) so you can preview balanced teams
+    // from any selected players WITHOUT creating a tournament.
+    function nwSeeded(p) { return [...p].sort((x, y) => (+y.rating || 1000) - (+x.rating || 1000)); }
+    function nwShuffle(a) { a = [...a]; for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; }
+
+    function nwPairingRefreshList() {
+      const grp = document.getElementById('nw-pp-group');
+      if (grp) { const cur = grp.value; populateSelect(grp, allGroups, 'group_id', 'group_name', '— choose —'); grp.value = cur; }
+      const list = document.getElementById('nw-pp-list');
+      if (!list) return;
+      const sorted = [...allPlayers].sort((a, b) => String(a.name).localeCompare(String(b.name)));
+      list.innerHTML = sorted.map(p =>
+        `<label style="display:block;padding:2px 0;font-size:13px;"><input type="checkbox" class="nw-pp-cb" value="${p.player_id}"> ${escapeHtml(p.name)} <span style="color:var(--text-secondary,#888);">(${p.rating})</span></label>`
+      ).join('');
+      nwPairingUpdateCount();
+    }
+    function nwPairingUpdateCount() {
+      const n = document.querySelectorAll('.nw-pp-cb:checked').length;
+      const el = document.getElementById('nw-pp-count');
+      if (el) el.textContent = n ? `${n} selected` : '';
+    }
+    function nwPairingRender() {
+      const out = document.getElementById('nw-pp-out');
+      const type = document.getElementById('nw-pp-type').value;
+      const mode = document.getElementById('nw-pp-mode').value;
+      const ids = [...document.querySelectorAll('.nw-pp-cb:checked')].map(c => c.value);
+      const picked = ids.map(id => allPlayers.find(p => p.player_id === id)).filter(Boolean);
+      if (type === 'doubles' && picked.length < 4) { out.innerHTML = '<span style="color:#c0392b;">Pick at least 4 players for doubles.</span>'; return; }
+      if (type === 'singles' && picked.length < 2) { out.innerHTML = '<span style="color:#c0392b;">Pick at least 2 players.</span>'; return; }
+      const ordered = mode === 'balanced' ? nwSeeded(picked) : nwShuffle(picked);
+      let html = '';
+      if (type === 'doubles') {
+        let pairs = [], leftover = null;
+        if (mode === 'balanced') { let i = 0, j = ordered.length - 1; while (i < j) { pairs.push([ordered[i], ordered[j]]); i++; j--; } if (i === j) leftover = ordered[i]; }
+        else { const o = [...ordered]; if (o.length % 2) leftover = o.pop(); for (let i = 0; i < o.length; i += 2) pairs.push([o[i], o[i + 1]]); }
+        html = '<table><tr><th>Team</th><th>Players</th><th>Combined Elo</th></tr>';
+        pairs.forEach((pr, idx) => {
+          const tot = (+pr[0].rating || 1000) + (+pr[1].rating || 1000);
+          html += `<tr><td>${idx + 1}</td><td>${escapeHtml(pr[0].name)} (${pr[0].rating}) &amp; ${escapeHtml(pr[1].name)} (${pr[1].rating})</td><td>${tot}</td></tr>`;
+        });
+        html += '</table>';
+        if (leftover) html += `<p style="font-size:12px;color:var(--text-secondary,#888);margin-top:6px;">Sitting out: <b>${escapeHtml(leftover.name)}</b> (${leftover.rating})</p>`;
+        if (pairs.length > 1) {
+          const totals = pairs.map(p => (+p[0].rating || 1000) + (+p[1].rating || 1000));
+          html += `<p style="font-size:12px;color:var(--text-secondary,#888);">Team-total spread: ${Math.max(...totals) - Math.min(...totals)} (lower = more balanced)</p>`;
+        }
+      } else {
+        html = '<table><tr><th>Seed</th><th>Player</th><th>Elo</th></tr>';
+        ordered.forEach((p, i) => { html += `<tr><td>${i + 1}</td><td>${escapeHtml(p.name)}</td><td>${p.rating}</td></tr>`; });
+        html += '</table>';
+      }
+      out.innerHTML = html;
+    }
+    function nwPairingInit() {
+      const anchor = document.getElementById('record-match-card');
+      if (!anchor || document.getElementById('nw-pairing-card')) return;
+      const card = document.createElement('div');
+      card.className = 'card';
+      card.id = 'nw-pairing-card';
+      card.innerHTML =
+        '<h2>Team pairing preview</h2>' +
+        '<p style="font-size:12px;color:var(--text-secondary,#888);">Pick players and preview balanced or random teams by current Elo — no tournament needed.</p>' +
+        '<div class="row">' +
+          '<div><label>Quick-pick group<select id="nw-pp-group"><option value="">— choose —</option></select></label></div>' +
+          '<div><label>Type<select id="nw-pp-type"><option value="doubles">Doubles</option><option value="singles">Singles</option></select></label></div>' +
+          '<div><label>Pairing<select id="nw-pp-mode"><option value="balanced">Balanced (by Elo)</option><option value="random">Random</option></select></label></div>' +
+        '</div>' +
+        '<div style="margin:8px 0;">' +
+          '<button type="button" id="nw-pp-all" class="secondary" style="padding:4px 10px;font-size:12px;margin:0;">Select all</button> ' +
+          '<button type="button" id="nw-pp-clear" class="secondary" style="padding:4px 10px;font-size:12px;margin:0;">Clear</button>' +
+          '<span id="nw-pp-count" style="font-size:12px;color:var(--text-secondary,#888);margin-left:8px;"></span>' +
+        '</div>' +
+        '<div id="nw-pp-list" style="max-height:200px;overflow-y:auto;border:1px solid var(--line,#333);border-radius:8px;padding:8px;"></div>' +
+        '<button type="button" id="nw-pp-go" style="margin-top:10px;">Preview teams</button>' +
+        '<div id="nw-pp-out" style="margin-top:12px;"></div>';
+      anchor.parentNode.insertBefore(card, anchor.nextSibling);
+
+      populateSelect(document.getElementById('nw-pp-group'), allGroups, 'group_id', 'group_name', '— choose —');
+      nwPairingRefreshList();
+
+      document.getElementById('nw-pp-all').addEventListener('click', () => { document.querySelectorAll('.nw-pp-cb').forEach(c => c.checked = true); nwPairingUpdateCount(); });
+      document.getElementById('nw-pp-clear').addEventListener('click', () => { document.querySelectorAll('.nw-pp-cb').forEach(c => c.checked = false); nwPairingUpdateCount(); });
+      document.getElementById('nw-pp-list').addEventListener('change', nwPairingUpdateCount);
+      document.getElementById('nw-pp-go').addEventListener('click', nwPairingRender);
+      document.getElementById('nw-pp-group').addEventListener('change', (e) => {
+        const g = allGroups.find(x => x.group_id === e.target.value);
+        const ids = new Set((g && g.member_ids) || []);
+        document.querySelectorAll('.nw-pp-cb').forEach(c => c.checked = ids.has(c.value));
+        nwPairingUpdateCount();
+      });
+    }
+    nwPairingInit();
+    // ================= end team pairing preview =================
 
     document.getElementById('match-form').addEventListener('submit', async (e) => {
       e.preventDefault();
@@ -1378,6 +1536,20 @@ let userPool = null;
         const res = await fetch(`${API_BASE_URL}/matches?${params.toString()}`);
         const data = await res.json();
         if (!res.ok) { logEl.textContent = `Error: ${data.error}`; return; }
+        // Opponent filter is applied client-side (the API returns team_a /
+        // team_b as id arrays). If a player is also chosen, keep only matches
+        // where the two were on OPPOSITE sides; otherwise any match the
+        // opponent played in.
+        const opponentId = (document.getElementById('log_opponent_filter') || {}).value || '';
+        if (opponentId) {
+          data.matches = data.matches.filter(m => {
+            const a = m.team_a || [], b = m.team_b || [];
+            const oppIn = a.includes(opponentId) || b.includes(opponentId);
+            if (!playerId) return oppIn;
+            const meA = a.includes(playerId), meB = b.includes(playerId);
+            return (meA && b.includes(opponentId)) || (meB && a.includes(opponentId));
+          });
+        }
         if (!data.matches.length) { logEl.innerHTML = '<p style="font-size:13px;color:#555;">No matches yet.</p>'; return; }
 
         let html = '<table><tr><th>Date</th><th>Team A</th><th>Team B</th><th>Score</th><th>Notes</th><th></th></tr>';
@@ -1408,8 +1580,9 @@ let userPool = null;
       }
     }
     document.getElementById('load-log-btn').addEventListener('click', loadGameLog);
-    ['log_group_filter', 'log_player_filter', 'log_date_from', 'log_date_to'].forEach(id => {
-      document.getElementById(id).addEventListener('change', loadGameLog);
+    ['log_group_filter', 'log_player_filter', 'log_opponent_filter', 'log_date_from', 'log_date_to'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.addEventListener('change', loadGameLog);
     });
 
     /**
