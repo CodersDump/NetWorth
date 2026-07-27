@@ -1,11 +1,43 @@
 name: Deploy NetWorth
 
+# Prod NEVER deploys on a push to main. Merging to main only STAGES code as
+# "ready to ship" - it does not ship it. Prod deploys only when YOU trigger it:
+#   - the "Run workflow" button (workflow_dispatch), or
+#   - publishing a GitHub Release, or pushing a version tag (v*).
+#
+# Code reaches main only through a PR from staging, and branch protection
+# blocks that PR's merge button until the staging deploy is green. So anything
+# on main is already staging-verified; this workflow just ships it on demand.
 on:
+  workflow_dispatch:
+  release:
+    types: [published]
   push:
-    branches: [main]
+    tags: ['v*']
 
 jobs:
+  # Safety: only ship commits that actually reached main (i.e. went through
+  # the staging->main PR gate). Blocks deploying a stray tag cut off some
+  # commit that was never merged to main.
+  on-main-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out full history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Require this commit to be on main
+        run: |
+          git fetch origin main:refs/remotes/origin/main
+          if git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "OK: $GITHUB_SHA is on main - it passed the staging->main PR gate."
+          else
+            echo "::error::This commit is not on main. Only release commits that were merged to main (via a staging-verified PR) can deploy to prod."
+            exit 1
+          fi
+
   deploy:
+    needs: on-main-gate
     runs-on: ubuntu-latest
 
     steps:
