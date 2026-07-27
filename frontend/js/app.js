@@ -1009,6 +1009,157 @@ let userPool = null;
       if (mine.length) sel.value = mine[0].group_id;
     }
 
+    // ================= Voice match entry =================
+    // Free, client-side, no LLM: the browser's SpeechRecognition does the
+    // speech->text (Chrome/Edge/Safari, no key, no cost), and a small rules
+    // parser turns e.g. "Aditya and Sohan beat Sourabh and Mayank 21-18" into
+    // the match form. It never submits blind - it fills the form and you tap
+    // Record, so all the existing validation + safety net still apply.
+
+    function nwMatchPlayerToken(tokenRaw) {
+      const token = (tokenRaw || '').trim().toLowerCase();
+      if (!token) return null;
+      if (['me', 'i', 'my', 'myself'].includes(token)) {
+        return allPlayers.find(p => p.player_id === myPlayerId()) || null;
+      }
+      const nk = p => (p.nickname || '').toLowerCase();
+      const nm = p => (p.name || '').toLowerCase();
+      const first = p => nm(p).split(' ')[0];
+      // exact nickname -> exact name/first name -> startsWith -> contains
+      return allPlayers.find(p => nk(p) === token)
+          || allPlayers.find(p => nm(p) === token || first(p) === token)
+          || allPlayers.find(p => nk(p).startsWith(token) || first(p).startsWith(token))
+          || allPlayers.find(p => nm(p).includes(token) || nk(p).includes(token))
+          || null;
+    }
+
+    function nwParseMatchTranscript(raw) {
+      const text = ' ' + raw.toLowerCase().replace(/[.,!?]/g, ' ').replace(/\s+/g, ' ').trim() + ' ';
+      const scoreMatch = text.match(/(\d{1,2})\s*(?:-|to| )\s*(\d{1,2})/);
+      let s1 = null, s2 = null, namesText = text;
+      if (scoreMatch) { s1 = +scoreMatch[1]; s2 = +scoreMatch[2]; namesText = namesText.replace(scoreMatch[0], ' '); }
+
+      const loseVerbs = /\b(lost to|lost against|lost)\b/;
+      const winVerbs  = /\b(beat|beats|defeated|smashed|thrashed|crushed|won against|won)\b/;
+      const neutral   = /\b(versus|vs|against)\b/;
+      let m, leftText, rightText, leftIsWinner = null;
+      if ((m = namesText.match(loseVerbs)))      { [leftText, rightText] = namesText.split(m[0]); leftIsWinner = false; }
+      else if ((m = namesText.match(winVerbs)))  { [leftText, rightText] = namesText.split(m[0]); leftIsWinner = true; }
+      else if ((m = namesText.match(neutral)))   { [leftText, rightText] = namesText.split(m[0]); leftIsWinner = null; }
+      else return { error: "Couldn't tell the two sides apart. Try e.g. \"Aditya beat Sohan 21-18\"." };
+
+      const splitPlayers = t => (t || '').split(/\band\b|&|\bwith\b|,|\bplus\b/).map(s => s.trim()).filter(Boolean);
+      const resolve = toks => toks.map(tok => ({ token: tok, player: nwMatchPlayerToken(tok) }));
+      const teamA = resolve(splitPlayers(leftText));
+      const teamB = resolve(splitPlayers(rightText));
+
+      let scoreA = null, scoreB = null;
+      if (s1 != null && s2 != null) {
+        const hi = Math.max(s1, s2), lo = Math.min(s1, s2);
+        if (leftIsWinner === true)  { scoreA = hi; scoreB = lo; }
+        else if (leftIsWinner === false) { scoreA = lo; scoreB = hi; }
+        else { scoreA = s1; scoreB = s2; }
+      }
+      if (!teamA.length || !teamB.length) return { error: "Didn't catch both sides. Say who played on each side." };
+      return { teamA, teamB, scoreA, scoreB, matchType: (teamA.length > 1 || teamB.length > 1) ? 'doubles' : 'singles' };
+    }
+
+    function nwApplyParsedToForm(p) {
+      const mt = document.getElementById('match_type_select');
+      mt.value = p.matchType;
+      mt.dispatchEvent(new Event('change'));  // toggles doubles-only selects
+      const set = (id, entry) => { const el = document.getElementById(id); if (el && entry && entry.player) el.value = entry.player.player_id; };
+      set('team_a1_select', p.teamA[0]); set('team_a2_select', p.teamA[1]);
+      set('team_b1_select', p.teamB[0]); set('team_b2_select', p.teamB[1]);
+      const live = document.getElementById('live_scoring_toggle');
+      if (p.scoreA != null && !(live && live.checked)) {
+        document.getElementById('score_a').value = p.scoreA;
+        document.getElementById('score_b').value = p.scoreB;
+      }
+    }
+
+    function nwVoicePreviewHtml(p) {
+      const side = arr => arr.map(e => e.player
+        ? `<b>${formatPlayerLabel(e.player.name, e.player.nickname)}</b>`
+        : `<span style="color:#c0392b;">${e.token}?</span>`).join(' &amp; ');
+      const anyUnmatched = [...p.teamA, ...p.teamB].some(e => !e.player);
+      const score = p.scoreA != null ? ` &nbsp; <b>${p.scoreA}–${p.scoreB}</b>` : '';
+      return `Heard: ${side(p.teamA)} vs ${side(p.teamB)}${score}` +
+        (anyUnmatched ? `<div style="color:#c0392b;margin-top:4px;">Some names in red weren't matched — pick them manually before recording.</div>` : '');
+    }
+
+    function nwVoiceMatchInit() {
+      const form = document.getElementById('match-form');
+      if (!form || document.getElementById('nw-voice-wrap')) return;
+      const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+
+      const wrap = document.createElement('div');
+      wrap.id = 'nw-voice-wrap';
+      wrap.style.cssText = 'margin:0 0 10px;';
+      wrap.innerHTML =
+        '<button type="button" id="nw-voice-btn" style="display:inline-flex;align-items:center;gap:8px;padding:9px 14px;border:0;border-radius:10px;background:var(--court,#2fa968);color:#fff;font-weight:600;cursor:pointer;">🎤 Record by voice</button>' +
+        '<span id="nw-voice-hint" style="margin-left:10px;font-size:12px;color:var(--text-secondary,#888);">e.g. "Aditya and Sohan beat Sourabh and Mayank 21-18"</span>' +
+        '<div id="nw-voice-status" style="margin-top:8px;font-size:13px;"></div>';
+      form.parentNode.insertBefore(wrap, form);
+
+      const btn = wrap.querySelector('#nw-voice-btn');
+      const status = wrap.querySelector('#nw-voice-status');
+
+      if (!SR) {
+        btn.disabled = true; btn.style.opacity = '0.5'; btn.style.cursor = 'not-allowed';
+        wrap.querySelector('#nw-voice-hint').textContent = 'Voice input isn\'t supported in this browser — use Chrome or Safari, or fill the form normally.';
+        return;
+      }
+
+      let listening = false;
+      btn.addEventListener('click', () => {
+        if (listening) return;
+        const rec = new SR();
+        rec.lang = 'en-IN';
+        rec.interimResults = true;
+        rec.maxAlternatives = 1;
+        listening = true;
+        btn.textContent = '🎙️ Listening…';
+        status.style.color = 'var(--text-secondary,#888)';
+        status.textContent = 'Listening — say the match…';
+
+        let finalTranscript = '';
+        rec.onresult = (ev) => {
+          let interim = '';
+          for (let i = ev.resultIndex; i < ev.results.length; i++) {
+            const t = ev.results[i][0].transcript;
+            if (ev.results[i].isFinal) finalTranscript += t; else interim += t;
+          }
+          status.textContent = '“' + (finalTranscript + interim).trim() + '”';
+        };
+        rec.onerror = (ev) => {
+          status.style.color = '#c0392b';
+          status.textContent = ev.error === 'not-allowed'
+            ? 'Microphone blocked — allow mic access for this site and try again.'
+            : 'Voice error: ' + ev.error;
+        };
+        rec.onend = () => {
+          listening = false;
+          btn.textContent = '🎤 Record by voice';
+          const said = finalTranscript.trim();
+          if (!said) { if (!status.textContent.startsWith('Voice error') && !status.textContent.startsWith('Microphone')) status.textContent = 'Didn\'t catch anything — try again.'; return; }
+          const parsed = nwParseMatchTranscript(said);
+          if (parsed.error) {
+            status.style.color = '#c0392b';
+            status.innerHTML = '“' + said + '”<br>' + parsed.error;
+            return;
+          }
+          nwApplyParsedToForm(parsed);
+          status.style.color = 'var(--text,#111)';
+          status.innerHTML = nwVoicePreviewHtml(parsed) +
+            '<div style="margin-top:4px;color:var(--text-secondary,#888);">Filled the form — review and tap Record match.</div>';
+        };
+        rec.start();
+      });
+    }
+    nwVoiceMatchInit();
+    // ================= end voice match entry =================
+
     document.getElementById('match-form').addEventListener('submit', async (e) => {
       e.preventDefault();
       const group_id = document.getElementById('match_group_select').value || null;
