@@ -279,7 +279,7 @@ let userPool = null;
       if (typeof nwPairingRefreshList === 'function') nwPairingRefreshList();
       populateSelect(document.getElementById('attendance_group_filter'), allGroups, 'group_id', 'group_name', 'All groups');
       populateSelect(document.getElementById('rankings_scope_select'), allGroups, 'group_id', 'group_name', 'All players');
-      // Once someone belongs to a group, default the rankings view to it so
+      // Once someone belongs t o a group, default the rankings view to it so
       // they see their group-mates first rather than the whole club. Only
       // when nothing's been chosen yet, so it never fights a manual pick.
       const rankScope = document.getElementById('rankings_scope_select');
@@ -1002,6 +1002,17 @@ let userPool = null;
       return allGroups.filter(g => (g.member_ids || []).includes(me));
     }
 
+    /** Pre-selects the recorder's group when recording a match, so matches
+     *  get attributed by default instead of piling up ungrouped. Picks
+     *  their first group; they can still change it (and a SuperAdmin can
+     *  set None for a genuinely one-off game). */
+    function defaultMatchGroup() {
+      const sel = document.getElementById('match_group_select');
+      if (!sel || sel.value) return;              // don't override a choice already made
+      const mine = myGroups();
+      if (mine.length) sel.value = mine[0].group_id;
+    }
+    
     // ================= Voice match entry =================
     // Free, client-side, no LLM: the browser's SpeechRecognition does the
     // speech->text (Chrome/Edge/Safari, no key, no cost), and a small rules
@@ -1251,7 +1262,7 @@ let userPool = null;
     nwVoiceMatchInit();
     // ================= end voice match entry =================
 
-    
+
     // ================= Team pairing preview =================
     // Mirrors the tournament pairing (seeded = sort by Elo then snake-pair
     // strongest+weakest; random = shuffle) so you can preview balanced teams
