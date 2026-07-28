@@ -254,6 +254,9 @@ let userPool = null;
       renderAddPlayersChecklist();
       populateSelect(document.getElementById('delete_player_id'), labeled, 'player_id', 'label', null);
       populateSelect(document.getElementById('log_player_filter'), labeled, 'player_id', 'label', 'All players');
+      const oppFilter = document.getElementById('log_opponent_filter');
+      if (oppFilter) populateSelect(oppFilter, labeled, 'player_id', 'label', 'Any opponent');
+      if (typeof nwPairingRefreshList === 'function') nwPairingRefreshList();
       // Profile-related selects are populated by loadVisiblePlayers()
       // instead (group-scoped server-side) - not here, which would show
       // the full unrestricted roster regardless of who's actually
@@ -273,6 +276,7 @@ let userPool = null;
       populateSelect(document.getElementById('match_group_select'), allGroups, 'group_id', 'group_name', 'None');
       defaultMatchGroup();  // pre-pick the recorder's group once groups are loaded
       populateSelect(document.getElementById('log_group_filter'), allGroups, 'group_id', 'group_name', 'All groups');
+      if (typeof nwPairingRefreshList === 'function') nwPairingRefreshList();
       populateSelect(document.getElementById('attendance_group_filter'), allGroups, 'group_id', 'group_name', 'All groups');
       populateSelect(document.getElementById('rankings_scope_select'), allGroups, 'group_id', 'group_name', 'All players');
       // Once someone belongs to a group, default the rankings view to it so
@@ -1009,6 +1013,350 @@ let userPool = null;
       if (mine.length) sel.value = mine[0].group_id;
     }
 
+    // ================= Voice match entry =================
+    // Free, client-side, no LLM: the browser's SpeechRecognition does the
+    // speech->text (Chrome/Edge/Safari, no key, no cost), and a small rules
+    // parser turns e.g. "Aditya and Sohan beat Sourabh and Mayank 21-18" into
+    // the match form. It never submits blind - it fills the form and you tap
+    // Record, so all the existing validation + safety net still apply.
+    // Visibility is gated: SuperAdmins always see it; everyone else only when
+    // the "voice_enabled" app setting is on.
+    let voiceEnabled = false;
+    function applyVoiceVisibility() {
+      const w = document.getElementById('nw-voice-wrap');
+      if (w) w.style.display = (isSuperAdmin() || voiceEnabled) ? '' : 'none';
+    }
+
+    // Phonetic key so Sourabh/Saurabh/Sourav collapse together, while the
+    // distinguishing part (C / Devle / T) still separates them via scoring.
+    function nwPhon(s) {
+       s = (s || '').toLowerCase().replace(/[^a-z]/g, '');
+       if (!s) return '';
+       const first = s[0];
+       const rest = s.slice(1)
+         .replace(/[aeiouhwy]/g, '')
+         .replace(/z/g, 's').replace(/ck/g, 'k').replace(/c/g, 'k')
+         .replace(/ph/g, 'f').replace(/v/g, 'f')
+         .replace(/(.)\1+/g, '$1');
+       return (first + rest).slice(0, 6);
+    }
+    function nwLev(a, b) {
+       const m = a.length, n = b.length, d = [...Array(m + 1)].map((_, i) => [i, ...Array(n).fill(0)]);
+       for (let j = 0; j <= n; j++) d[0][j] = j;
+       for (let i = 1; i <= m; i++) for (let j = 1; j <= n; j++)
+         d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+       return d[m][n];
+    }
+    function nwScorePlayer(token, p) {
+       const cands = [p.nickname || '', p.name || '', (p.name || '').split(' ')[0]].map(x => x.toLowerCase()).filter(Boolean);
+       let best = 0;
+       for (const c of cands) {
+         if (c === token) best = Math.max(best, 100);
+         else if (nwPhon(c) === nwPhon(token)) best = Math.max(best, 80);
+         else if (c.startsWith(token) || token.startsWith(c)) best = Math.max(best, 70);
+         else { const d = nwLev(nwPhon(c), nwPhon(token)); if (d <= 1) best = Math.max(best, 65); else if (c.includes(token)) best = Math.max(best, 40); }
+       }
+       const words = token.split(' ').filter(Boolean);
+       if (words.length >= 2) {
+         const surname = words[words.length - 1];
+         const nameWords = (p.name || '').toLowerCase().split(' ').filter(Boolean);
+         if (nameWords.some(w => w === surname || nwPhon(w) === nwPhon(surname) || (surname.length > 1 && w.startsWith(surname)))) {
+           best = Math.max(best, 95);
+         }
+       }
+       return best;
+    }
+    function nwMatchPlayerToken(tokenRaw) {
+       const token = (tokenRaw || '').trim().toLowerCase();
+       if (!token) return { player: null };
+       if (['me', 'i', 'my', 'myself'].includes(token)) {
+         return { player: allPlayers.find(p => p.player_id === myPlayerId()) || null };
+       }
+       const scored = allPlayers.map(p => ({ p, s: nwScorePlayer(token, p) })).sort((a, b) => b.s - a.s);
+       const top = scored[0], second = scored[1];
+       if (!top || top.s < 40) return { player: null };
+       if (second && top.s - second.s < 15 && top.s < 100) {
+         return { player: null, ambiguous: true, options: [top.p, second.p] };
+       }
+       return { player: top.p };
+    }
+
+    function nwWordsToNums(t) {
+       const map = { zero: 0, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16, seventeen: 17, eighteen: 18, nineteen: 19, twenty: 20, thirty: 30 };
+       t = t.replace(/\bto\b/g, ' to ');
+       t = t.replace(/\b(twenty|thirty)\s+(one|two|three|four|five|six|seven|eight|nine)\b/g, (m, a, b) => String(map[a] + map[b]));
+       t = t.replace(/\b(zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty)\b/g, m => String(map[m]));
+       return t;
+    }
+
+    function nwParseMatchTranscript(raw) {
+       const text = nwWordsToNums(' ' + raw.toLowerCase().replace(/[.,!?]/g, ' ').replace(/\s+/g, ' ').trim() + ' ');
+       const nums = [...text.matchAll(/\b(\d{1,2})\b/g)];
+       let s1 = null, s2 = null, namesText = text;
+       if (nums.length >= 2) {
+         const a = nums[nums.length - 2], b = nums[nums.length - 1];
+         s1 = +a[1]; s2 = +b[1];
+         namesText = text.slice(0, a.index) + ' ' + text.slice(b.index + b[0].length);
+       }
+       const loseVerbs = /\b(lost to|lost against|lost)\b/;
+       const winVerbs  = /\b(beat|beats|defeated|smashed|thrashed|crushed|won against|won)\b/;
+       const neutral   = /\b(versus|vs|against)\b/;
+       let m, leftText, rightText, leftIsWinner = null;
+       if ((m = namesText.match(loseVerbs)))      { [leftText, rightText] = namesText.split(m[0]); leftIsWinner = false; }
+       else if ((m = namesText.match(winVerbs)))  { [leftText, rightText] = namesText.split(m[0]); leftIsWinner = true; }
+       else if ((m = namesText.match(neutral)))   { [leftText, rightText] = namesText.split(m[0]); leftIsWinner = null; }
+       else return { error: "Couldn't tell the two sides apart. Try e.g. \"Aditya beat Sohan 21-18\"." };
+       const splitPlayers = t => (t || '').split(/\band\b|&|\bwith\b|,|\bplus\b/).map(s => s.trim()).filter(Boolean);
+       const resolve = toks => toks.map(tok => { const r = nwMatchPlayerToken(tok); return { token: tok, player: r.player, ambiguous: !!r.ambiguous, options: r.options }; });
+       const teamA = resolve(splitPlayers(leftText));
+       const teamB = resolve(splitPlayers(rightText));
+       let scoreA = null, scoreB = null;
+       if (s1 != null && s2 != null) {
+         const hi = Math.max(s1, s2), lo = Math.min(s1, s2);
+         if (leftIsWinner === true)  { scoreA = hi; scoreB = lo; }
+         else if (leftIsWinner === false) { scoreA = lo; scoreB = hi; }
+         else { scoreA = s1; scoreB = s2; }
+       }
+       if (!teamA.length || !teamB.length) return { error: "Didn't catch both sides. Say who played on each side." };
+       return { teamA, teamB, scoreA, scoreB, matchType: (teamA.length > 1 || teamB.length > 1) ? 'doubles' : 'singles' };
+    }
+
+    function nwApplyParsedToForm(p) {
+       const mt = document.getElementById('match_type_select');
+       mt.value = p.matchType;
+       mt.dispatchEvent(new Event('change'));
+       const set = (id, entry) => { const el = document.getElementById(id); if (el && entry && entry.player) el.value = entry.player.player_id; };
+       set('team_a1_select', p.teamA[0]); set('team_a2_select', p.teamA[1]);
+       set('team_b1_select', p.teamB[0]); set('team_b2_select', p.teamB[1]);
+       const live = document.getElementById('live_scoring_toggle');
+       if (p.scoreA != null && !(live && live.checked)) {
+         document.getElementById('score_a').value = p.scoreA;
+         document.getElementById('score_b').value = p.scoreB;
+       }
+    }
+
+    function nwVoicePreviewHtml(p) {
+       const side = arr => arr.map(e => {
+         if (e.player) return `<b>${formatPlayerLabel(e.player.name, e.player.nickname)}</b>`;
+         if (e.ambiguous && e.options) return `<span style="color:#c0392b;">${e.token}? (${e.options.map(o => o.name).join(' or ')})</span>`;
+         return `<span style="color:#c0392b;">${e.token}?</span>`;
+       }).join(' &amp; ');
+       const anyUnmatched = [...p.teamA, ...p.teamB].some(e => !e.player);
+       const score = p.scoreA != null ? ` &nbsp; <b>${p.scoreA}-${p.scoreB}</b>` : '';
+       return `Heard: ${side(p.teamA)} vs ${side(p.teamB)}${score}` +
+         (anyUnmatched ? `<div style="color:#c0392b;margin-top:4px;">Some names in red weren't matched - pick them manually before recording.</div>` : '');
+    }
+
+    function nwVoiceMatchInit() {
+       const form = document.getElementById('match-form');
+       if (!form || document.getElementById('nw-voice-wrap')) return;
+       const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+
+       const wrap = document.createElement('div');
+       wrap.id = 'nw-voice-wrap';
+       wrap.style.cssText = 'margin:0 0 10px;';
+       wrap.innerHTML =
+         '<button type="button" id="nw-voice-btn" style="display:inline-flex;align-items:center;gap:8px;padding:9px 14px;border:0;border-radius:10px;background:var(--court,#2fa968);color:#fff;font-weight:600;cursor:pointer;">\U0001F3A4 Record by voice</button>' +
+         '<span id="nw-voice-hint" style="margin-left:10px;font-size:12px;color:var(--text-secondary,#888);">e.g. "Aditya and Sohan beat Sourabh and Mayank 21-18"</span>' +
+         '<div id="nw-voice-status" style="margin-top:8px;font-size:13px;"></div>';
+       form.parentNode.insertBefore(wrap, form);
+       applyVoiceVisibility();
+
+       const btn = wrap.querySelector('#nw-voice-btn');
+       const status = wrap.querySelector('#nw-voice-status');
+
+       if (!SR) {
+         btn.disabled = true; btn.style.opacity = '0.5'; btn.style.cursor = 'not-allowed';
+         wrap.querySelector('#nw-voice-hint').textContent = 'Voice input isn\'t supported in this browser - use Safari/Chrome, or fill the form normally.';
+         return;
+       }
+
+       let listening = false;
+       let recognizer = null;
+       let fullTranscript = '';
+       const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+
+       const stopListening = () => {
+         if (recognizer) {
+           listening = false;
+           try { recognizer.stop(); } catch(e){}
+         }
+       };
+
+       btn.addEventListener('click', () => {
+         if (listening) {
+           stopListening();
+           return;
+         }
+
+         const rec = new SR();
+         recognizer = rec;
+         rec.lang = 'en-IN';
+         rec.continuous = !isIOS;
+         rec.interimResults = true;
+         rec.maxAlternatives = 1;
+         listening = true;
+         fullTranscript = '';
+
+         btn.textContent = '\u231B Warmup mic...';
+         status.style.color = 'var(--text-secondary,#888)';
+         status.textContent = 'Opening microphone... wait a moment before speaking.';
+
+         rec.onstart = () => {
+           btn.textContent = '\u23F9 Stop & fill';
+           status.textContent = '\U0001F534 Listening - Speak now!';
+         };
+
+         rec.onresult = (ev) => {
+           let currentSessionText = '';
+           for (let i = 0; i < ev.results.length; i++) {
+             currentSessionText += ev.results[i][0].transcript + ' ';
+           }
+           const combined = (fullTranscript + ' ' + currentSessionText).trim();
+           status.textContent = '\u201C' + combined + '\u201D';
+         };
+
+         rec.onerror = (ev) => {
+           if (ev.error === 'no-speech') return;
+           listening = false;
+           btn.textContent = '\U0001F3A4 Record by voice';
+           status.style.color = '#c0392b';
+           status.textContent = ev.error === 'not-allowed'
+             ? 'Microphone blocked - allow mic access for this site and try again.'
+             : 'Voice error: ' + ev.error;
+         };
+
+         rec.onend = () => {
+           const currentSaid = (status.textContent || '').replace(/^\u201C|\u201D$/g, '').trim();
+           if (isIOS && listening && currentSaid) {
+             fullTranscript = currentSaid + ' ';
+             try { rec.start(); return; } catch(e){}
+           }
+
+           listening = false;
+           recognizer = null;
+           btn.textContent = '\U0001F3A4 Record by voice';
+           const said = currentSaid;
+           if (!said || said.startsWith('Voice error') || said.startsWith('Microphone') || said.startsWith('Opening')) {
+             if (!status.textContent.startsWith('Voice error') && !status.textContent.startsWith('Microphone')) {
+               status.textContent = 'Didn\'t catch anything - tap record, wait for red indicator, then speak.';
+             }
+             return;
+           }
+           const parsed = nwParseMatchTranscript(said);
+           if (parsed.error) {
+             status.style.color = '#c0392b';
+             status.innerHTML = '\u201C' + said + '\u201D<br>' + parsed.error;
+             return;
+           }
+           nwApplyParsedToForm(parsed);
+           status.style.color = 'var(--text,#111)';
+           status.innerHTML = nwVoicePreviewHtml(parsed) +
+             '<div style="margin-top:4px;color:var(--text-secondary,#888);">Filled the form - review and tap Record match.</div>';
+         };
+
+         try { rec.start(); } catch(e){ listening = false; btn.textContent = '\U0001F3A4 Record by voice'; }
+       });
+    }
+    nwVoiceMatchInit();
+    // ================= end voice match entry =================
+
+    // ================= Team pairing preview =================
+    // Mirrors the tournament pairing (seeded = sort by Elo then snake-pair
+    // strongest+weakest; random = shuffle) so you can preview balanced teams
+    // from any selected players WITHOUT creating a tournament.
+    function nwSeeded(p) { return [...p].sort((x, y) => (+y.rating || 1000) - (+x.rating || 1000)); }
+    function nwShuffle(a) { a = [...a]; for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; }
+
+    function nwPairingRefreshList() {
+      const grp = document.getElementById('nw-pp-group');
+      if (grp) { const cur = grp.value; populateSelect(grp, allGroups, 'group_id', 'group_name', '— choose —'); grp.value = cur; }
+      const list = document.getElementById('nw-pp-list');
+      if (!list) return;
+      const sorted = [...allPlayers].sort((a, b) => String(a.name).localeCompare(String(b.name)));
+      list.innerHTML = sorted.map(p =>
+        `<label style="display:block;padding:2px 0;font-size:13px;"><input type="checkbox" class="nw-pp-cb" value="${p.player_id}"> ${escapeHtml(p.name)} <span style="color:var(--text-secondary,#888);">(${p.rating})</span></label>`
+      ).join('');
+      nwPairingUpdateCount();
+    }
+    function nwPairingUpdateCount() {
+      const n = document.querySelectorAll('.nw-pp-cb:checked').length;
+      const el = document.getElementById('nw-pp-count');
+      if (el) el.textContent = n ? `${n} selected` : '';
+    }
+    function nwPairingRender() {
+      const out = document.getElementById('nw-pp-out');
+      const type = document.getElementById('nw-pp-type').value;
+      const mode = document.getElementById('nw-pp-mode').value;
+      const ids = [...document.querySelectorAll('.nw-pp-cb:checked')].map(c => c.value);
+      const picked = ids.map(id => allPlayers.find(p => p.player_id === id)).filter(Boolean);
+      if (type === 'doubles' && picked.length < 4) { out.innerHTML = '<span style="color:#c0392b;">Pick at least 4 players for doubles.</span>'; return; }
+      if (type === 'singles' && picked.length < 2) { out.innerHTML = '<span style="color:#c0392b;">Pick at least 2 players.</span>'; return; }
+      const ordered = mode === 'balanced' ? nwSeeded(picked) : nwShuffle(picked);
+      let html = '';
+      if (type === 'doubles') {
+        let pairs = [], leftover = null;
+        if (mode === 'balanced') { let i = 0, j = ordered.length - 1; while (i < j) { pairs.push([ordered[i], ordered[j]]); i++; j--; } if (i === j) leftover = ordered[i]; }
+        else { const o = [...ordered]; if (o.length % 2) leftover = o.pop(); for (let i = 0; i < o.length; i += 2) pairs.push([o[i], o[i + 1]]); }
+        html = '<table><tr><th>Team</th><th>Players</th><th>Combined Elo</th></tr>';
+        pairs.forEach((pr, idx) => {
+          const tot = (+pr[0].rating || 1000) + (+pr[1].rating || 1000);
+          html += `<tr><td>${idx + 1}</td><td>${escapeHtml(pr[0].name)} (${pr[0].rating}) &amp; ${escapeHtml(pr[1].name)} (${pr[1].rating})</td><td>${tot}</td></tr>`;
+        });
+        html += '</table>';
+        if (leftover) html += `<p style="font-size:12px;color:var(--text-secondary,#888);margin-top:6px;">Sitting out: <b>${escapeHtml(leftover.name)}</b> (${leftover.rating})</p>`;
+        if (pairs.length > 1) {
+          const totals = pairs.map(p => (+p[0].rating || 1000) + (+p[1].rating || 1000));
+          html += `<p style="font-size:12px;color:var(--text-secondary,#888);">Team-total spread: ${Math.max(...totals) - Math.min(...totals)} (lower = more balanced)</p>`;
+        }
+      } else {
+        html = '<table><tr><th>Seed</th><th>Player</th><th>Elo</th></tr>';
+        ordered.forEach((p, i) => { html += `<tr><td>${i + 1}</td><td>${escapeHtml(p.name)}</td><td>${p.rating}</td></tr>`; });
+        html += '</table>';
+      }
+      out.innerHTML = html;
+    }
+    function nwPairingInit() {
+      const anchor = document.getElementById('record-match-card');
+      if (!anchor || document.getElementById('nw-pairing-card')) return;
+      const card = document.createElement('div');
+      card.className = 'card';
+      card.id = 'nw-pairing-card';
+      card.innerHTML =
+        '<h2>Team pairing preview</h2>' +
+        '<p style="font-size:12px;color:var(--text-secondary,#888);">Pick players and preview balanced or random teams by current Elo — no tournament needed.</p>' +
+        '<div class="row">' +
+          '<div><label>Quick-pick group<select id="nw-pp-group"><option value="">— choose —</option></select></label></div>' +
+          '<div><label>Type<select id="nw-pp-type"><option value="doubles">Doubles</option><option value="singles">Singles</option></select></label></div>' +
+          '<div><label>Pairing<select id="nw-pp-mode"><option value="balanced">Balanced (by Elo)</option><option value="random">Random</option></select></label></div>' +
+        '</div>' +
+        '<div style="margin:8px 0;">' +
+          '<button type="button" id="nw-pp-all" class="secondary" style="padding:4px 10px;font-size:12px;margin:0;">Select all</button> ' +
+          '<button type="button" id="nw-pp-clear" class="secondary" style="padding:4px 10px;font-size:12px;margin:0;">Clear</button>' +
+          '<span id="nw-pp-count" style="font-size:12px;color:var(--text-secondary,#888);margin-left:8px;"></span>' +
+        '</div>' +
+        '<div id="nw-pp-list" style="max-height:200px;overflow-y:auto;border:1px solid var(--line,#333);border-radius:8px;padding:8px;"></div>' +
+        '<button type="button" id="nw-pp-go" style="margin-top:10px;">Preview teams</button>' +
+        '<div id="nw-pp-out" style="margin-top:12px;"></div>';
+      anchor.parentNode.insertBefore(card, anchor.nextSibling);
+
+      populateSelect(document.getElementById('nw-pp-group'), allGroups, 'group_id', 'group_name', '— choose —');
+      nwPairingRefreshList();
+
+      document.getElementById('nw-pp-all').addEventListener('click', () => { document.querySelectorAll('.nw-pp-cb').forEach(c => c.checked = true); nwPairingUpdateCount(); });
+      document.getElementById('nw-pp-clear').addEventListener('click', () => { document.querySelectorAll('.nw-pp-cb').forEach(c => c.checked = false); nwPairingUpdateCount(); });
+      document.getElementById('nw-pp-list').addEventListener('change', nwPairingUpdateCount);
+      document.getElementById('nw-pp-go').addEventListener('click', nwPairingRender);
+      document.getElementById('nw-pp-group').addEventListener('change', (e) => {
+        const g = allGroups.find(x => x.group_id === e.target.value);
+        const ids = new Set((g && g.member_ids) || []);
+        document.querySelectorAll('.nw-pp-cb').forEach(c => c.checked = ids.has(c.value));
+        nwPairingUpdateCount();
+      });
+    }
+    nwPairingInit();
+    // ================= end team pairing preview =================
+
     document.getElementById('match-form').addEventListener('submit', async (e) => {
       e.preventDefault();
       const group_id = document.getElementById('match_group_select').value || null;
@@ -1227,6 +1575,20 @@ let userPool = null;
         const res = await fetch(`${API_BASE_URL}/matches?${params.toString()}`);
         const data = await res.json();
         if (!res.ok) { logEl.textContent = `Error: ${data.error}`; return; }
+        // Opponent filter is applied client-side (the API returns team_a /
+        // team_b as id arrays). If a player is also chosen, keep only matches
+        // where the two were on OPPOSITE sides; otherwise any match the
+        // opponent played in.
+        const opponentId = (document.getElementById('log_opponent_filter') || {}).value || '';
+        if (opponentId) {
+          data.matches = data.matches.filter(m => {
+            const a = m.team_a || [], b = m.team_b || [];
+            const oppIn = a.includes(opponentId) || b.includes(opponentId);
+            if (!playerId) return oppIn;
+            const meA = a.includes(playerId), meB = b.includes(playerId);
+            return (meA && b.includes(opponentId)) || (meB && a.includes(opponentId));
+          });
+        }
         if (!data.matches.length) { logEl.innerHTML = '<p style="font-size:13px;color:#555;">No matches yet.</p>'; return; }
 
         let html = '<table><tr><th>Date</th><th>Team A</th><th>Team B</th><th>Score</th><th>Notes</th><th></th></tr>';
@@ -1257,8 +1619,9 @@ let userPool = null;
       }
     }
     document.getElementById('load-log-btn').addEventListener('click', loadGameLog);
-    ['log_group_filter', 'log_player_filter', 'log_date_from', 'log_date_to'].forEach(id => {
-      document.getElementById(id).addEventListener('change', loadGameLog);
+    ['log_group_filter', 'log_player_filter', 'log_opponent_filter', 'log_date_from', 'log_date_to'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.addEventListener('change', loadGameLog);
     });
 
     /**
@@ -1908,6 +2271,10 @@ let userPool = null;
         const xc = document.getElementById('app-xp-public');
         if (xc) xc.checked = !!data.xp_public;
         xpPublic = !!data.xp_public;
+        voiceEnabled = !!data.voice_enabled;
+        const vc = document.getElementById('app-voice-enabled');
+        if (vc) vc.checked = voiceEnabled;
+        applyVoiceVisibility();
       } catch (_) { /* leave unchecked */ }
     }
 
@@ -1923,6 +2290,21 @@ let userPool = null;
         xpPublic = value;
         statusEl.textContent = value ? 'Everyone can now see levels, coins, store & quests.' : 'Gamification is admin-only again.';
         updateAuthUI();
+      } catch (e) { statusEl.textContent = `Failed: ${e.message}`; }
+    }
+
+    async function setVoiceEnabled(value) {
+      const statusEl = document.getElementById('app-voice-enabled-status');
+      statusEl.textContent = 'Saving...';
+      try {
+        const { res, error } = await authedFetch(`${API_BASE_URL}/app-settings`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ key: 'voice_enabled', value })
+        });
+        if (!res.ok) { statusEl.textContent = `Error: ${error}`; return; }
+        voiceEnabled = value;
+        applyVoiceVisibility();
+        statusEl.textContent = value ? 'Voice match entry is ON for everyone.' : 'Voice match entry is admin-only again.';
       } catch (e) { statusEl.textContent = `Failed: ${e.message}`; }
     }
 
@@ -2829,7 +3211,12 @@ let userPool = null;
         renderTieredCard('🎲', 'Deuce Demon', 'wins by 2 after deuce', [1, 5, 15, 30], milestones.deuce_wins || 0);
         renderTieredCard('🛡️', 'Iron Day', 'undefeated sessions (3+ matches)', [1, 3, 5, 10], milestones.undefeated_sessions || 0);
         renderTieredCard('📅', 'Ever-Present', 'best attendance streak (sessions)', [3, 5, 10, 20], milestones.best_attendance_streak || 0);
-        renderTieredCard('⛰️', 'Summit', 'peak rating reached', [1050, 1100, 1150, 1200], milestones.peak_rating || 0);
+        renderTieredCard('⛰️', 'Summit', 'peak rating reached', [1050, 1100, 1150, 1200, 1300, 1400, 1500, 1700, 2000], milestones.peak_rating || 0);
+        renderTieredCard('✅', 'Winner', 'total matches won', [10, 50, 100, 250, 500], milestones.total_wins || 0);
+        renderTieredCard('🥈', 'Finalist', 'tournament finals reached', [1, 3, 5, 10], (milestones.tournament_wins || 0) + (milestones.runner_ups || 0));
+        // Grit / consolation - reward showing up and battling, win or lose.
+        renderTieredCard('🧱', 'Battle-Hardened', 'matches played through defeat (total losses)', [10, 50, 100, 250], milestones.total_losses || 0);
+        renderTieredCard('💗', 'Never Say Die', 'kept playing through a losing streak', [3, 5, 8, 12], milestones.worst_loss_streak || 0);
 
         renderBinaryCard('🥇', 'Longest win streak', 'Overall record holder', hof.longest_win_streak && hof.longest_win_streak.player_id === playerId);
         renderBinaryCard('📈', 'Peak performer', 'Highest peak rating ever', hof.peak_ratings && hof.peak_ratings[0] && hof.peak_ratings[0].player_id === playerId);
@@ -4908,7 +5295,7 @@ let userPool = null;
       // non-admins see levels/coins/store/quests when it's enabled.
       try {
         const asRes = await fetch(`${API_BASE_URL}/app-settings`);
-        if (asRes.ok) { xpPublic = !!(await asRes.json()).xp_public; }
+        if (asRes.ok) { const _as = await asRes.json(); xpPublic = !!_as.xp_public; voiceEnabled = !!_as.voice_enabled; if (typeof applyVoiceVisibility === 'function') applyVoiceVisibility(); }
       } catch (_) {}
       if (typeof updateAuthUI === 'function') updateAuthUI();
       loadTournamentGroupOptions();
