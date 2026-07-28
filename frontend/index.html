@@ -1026,8 +1026,9 @@
               </label>
               <label id="store-effect-value-row">Value (colour hex, title text, etc.) <input type="text" id="store-item-value" placeholder="#FFD700 or 'Champion'"></label>
               <div id="store-image-row" style="display:none;">
-                <label>Image <input type="file" id="store-item-image" accept="image/jpeg,image/png,image/webp"></label>
+                <label>Image <input type="file" id="store-item-image" accept="image/jpeg,image/png,image/webp" onchange="onStoreImagePick(this)"></label>
                 <span id="store-image-status" style="font-size:12px;"></span>
+                <div style="margin-top:8px;"><img id="store-image-preview" alt="" style="display:none; max-width:120px; max-height:120px; border-radius:8px; border:1px solid var(--border);"></div>
                 <input type="hidden" id="store-item-image-key">
               </div>
               <button type="button" class="secondary" onclick="saveStoreItem()">Add item</button>
