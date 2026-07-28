@@ -2202,6 +2202,9 @@ let userPool = null;
       renderUploadStrip('avatar', player);
       renderUploadStrip('banner', player);
       renderUploadStrip('background', player);
+      renderStoreCosmeticStrip('avatar', player);
+      renderStoreCosmeticStrip('banner', player);
+      renderStoreCosmeticStrip('background', player);
 
       document.getElementById('settings-background-picker').innerHTML =
         Object.entries(BACKGROUND_PRESETS).map(([id, css]) =>
@@ -2875,6 +2878,42 @@ let userPool = null;
      *  through CloudFront, so no absolute domain is baked into the data. */
     function imageSrc(key) { return key ? `/${key}` : null; }
 
+
+    // Cache the store catalog for the session so the customizer can resolve
+    // a player's owned_items into equippable cosmetics without re-fetching.
+    let _storeCatalogCache = null;
+    async function loadStoreCatalogOnce() {
+      if (_storeCatalogCache) return _storeCatalogCache;
+      try { const r = await fetch(`${API_BASE_URL}/store`); const d = await r.json(); _storeCatalogCache = d.items || []; }
+      catch (e) { _storeCatalogCache = []; }
+      return _storeCatalogCache;
+    }
+
+    /** Shows store cosmetics the player OWNS for this slot, as equippable
+     *  swatches - the bridge that was missing between the store and the
+     *  profile customizer. */
+    async function renderStoreCosmeticStrip(kind, player) {
+      const anchor = document.getElementById(`settings-${kind}-uploads`);
+      if (!anchor) return;
+      let host = document.getElementById(`settings-${kind}-store`);
+      if (!host) { host = document.createElement('div'); host.id = `settings-${kind}-store`; anchor.parentNode.insertBefore(host, anchor.nextSibling); }
+      const want = { avatar: 'avatar_frame', banner: 'banner_image', background: 'background_image' }[kind];
+      const owned = (player && player.owned_items) || {};
+      const items = (await loadStoreCatalogOnce()).filter(i => owned[i.item_id] && (i.effect || {}).kind === want && i.image_url);
+      if (!items.length) { host.innerHTML = ''; return; }
+      const urlField = { avatar: 'avatar_url', banner: 'banner_url', background: 'background_url' }[kind];
+      const current = player && player[urlField];
+      const shape = kind === 'avatar' ? 'width:44px; height:44px; border-radius:50%;' : 'width:72px; height:40px; border-radius:6px;';
+      host.innerHTML =
+        `<p class="card-sub" style="margin:8px 0 6px;">From the store (${items.length})</p>` +
+        items.map(i =>
+          `<button type="button" title="${escapeHtml(i.name)}"
+             style="${shape} padding:0; margin:0 6px 6px 0; cursor:pointer;
+                    border:${i.image_url === current ? '3px solid var(--court)' : '1px solid var(--border)'};
+                    background:center / cover no-repeat url('${imageSrc(i.image_url)}');"
+             onclick="setMyCardField('${urlField}','${i.image_url}')"></button>`
+        ).join('');
+    }
 
     /** Renders a player's kept custom uploads as a small switcher. */
     function renderUploadStrip(kind, player) {

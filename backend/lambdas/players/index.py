@@ -1036,6 +1036,24 @@ def _valid_upload_key(value, player_id, kind):
     return isinstance(value, str) and value.startswith(f'uploads/{kind}s/{player_id}/')
 
 
+def _owns_store_cosmetic(player, key, kind):
+    """True if `key` is the image of a store cosmetic the player OWNS whose
+    effect matches this slot. Lets a bought store background/banner/avatar be
+    equipped even though it lives at uploads/store/... (not the player's own
+    upload path). Ownership is required so you can't equip an item you didn't
+    buy."""
+    if not key or not str(key).startswith('uploads/store/'):
+        return False
+    owned = player.get('owned_items') or {}
+    if not owned:
+        return False
+    want = {'avatar': 'avatar_frame', 'banner': 'banner_image', 'background': 'background_image'}.get(kind)
+    for it in _load_catalog():
+        if it.get('item_id') in owned and it.get('image_url') == key and (it.get('effect') or {}).get('kind') == want:
+            return True
+    return False
+
+
 
 # How many custom uploads a player may keep per slot. Small on purpose:
 # these are cosmetic, and an unbounded history is just storage nobody
@@ -1096,11 +1114,14 @@ def update_my_card(event):
     avatar_url = body.get('avatar_url')
     banner_url = body.get('banner_url')
     background_url = body.get('background_url')
-    if not _valid_upload_key(avatar_url, player_id, 'avatar'):
+    _me = table.get_item(Key={'player_id': player_id}).get('Item') or {}
+    def _ref_ok(url, kind):
+        return _valid_upload_key(url, player_id, kind) or _owns_store_cosmetic(_me, url, kind)
+    if not _ref_ok(avatar_url, 'avatar'):
         return _response(400, {'error': 'invalid avatar image reference'})
-    if not _valid_upload_key(banner_url, player_id, 'banner'):
+    if not _ref_ok(banner_url, 'banner'):
         return _response(400, {'error': 'invalid banner image reference'})
-    if not _valid_upload_key(background_url, player_id, 'background'):
+    if not _ref_ok(background_url, 'background'):
         return _response(400, {'error': 'invalid background image reference'})
     if avatar_id is not None and avatar_id not in ALLOWED_AVATARS:
         return _response(400, {'error': f'unknown avatar_id - choose from {sorted(ALLOWED_AVATARS)}'})
