@@ -279,7 +279,7 @@ let userPool = null;
       if (typeof nwPairingRefreshList === 'function') nwPairingRefreshList();
       populateSelect(document.getElementById('attendance_group_filter'), allGroups, 'group_id', 'group_name', 'All groups');
       populateSelect(document.getElementById('rankings_scope_select'), allGroups, 'group_id', 'group_name', 'All players');
-      // Once someone belongs t o a group, default the rankings view to it so
+      // Once someone belongs to a group, default the rankings view to it so
       // they see their group-mates first rather than the whole club. Only
       // when nothing's been chosen yet, so it never fights a manual pick.
       const rankScope = document.getElementById('rankings_scope_select');
@@ -1012,13 +1012,20 @@ let userPool = null;
       const mine = myGroups();
       if (mine.length) sel.value = mine[0].group_id;
     }
-    
+
     // ================= Voice match entry =================
     // Free, client-side, no LLM: the browser's SpeechRecognition does the
     // speech->text (Chrome/Edge/Safari, no key, no cost), and a small rules
     // parser turns e.g. "Aditya and Sohan beat Sourabh and Mayank 21-18" into
     // the match form. It never submits blind - it fills the form and you tap
     // Record, so all the existing validation + safety net still apply.
+    // Visibility is gated: SuperAdmins always see it; everyone else only when
+    // the "voice_enabled" app setting is on.
+    let voiceEnabled = false;
+    function applyVoiceVisibility() {
+      const w = document.getElementById('nw-voice-wrap');
+      if (w) w.style.display = (isSuperAdmin() || voiceEnabled) ? '' : 'none';
+    }
 
     // Phonetic key so Sourabh/Saurabh/Sourav collapse together, while the
     // distinguishing part (C / Devle / T) still separates them via scoring.
@@ -1049,9 +1056,6 @@ let userPool = null;
          else if (c.startsWith(token) || token.startsWith(c)) best = Math.max(best, 70);
          else { const d = nwLev(nwPhon(c), nwPhon(token)); if (d <= 1) best = Math.max(best, 65); else if (c.includes(token)) best = Math.max(best, 40); }
        }
-       // If the spoken token has a distinguishing second word (a surname or
-       // initial like "Devle" / "C" / "T"), a player whose full name carries
-       // that word wins decisively - this is what separates the Saurabhs.
        const words = token.split(' ').filter(Boolean);
        if (words.length >= 2) {
          const surname = words[words.length - 1];
@@ -1062,8 +1066,6 @@ let userPool = null;
        }
        return best;
     }
-    // Returns { player } on a confident match, or { player:null, ambiguous, options }
-    // when two names are too close to call - so we never silently pick wrong.
     function nwMatchPlayerToken(tokenRaw) {
        const token = (tokenRaw || '').trim().toLowerCase();
        if (!token) return { player: null };
@@ -1081,7 +1083,7 @@ let userPool = null;
 
     function nwWordsToNums(t) {
        const map = { zero: 0, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16, seventeen: 17, eighteen: 18, nineteen: 19, twenty: 20, thirty: 30 };
-       t = t.replace(/\bto\b/g, ' to '); // keep 'to' isolated for score separators
+       t = t.replace(/\bto\b/g, ' to ');
        t = t.replace(/\b(twenty|thirty)\s+(one|two|three|four|five|six|seven|eight|nine)\b/g, (m, a, b) => String(map[a] + map[b]));
        t = t.replace(/\b(zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty)\b/g, m => String(map[m]));
        return t;
@@ -1096,7 +1098,6 @@ let userPool = null;
          s1 = +a[1]; s2 = +b[1];
          namesText = text.slice(0, a.index) + ' ' + text.slice(b.index + b[0].length);
        }
-
        const loseVerbs = /\b(lost to|lost against|lost)\b/;
        const winVerbs  = /\b(beat|beats|defeated|smashed|thrashed|crushed|won against|won)\b/;
        const neutral   = /\b(versus|vs|against)\b/;
@@ -1105,12 +1106,10 @@ let userPool = null;
        else if ((m = namesText.match(winVerbs)))  { [leftText, rightText] = namesText.split(m[0]); leftIsWinner = true; }
        else if ((m = namesText.match(neutral)))   { [leftText, rightText] = namesText.split(m[0]); leftIsWinner = null; }
        else return { error: "Couldn't tell the two sides apart. Try e.g. \"Aditya beat Sohan 21-18\"." };
-
        const splitPlayers = t => (t || '').split(/\band\b|&|\bwith\b|,|\bplus\b/).map(s => s.trim()).filter(Boolean);
        const resolve = toks => toks.map(tok => { const r = nwMatchPlayerToken(tok); return { token: tok, player: r.player, ambiguous: !!r.ambiguous, options: r.options }; });
        const teamA = resolve(splitPlayers(leftText));
        const teamB = resolve(splitPlayers(rightText));
-
        let scoreA = null, scoreB = null;
        if (s1 != null && s2 != null) {
          const hi = Math.max(s1, s2), lo = Math.min(s1, s2);
@@ -1143,9 +1142,9 @@ let userPool = null;
          return `<span style="color:#c0392b;">${e.token}?</span>`;
        }).join(' &amp; ');
        const anyUnmatched = [...p.teamA, ...p.teamB].some(e => !e.player);
-       const score = p.scoreA != null ? ` &nbsp; <b>${p.scoreA}–${p.scoreB}</b>` : '';
+       const score = p.scoreA != null ? ` &nbsp; <b>${p.scoreA}-${p.scoreB}</b>` : '';
        return `Heard: ${side(p.teamA)} vs ${side(p.teamB)}${score}` +
-         (anyUnmatched ? `<div style="color:#c0392b;margin-top:4px;">Some names in red weren't matched — pick them manually before recording.</div>` : '');
+         (anyUnmatched ? `<div style="color:#c0392b;margin-top:4px;">Some names in red weren't matched - pick them manually before recording.</div>` : '');
     }
 
     function nwVoiceMatchInit() {
@@ -1157,17 +1156,18 @@ let userPool = null;
        wrap.id = 'nw-voice-wrap';
        wrap.style.cssText = 'margin:0 0 10px;';
        wrap.innerHTML =
-         '<button type="button" id="nw-voice-btn" style="display:inline-flex;align-items:center;gap:8px;padding:9px 14px;border:0;border-radius:10px;background:var(--court,#2fa968);color:#fff;font-weight:600;cursor:pointer;">🎤 Record by voice</button>' +
+         '<button type="button" id="nw-voice-btn" style="display:inline-flex;align-items:center;gap:8px;padding:9px 14px;border:0;border-radius:10px;background:var(--court,#2fa968);color:#fff;font-weight:600;cursor:pointer;">\U0001F3A4 Record by voice</button>' +
          '<span id="nw-voice-hint" style="margin-left:10px;font-size:12px;color:var(--text-secondary,#888);">e.g. "Aditya and Sohan beat Sourabh and Mayank 21-18"</span>' +
          '<div id="nw-voice-status" style="margin-top:8px;font-size:13px;"></div>';
        form.parentNode.insertBefore(wrap, form);
+       applyVoiceVisibility();
 
        const btn = wrap.querySelector('#nw-voice-btn');
        const status = wrap.querySelector('#nw-voice-status');
 
        if (!SR) {
          btn.disabled = true; btn.style.opacity = '0.5'; btn.style.cursor = 'not-allowed';
-         wrap.querySelector('#nw-voice-hint').textContent = 'Voice input isn\'t supported in this browser — use Safari/Chrome, or fill the form normally.';
+         wrap.querySelector('#nw-voice-hint').textContent = 'Voice input isn\'t supported in this browser - use Safari/Chrome, or fill the form normally.';
          return;
        }
 
@@ -1192,19 +1192,19 @@ let userPool = null;
          const rec = new SR();
          recognizer = rec;
          rec.lang = 'en-IN';
-         rec.continuous = !isIOS; // iOS Safari crashes with continuous: true
+         rec.continuous = !isIOS;
          rec.interimResults = true;
          rec.maxAlternatives = 1;
          listening = true;
          fullTranscript = '';
 
-         btn.textContent = '⌛ Warmup mic...';
+         btn.textContent = '\u231B Warmup mic...';
          status.style.color = 'var(--text-secondary,#888)';
          status.textContent = 'Opening microphone... wait a moment before speaking.';
 
          rec.onstart = () => {
-           btn.textContent = '⏹ Stop & fill';
-           status.textContent = '🔴 Listening — Speak now!';
+           btn.textContent = '\u23F9 Stop & fill';
+           status.textContent = '\U0001F534 Listening - Speak now!';
          };
 
          rec.onresult = (ev) => {
@@ -1213,22 +1213,21 @@ let userPool = null;
              currentSessionText += ev.results[i][0].transcript + ' ';
            }
            const combined = (fullTranscript + ' ' + currentSessionText).trim();
-           status.textContent = '“' + combined + '”';
+           status.textContent = '\u201C' + combined + '\u201D';
          };
 
          rec.onerror = (ev) => {
            if (ev.error === 'no-speech') return;
            listening = false;
-           btn.textContent = '🎤 Record by voice';
+           btn.textContent = '\U0001F3A4 Record by voice';
            status.style.color = '#c0392b';
            status.textContent = ev.error === 'not-allowed'
-             ? 'Microphone blocked — allow mic access for this site and try again.'
+             ? 'Microphone blocked - allow mic access for this site and try again.'
              : 'Voice error: ' + ev.error;
          };
 
          rec.onend = () => {
-           // On iOS, non-continuous auto-ends when you pause speaking. Re-arm if user didn't tap Stop.
-           const currentSaid = (status.textContent || '').replace(/^“|”$/g, '').trim();
+           const currentSaid = (status.textContent || '').replace(/^\u201C|\u201D$/g, '').trim();
            if (isIOS && listening && currentSaid) {
              fullTranscript = currentSaid + ' ';
              try { rec.start(); return; } catch(e){}
@@ -1236,32 +1235,31 @@ let userPool = null;
 
            listening = false;
            recognizer = null;
-           btn.textContent = '🎤 Record by voice';
+           btn.textContent = '\U0001F3A4 Record by voice';
            const said = currentSaid;
            if (!said || said.startsWith('Voice error') || said.startsWith('Microphone') || said.startsWith('Opening')) {
              if (!status.textContent.startsWith('Voice error') && !status.textContent.startsWith('Microphone')) {
-               status.textContent = 'Didn\'t catch anything — tap record, wait for red indicator, then speak.';
+               status.textContent = 'Didn\'t catch anything - tap record, wait for red indicator, then speak.';
              }
              return;
            }
            const parsed = nwParseMatchTranscript(said);
            if (parsed.error) {
              status.style.color = '#c0392b';
-             status.innerHTML = '“' + said + '”<br>' + parsed.error;
+             status.innerHTML = '\u201C' + said + '\u201D<br>' + parsed.error;
              return;
            }
            nwApplyParsedToForm(parsed);
            status.style.color = 'var(--text,#111)';
            status.innerHTML = nwVoicePreviewHtml(parsed) +
-             '<div style="margin-top:4px;color:var(--text-secondary,#888);">Filled the form — review and tap Record match.</div>';
+             '<div style="margin-top:4px;color:var(--text-secondary,#888);">Filled the form - review and tap Record match.</div>';
          };
 
-         try { rec.start(); } catch(e){ listening = false; btn.textContent = '🎤 Record by voice'; }
+         try { rec.start(); } catch(e){ listening = false; btn.textContent = '\U0001F3A4 Record by voice'; }
        });
     }
     nwVoiceMatchInit();
     // ================= end voice match entry =================
-
 
     // ================= Team pairing preview =================
     // Mirrors the tournament pairing (seeded = sort by Elo then snake-pair
@@ -2273,6 +2271,10 @@ let userPool = null;
         const xc = document.getElementById('app-xp-public');
         if (xc) xc.checked = !!data.xp_public;
         xpPublic = !!data.xp_public;
+        voiceEnabled = !!data.voice_enabled;
+        const vc = document.getElementById('app-voice-enabled');
+        if (vc) vc.checked = voiceEnabled;
+        applyVoiceVisibility();
       } catch (_) { /* leave unchecked */ }
     }
 
@@ -2288,6 +2290,21 @@ let userPool = null;
         xpPublic = value;
         statusEl.textContent = value ? 'Everyone can now see levels, coins, store & quests.' : 'Gamification is admin-only again.';
         updateAuthUI();
+      } catch (e) { statusEl.textContent = `Failed: ${e.message}`; }
+    }
+
+    async function setVoiceEnabled(value) {
+      const statusEl = document.getElementById('app-voice-enabled-status');
+      statusEl.textContent = 'Saving...';
+      try {
+        const { res, error } = await authedFetch(`${API_BASE_URL}/app-settings`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ key: 'voice_enabled', value })
+        });
+        if (!res.ok) { statusEl.textContent = `Error: ${error}`; return; }
+        voiceEnabled = value;
+        applyVoiceVisibility();
+        statusEl.textContent = value ? 'Voice match entry is ON for everyone.' : 'Voice match entry is admin-only again.';
       } catch (e) { statusEl.textContent = `Failed: ${e.message}`; }
     }
 
@@ -3194,7 +3211,12 @@ let userPool = null;
         renderTieredCard('🎲', 'Deuce Demon', 'wins by 2 after deuce', [1, 5, 15, 30], milestones.deuce_wins || 0);
         renderTieredCard('🛡️', 'Iron Day', 'undefeated sessions (3+ matches)', [1, 3, 5, 10], milestones.undefeated_sessions || 0);
         renderTieredCard('📅', 'Ever-Present', 'best attendance streak (sessions)', [3, 5, 10, 20], milestones.best_attendance_streak || 0);
-        renderTieredCard('⛰️', 'Summit', 'peak rating reached', [1050, 1100, 1150, 1200], milestones.peak_rating || 0);
+        renderTieredCard('⛰️', 'Summit', 'peak rating reached', [1050, 1100, 1150, 1200, 1300, 1400, 1500, 1700, 2000], milestones.peak_rating || 0);
+        renderTieredCard('✅', 'Winner', 'total matches won', [10, 50, 100, 250, 500], milestones.total_wins || 0);
+        renderTieredCard('🥈', 'Finalist', 'tournament finals reached', [1, 3, 5, 10], (milestones.tournament_wins || 0) + (milestones.runner_ups || 0));
+        // Grit / consolation - reward showing up and battling, win or lose.
+        renderTieredCard('🧱', 'Battle-Hardened', 'matches played through defeat (total losses)', [10, 50, 100, 250], milestones.total_losses || 0);
+        renderTieredCard('💗', 'Never Say Die', 'kept playing through a losing streak', [3, 5, 8, 12], milestones.worst_loss_streak || 0);
 
         renderBinaryCard('🥇', 'Longest win streak', 'Overall record holder', hof.longest_win_streak && hof.longest_win_streak.player_id === playerId);
         renderBinaryCard('📈', 'Peak performer', 'Highest peak rating ever', hof.peak_ratings && hof.peak_ratings[0] && hof.peak_ratings[0].player_id === playerId);
@@ -5273,7 +5295,7 @@ let userPool = null;
       // non-admins see levels/coins/store/quests when it's enabled.
       try {
         const asRes = await fetch(`${API_BASE_URL}/app-settings`);
-        if (asRes.ok) { xpPublic = !!(await asRes.json()).xp_public; }
+        if (asRes.ok) { const _as = await asRes.json(); xpPublic = !!_as.xp_public; voiceEnabled = !!_as.voice_enabled; if (typeof applyVoiceVisibility === 'function') applyVoiceVisibility(); }
       } catch (_) {}
       if (typeof updateAuthUI === 'function') updateAuthUI();
       loadTournamentGroupOptions();

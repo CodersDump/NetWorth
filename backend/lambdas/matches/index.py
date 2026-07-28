@@ -1636,6 +1636,10 @@ def compute_achievements(player_id, matches, tournaments):
     )
     current_streak = 0
     best_streak = 0
+    total_wins = 0
+    total_losses = 0
+    worst_loss_streak = 0
+    current_loss = 0
     for m in player_matches:
         winner = m.get('winner')
         team_a = m.get('team_a') or []
@@ -1645,8 +1649,13 @@ def compute_achievements(player_id, matches, tournaments):
         if won:
             current_streak += 1
             best_streak = max(best_streak, current_streak)
+            total_wins += 1
+            current_loss = 0
         else:
             current_streak = 0
+            total_losses += 1
+            current_loss += 1
+            worst_loss_streak = max(worst_loss_streak, current_loss)
 
     # Deuce wins, undefeated sessions, attendance streak, and peak rating -
     # all from this player's own match history.
@@ -1694,7 +1703,10 @@ def compute_achievements(player_id, matches, tournaments):
         'deuce_wins': deuce_wins,
         'undefeated_sessions': undefeated_sessions,
         'best_attendance_streak': best_attendance,
-        'peak_rating': peak
+        'peak_rating': peak,
+        'total_wins': total_wins,
+        'total_losses': total_losses,
+        'worst_loss_streak': worst_loss_streak
     }
 
 

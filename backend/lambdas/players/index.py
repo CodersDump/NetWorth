@@ -494,7 +494,8 @@ def get_app_settings(event):
     item = table.get_item(Key={'player_id': _APP_SETTINGS_ID}).get('Item') or {}
     return _response(200, {
         'instant_create': bool(item.get('instant_create', False)),
-        'xp_public': bool(item.get('xp_public', False))
+        'xp_public': bool(item.get('xp_public', False)),
+        'voice_enabled': bool(item.get('voice_enabled', False))
     })
 
 
@@ -504,7 +505,7 @@ def set_app_setting(event):
         return _response(403, {'error': 'only a SuperAdmin can change app settings'})
     body = json.loads(event.get('body') or '{}')
     key = body.get('key')
-    if key not in ('instant_create', 'xp_public'):
+    if key not in ('instant_create', 'xp_public', 'voice_enabled'):
         return _response(400, {'error': 'unknown setting'})
     table.update_item(
         Key={'player_id': _APP_SETTINGS_ID},
