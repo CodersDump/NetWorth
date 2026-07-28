@@ -2451,6 +2451,7 @@ let userPool = null;
             btn = `<button ${canAfford ? '' : 'disabled'} style="width:100%; ${canAfford ? '' : 'opacity:0.5;'}" onclick="buyStoreItem('${i.item_id}')">${label} — ${i.cost} 🪙</button>`;
           }
           return `<div style="border:1px solid var(--border); border-radius:10px; padding:14px; background:var(--surface-2);">
+            ${i.image_url ? `<img src="${imageSrc(i.image_url)}" alt="" style="width:100%; height:120px; object-fit:cover; border-radius:8px; margin-bottom:10px;">` : ''}
             <div style="font-weight:700; margin-bottom:4px;">${escapeHtml(i.name)}</div>
             <div style="font-size:11px; text-transform:uppercase; opacity:0.6; margin-bottom:10px;">${i.type}</div>
             ${btn}
@@ -2473,6 +2474,14 @@ let userPool = null;
     }
 
     // Admin catalog management (in Reviews & Approvals)
+    function onStoreImagePick(input) {
+      const img = document.getElementById('store-image-preview');
+      if (!img) return;
+      const f = input.files && input.files[0];
+      if (f) { img.src = URL.createObjectURL(f); img.style.display = 'block'; }
+      else { img.style.display = 'none'; }
+    }
+
     async function loadStoreAdmin() {
       const listEl = document.getElementById('store-admin-list');
       if (!listEl) return;
@@ -2482,8 +2491,11 @@ let userPool = null;
         const items = data.items || [];
         if (!items.length) { listEl.innerHTML = '<p class="card-sub" style="margin:0;">No items yet.</p>'; return; }
         listEl.innerHTML = items.map(i => `
-          <div style="display:flex; justify-content:space-between; align-items:center; padding:6px 0; border-bottom:1px solid var(--border);">
-            <span><strong>${escapeHtml(i.name)}</strong> — ${i.cost} 🪙 <span style="opacity:0.6;">(${i.type})</span></span>
+          <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; padding:6px 0; border-bottom:1px solid var(--border);">
+            <span style="display:flex; align-items:center; gap:8px;">
+              ${i.image_url ? `<img src="${imageSrc(i.image_url)}" alt="" style="width:34px; height:34px; object-fit:cover; border-radius:6px; border:1px solid var(--border);">` : ''}
+              <span><strong>${escapeHtml(i.name)}</strong> — ${i.cost} 🪙 <span style="opacity:0.6;">(${i.type})</span></span>
+            </span>
             <button class="secondary" style="margin:0; padding:2px 8px; font-size:11px;" onclick="deleteStoreItem('${i.item_id}')">Delete</button>
           </div>`).join('');
       } catch (e) { listEl.textContent = 'Could not load items.'; }
@@ -2568,6 +2580,7 @@ let userPool = null;
         document.getElementById('store-item-name').value = '';
         document.getElementById('store-item-cost').value = '';
         document.getElementById('store-item-image-key').value = '';
+        const _pv = document.getElementById('store-image-preview'); if (_pv) { _pv.src = ''; _pv.style.display = 'none'; }
         loadStoreAdmin();
       } catch (e) { statusEl.textContent = `Failed: ${e.message}`; }
     }
