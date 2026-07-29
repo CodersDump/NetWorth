@@ -3118,12 +3118,18 @@ let userPool = null;
           formEl.innerHTML = '<p style="font-size:13px;color:var(--text-secondary);">No matches recorded yet.</p>';
         } else {
           formEl.innerHTML = form.map(f => {
-            const detail = `${f.result === 'W' ? 'Won' : 'Lost'} vs ${(f.opponent_names || []).join(' & ')} on ${f.date ? f.date.slice(0, 10) : ''}`;
+            const partnerNames = f.partner_names || [];
+            const partnerText = partnerNames.length ? ` with ${partnerNames.join(' & ')}` : '';
+            const detail = `${f.result === 'W' ? 'Won' : 'Lost'}${partnerText} vs ${(f.opponent_names || []).join(' & ')} on ${f.date ? f.date.slice(0, 10) : ''}`;
             const detailEscaped = detail.replace(/'/g, "\\'").replace(/"/g, '&quot;');
             // title= gives desktop hover for free; onclick gives mobile/tablet
             // the SAME info via tap, since touch devices have no hover state
             // at all - relying on title alone left this silently broken there.
-            return `<div class="form-chip ${f.result === 'W' ? 'win' : 'loss'}" title="${detailEscaped}" onclick="alert('${detailEscaped}')">${f.result}</div>`;
+            const delta = Math.round(Number(f.delta) || 0);
+            const sign = delta > 0 ? '+' : '';
+            // Chip keeps its existing win/loss background color; the label
+            // inside is now the rating change instead of the W/L letter.
+            return `<div class="form-chip ${f.result === 'W' ? 'win' : 'loss'}" title="${detailEscaped}" onclick="alert('${detailEscaped}')">${sign}${delta}</div>`;
           }).join('');
         }
 

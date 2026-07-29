@@ -253,7 +253,7 @@
 
   .form-chip {
     width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
-    font-family: 'Rajdhani', sans-serif; font-weight: 700; font-size: 14px; color: #fff;
+    font-family: 'Rajdhani', sans-serif; font-weight: 700; font-size: 11px; color: #fff;
   }
   .form-chip.win { background: var(--court); }
   .form-chip.loss { background: var(--smash); }
