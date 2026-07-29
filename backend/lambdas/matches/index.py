@@ -1838,7 +1838,11 @@ def compute_recent_form(player_id, matches, limit=10):
         # Update the running baseline regardless of whether this match ends
         # up in the displayed window, so the delta shown for the first
         # match in that window is still correct.
-        after = ratings_after.get(player_id)
+        # ratings_after values come back from DynamoDB as Decimal, not
+        # float - subtracting a float from a Decimal raises a TypeError,
+        # which was crashing this whole endpoint with a 500. Cast explicitly.
+        after_raw = ratings_after.get(player_id)
+        after = float(after_raw) if after_raw is not None else None
         delta = round(after - prev_rating) if after is not None else 0
         if after is not None:
             prev_rating = after
