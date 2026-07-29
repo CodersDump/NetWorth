@@ -1816,26 +1816,54 @@ def compute_head_to_head(player_id, opponent_id, matches):
 def compute_recent_form(player_id, matches, limit=10):
     """A player's last N matches, in chronological order (oldest to
     newest) so a left-to-right rendering naturally puts the most recent
-    result on the right."""
+    result on the right. Walks the player's FULL match history (not just
+    the last N) so the rating delta on the oldest match shown is still
+    measured against the correct prior rating, then trims to `limit`
+    afterwards."""
     player_matches = sorted(
         [m for m in matches if player_id in (m.get('team_a') or []) or player_id in (m.get('team_b') or [])],
         key=lambda m: m.get('date', '')
     )
-    recent = player_matches[-limit:]
+
     form = []
-    for m in recent:
+    prev_rating = 1000.0  # starting Elo, same baseline used everywhere else
+    for m in player_matches:
         winner = m.get('winner')
         team_a = m.get('team_a') or []
+        team_b = m.get('team_b') or []
+        team_a_names = m.get('team_a_names') or []
+        team_b_names = m.get('team_b_names') or []
+        ratings_after = m.get('ratings_after') or {}
+
+        # Update the running baseline regardless of whether this match ends
+        # up in the displayed window, so the delta shown for the first
+        # match in that window is still correct.
+        after = ratings_after.get(player_id)
+        delta = round(after - prev_rating) if after is not None else 0
+        if after is not None:
+            prev_rating = after
+
         if winner not in ('A', 'B'):
             continue
-        won = (winner == 'A' and player_id in team_a) or (winner == 'B' and player_id not in team_a)
-        opponent_names = m.get('team_b_names') if player_id in team_a else m.get('team_a_names')
+
+        on_team_a = player_id in team_a
+        won = (winner == 'A' and on_team_a) or (winner == 'B' and not on_team_a)
+        opponent_names = team_b_names if on_team_a else team_a_names
+        own_ids = team_a if on_team_a else team_b
+        own_names = team_a_names if on_team_a else team_b_names
+        # Doubles partner(s): everyone on the player's own team besides
+        # themselves. Empty for singles.
+        partner_names = [name for pid, name in zip(own_ids, own_names) if pid != player_id]
+
         form.append({
             'date': m.get('date'),
             'result': 'W' if won else 'L',
-            'opponent_names': opponent_names or []
+            'delta': delta,
+            'opponent_names': opponent_names or [],
+            'partner_names': partner_names
         })
-    return {'player_id': player_id, 'form': form}
+
+    return {'player_id': player_id, 'form': form[-limit:]}
 
 
 def compute_diversity(items, group_id_filter=None):
