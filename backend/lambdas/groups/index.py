@@ -72,6 +72,10 @@ def handler(event, context):
             return set_role(path_params['group_id'], path_params['player_id'], event)
         if 'group_id' in path_params and 'player_id' in path_params and method == 'DELETE':
             return remove_player_enforced(path_params['group_id'], path_params['player_id'], event)
+        if 'group_id' in path_params and 'player_id' not in path_params and method == 'PUT':
+            # /group-slots/{group_id} PUT (Cognito-authorized slot management).
+            if (event.get('resource') or '').startswith('/group-slots'):
+                return set_group_slots(path_params['group_id'], event)
         if 'group_id' in path_params and 'player_id' not in path_params and method == 'DELETE':
             return delete_group_enforced(path_params['group_id'], event)
         if 'group_id' in path_params and 'player_id' not in path_params and method == 'POST':
@@ -414,7 +418,10 @@ def list_groups():
          # controls (a group member, or the owner) without a call per group.
          # Not sensitive: names are already public, and roles only gate UI.
          'member_ids': i.get('member_ids', []),
-         'roles': i.get('roles', {})}
+         'roles': i.get('roles', {}),
+         'slots': i.get('slots', []),
+         'slot_members': i.get('slot_members', {}),
+         'finance_roles': i.get('finance_roles', {})}
         for i in items
     ]
     return _response(200, {'groups': result})
@@ -437,6 +444,8 @@ def get_group(group_id):
     return _response(200, {
         'group_id': item['group_id'], 'group_name': item['group_name'], 'members': members,
         'roles': roles,
+        'slots': item.get('slots', []),
+        'slot_members': item.get('slot_members', {}),
         'default_tournament_settings': item.get('default_tournament_settings')
     })
 
@@ -460,6 +469,62 @@ def update_group_defaults(group_id, event):
         ExpressionAttributeValues={':s': settings}
     )
     return _response(200, {'group_id': group_id, 'default_tournament_settings': settings})
+
+
+def set_group_slots(group_id, event):
+    """Owner/admin sets this group's slot list and which members are in which
+    slot. Reached via the Cognito-authorized PUT /group-slots/{group_id} route
+    (the /groups/{proxy+} route is unauthenticated, so slot management can't
+    live there). slots = ["7-8AM", ...]; slot_members = {slot: [player_id,...]}."""
+    body = json.loads(event.get('body') or '{}')
+    claims = _caller_claims(event)
+    caller_pid = claims.get('custom:player_id')
+    group = groups_table.get_item(Key={'group_id': group_id}).get('Item')
+    if not group:
+        return _response(404, {'error': 'group not found'})
+    if not _is_super_admin(claims) and group.get('roles', {}).get(caller_pid) not in ('owner', 'admin'):
+        return _response(403, {'error': 'you must be an owner or admin of this group to manage slots'})
+
+    updates = {}
+    if 'slots' in body:
+        slots = body.get('slots') or []
+        if not isinstance(slots, list) or not all(isinstance(s, str) for s in slots):
+            return _response(400, {'error': 'slots must be a list of strings'})
+        # De-dupe, preserve order.
+        seen = []
+        for s in slots:
+            s = s.strip()
+            if s and s not in seen:
+                seen.append(s)
+        updates['slots'] = seen
+
+    if 'slot_members' in body:
+        sm = body.get('slot_members') or {}
+        if not isinstance(sm, dict):
+            return _response(400, {'error': 'slot_members must be a map of slot -> [player_id]'})
+        valid_slots = set(updates.get('slots', group.get('slots', [])))
+        members = set(group.get('member_ids', []))
+        clean = {}
+        for slot, pids in sm.items():
+            if slot not in valid_slots:
+                return _response(400, {'error': f"slot '{slot}' is not in this group's slot list"})
+            bad = [p for p in (pids or []) if p not in members]
+            if bad:
+                return _response(400, {'error': 'can only assign players who are members of this group'})
+            clean[slot] = list(dict.fromkeys(pids or []))  # de-dupe
+        updates['slot_members'] = clean
+
+    if not updates:
+        return _response(400, {'error': 'nothing to update'})
+
+    expr = 'SET ' + ', '.join(f'#{k} = :{k}' for k in updates)
+    groups_table.update_item(
+        Key={'group_id': group_id},
+        UpdateExpression=expr,
+        ExpressionAttributeNames={f'#{k}': k for k in updates},
+        ExpressionAttributeValues={f':{k}': v for k, v in updates.items()}
+    )
+    return _response(200, {'group_id': group_id, **updates})
 
 
 def delete_group(group_id, event):

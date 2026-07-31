@@ -51,17 +51,20 @@
     members and set their roles inline isn't surfaced yet (the existing role panel stays
     SuperAdmin-global to avoid regression); owners grant via the request→approve flow today, and the
     direct-set endpoint is ready to wire into an owner panel next. Needs hands-on staging test.
-  - **Stage 4 — per-group time slots.** Slots become per-group: `group.slots = [...]`, owner-defined
-    (fixed list). Owner assigns members to slots (a member can be in several); store as
-    `group.slot_members = {slot: [player_id,...]}` or per-member `slots`. Finance records key on
-    `(group_id, slot)`. **Slot-scoped visibility:** a member assigned to a slot sees only that slot's
-    price and walk-ins, not other slots'. Members get **view (own slot) by default**; edit/delete is
-    requested from the owner (rides the Stage 3 approval flow). (Owner request 2026-07-31.)
-  - **Stage 4b — "own settlement only" access level (below view).** Add a level beneath `view`: a
-    plain slot member who is NOT granted `view` still sees **their own line only** — their share,
-    what they owe, and what's owed back to them — with the group's expenses and other members'
-    numbers hidden. This is the default for assigned slot members. Needed so someone can be shown
-    "you owe ₹X / the club owes you ₹Y" without exposing the whole ledger. (Owner request 2026-07-31.)
+  - **Stage 4 — per-group time slots (DONE 2026-07-31).** Groups store `slots` + `slot_members`
+    (owner/admin-set via the new Cognito route `PUT /group-slots/{group_id}` → `set_group_slots`;
+    validated: only real members, only existing slots). `get_group`/`list_groups` now return them.
+    Frontend: slot list + per-slot member assignment in the group detail (`manageGroupSlots`,
+    `assignSlotMembers`, owner/admin only).
+  - **Stage 4b — "own settlement only" member view (DONE 2026-07-31).** `GET /finance/my-settlement`
+    (`my_settlement`) returns a member's OWN dues per (month, slot): what they owe (`cost_per_head`)
+    and what's owed back (`residual_per_head` - the walk-in-share/relief refund), plus net. Available
+    to any group member with no view key or finance role; expenses and others' numbers never exposed.
+    Frontend "My dues" card on the Finance tab (`loadMyDues`), visible to any member. Math unit-tested.
+  - **Stage 4c — slot-scoped FULL-ledger view (still to do).** A view-access member assigned to a slot
+    should see only that slot's expenses/walk-ins in the main finance tab (not just their own dues).
+    Needs slot-filtering threaded through `list_records`/`summary` for non-owner view members. The
+    member's own dues are already slot-safe via 4b; this is the remaining nice-to-have.
   - **Stage 5 — co-owners, ownership transfer, per-group payee.** `roles` supports multiple owners /
     co-owners; guarded transfer + promote/demote endpoint. On transfer, the **previous owner is
     demoted to a regular member** (keeps view access like any member). Group gets an explicit
@@ -142,6 +145,12 @@
 
 ## Done
 
+- ✅ 2026-07-31 — **Group-scoped finance Stage 4 + 4b (per-group slots + member dues).** Groups get
+  owner-managed `slots`/`slot_members` via `PUT /group-slots/{group_id}` (`set_group_slots`, new
+  Cognito route); group detail UI for slot list + assignment. `GET /finance/my-settlement`
+  (`my_settlement`) gives any member their own dues/owed-back per slot with expenses hidden; "My dues"
+  card on the Finance tab. Slot + settlement logic unit-tested. Slot-scoped full-ledger view for
+  view-members is deferred as Stage 4c.
 - ✅ 2026-07-31 — **Feature:** SuperAdmin unconfirmed sign-ups tool. Lists Cognito accounts stuck
   in UNCONFIRMED (signed up, never verified) and lets an admin delete one so that email can register
   again. New players-lambda `list_unconfirmed_users` / `delete_unconfirmed_user` (SuperAdmin-gated;
