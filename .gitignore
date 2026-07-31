@@ -6,3 +6,13 @@ __pycache__/
 .DS_Store
 NetWorth/
 scripts/player_emails.csv
+.aider*
+
+# local scratch / debug artifacts (were accidentally committed - cleaned up 2026-07-31)
+body.json
+payload.json
+values.json
+key.json
+hof.json
+all_matches_raw.json
+log.txt
