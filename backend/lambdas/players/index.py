@@ -68,6 +68,10 @@ def handler(event, context):
             return create_upload_url(event)
         if event.get('resource') == '/claim-requests' and method == 'GET':
             return list_claim_requests(event)
+        if event.get('resource') == '/unconfirmed-users' and method == 'GET':
+            return list_unconfirmed_users(event)
+        if event.get('resource') == '/unconfirmed-users' and method == 'DELETE':
+            return delete_unconfirmed_user(event)
         if event.get('resource') == '/claim-request-decide' and method == 'POST':
             return decide_claim_request(event)
         if event.get('resource') == '/app-settings' and method == 'GET':
@@ -374,6 +378,64 @@ def _owner_may_decide(req, owned_group_ids):
     if not target_pid:
         return False
     return bool(_player_group_ids(target_pid) & owned_group_ids)
+
+
+def list_unconfirmed_users(event):
+    """SuperAdmin-only: Cognito accounts stuck in UNCONFIRMED (signed up but
+    never verified their email). Lets an admin clear a stuck signup so that
+    person can register again from scratch."""
+    claims = _caller_claims(event)
+    if not _is_super_admin(claims):
+        return _response(403, {'error': 'only a SuperAdmin can list unconfirmed users'})
+    if not USER_POOL_ID:
+        return _response(500, {'error': 'user pool is not configured on this stack'})
+    cognito = boto3.client('cognito-idp')
+    users = []
+    kwargs = {'UserPoolId': USER_POOL_ID, 'Limit': 60}
+    # Cognito can't server-side filter by status, so page and filter locally.
+    while True:
+        resp = cognito.list_users(**kwargs)
+        for u in resp.get('Users', []):
+            if u.get('UserStatus') != 'UNCONFIRMED':
+                continue
+            attrs = {a['Name']: a['Value'] for a in u.get('Attributes', [])}
+            users.append({
+                'username': u.get('Username'),
+                'email': attrs.get('email'),
+                'created_at': u.get('UserCreateDate').isoformat() if u.get('UserCreateDate') else None,
+            })
+        token = resp.get('PaginationToken')
+        if not token:
+            break
+        kwargs['PaginationToken'] = token
+    users.sort(key=lambda x: x.get('created_at') or '', reverse=True)
+    return _response(200, {'unconfirmed': users})
+
+
+def delete_unconfirmed_user(event):
+    """SuperAdmin-only: delete a single UNCONFIRMED Cognito account by username.
+    Refuses to touch any account that is NOT unconfirmed, so this can never be
+    used to delete a real, verified user - that path stays with the guarded
+    delete_player flow."""
+    claims = _caller_claims(event)
+    if not _is_super_admin(claims):
+        return _response(403, {'error': 'only a SuperAdmin can delete unconfirmed users'})
+    if not USER_POOL_ID:
+        return _response(500, {'error': 'user pool is not configured on this stack'})
+    body = json.loads(event.get('body') or '{}')
+    username = body.get('username') or body.get('email')
+    if not username:
+        return _response(400, {'error': 'username (or email) is required'})
+    cognito = boto3.client('cognito-idp')
+    try:
+        user = cognito.admin_get_user(UserPoolId=USER_POOL_ID, Username=username)
+    except cognito.exceptions.UserNotFoundException:
+        return _response(404, {'error': 'no such Cognito user'})
+    if user.get('UserStatus') != 'UNCONFIRMED':
+        # Hard guardrail: this tool only clears stuck signups.
+        return _response(400, {'error': 'that account is not unconfirmed - this tool only removes stuck signups'})
+    cognito.admin_delete_user(UserPoolId=USER_POOL_ID, Username=username)
+    return _response(200, {'deleted': username})
 
 
 def list_claim_requests(event):

@@ -52,9 +52,16 @@
     SuperAdmin-global to avoid regression); owners grant via the request→approve flow today, and the
     direct-set endpoint is ready to wire into an owner panel next. Needs hands-on staging test.
   - **Stage 4 — per-group time slots.** Slots become per-group: `group.slots = [...]`, owner-defined
-    (fixed list). Owner assigns members to slots (a member can be in several). Finance records key on
-    `(group_id, slot)`. Members get **view by default** in their group; edit/delete is requested from
-    the owner (rides the Stage 3 approval flow). (Owner request 2026-07-31.)
+    (fixed list). Owner assigns members to slots (a member can be in several); store as
+    `group.slot_members = {slot: [player_id,...]}` or per-member `slots`. Finance records key on
+    `(group_id, slot)`. **Slot-scoped visibility:** a member assigned to a slot sees only that slot's
+    price and walk-ins, not other slots'. Members get **view (own slot) by default**; edit/delete is
+    requested from the owner (rides the Stage 3 approval flow). (Owner request 2026-07-31.)
+  - **Stage 4b — "own settlement only" access level (below view).** Add a level beneath `view`: a
+    plain slot member who is NOT granted `view` still sees **their own line only** — their share,
+    what they owe, and what's owed back to them — with the group's expenses and other members'
+    numbers hidden. This is the default for assigned slot members. Needed so someone can be shown
+    "you owe ₹X / the club owes you ₹Y" without exposing the whole ledger. (Owner request 2026-07-31.)
   - **Stage 5 — co-owners, ownership transfer, per-group payee.** `roles` supports multiple owners /
     co-owners; guarded transfer + promote/demote endpoint. On transfer, the **previous owner is
     demoted to a regular member** (keeps view access like any member). Group gets an explicit
@@ -135,6 +142,11 @@
 
 ## Done
 
+- ✅ 2026-07-31 — **Feature:** SuperAdmin unconfirmed sign-ups tool. Lists Cognito accounts stuck
+  in UNCONFIRMED (signed up, never verified) and lets an admin delete one so that email can register
+  again. New players-lambda `list_unconfirmed_users` / `delete_unconfirmed_user` (SuperAdmin-gated;
+  delete refuses any non-UNCONFIRMED account), `/unconfirmed-users` GET+DELETE route, and a
+  "Unconfirmed sign-ups" section in the Reviews tab. Pairs with the earlier signup-recovery fix.
 - ✅ 2026-07-31 — **Group-scoped finance Stage 3 (frontend + owner approval).** Finance-tab group
   selector; group_id threaded through all finance calls; logged-in users routed to `/finance-secure`;
   members request finance access per-group → owners approve in Reviews (sets per-group role); groups
