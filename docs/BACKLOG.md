@@ -36,10 +36,45 @@
     `GROUPS_TABLE` env to the finance function. Verified with an access-matrix unit test.
     **Stage 2b (still to do):** a set-per-member-finance-role endpoint in the groups lambda +
     `finance_roles` seeded on group creation — folded into Stage 3 where the UI to manage it lives.
-  - **Stage 3 — frontend.** Group selector on the Finance tab; owner sees full control for their
-    group, members see per-group-role UI. Then un-hide the finance-access panel for owners and add
-    `finance_access` back to `OWNER_DECIDABLE_TYPES` (unlocks owner finance approval).
-  - **Stage 4 — cut-over (destructive, LAST).** Retire the shared `FINANCE_VIEW_KEY` + the legacy open
+  - **Stage 3 — frontend + owner approval (DONE 2026-07-31, one caveat).** Finance tab has a **group
+    selector** (`populateFinanceGroups`, `finance_group_select`); `currentFinanceGroupId` is threaded
+    through `finQS`/`finPost`, and any logged-in user now routes through `/finance-secure` so claims
+    reach the Lambda. Removed the finance Lambda's coarse global gate (was blocking group owners) —
+    access is per-group per-method. Broadened the shared-key handout (`_has_any_group_finance`) so
+    owners can unlock during transition. **Request→approve flow (complete):** members request finance
+    access scoped to their group (`group_id` on the action-request); owners see & approve in the
+    Reviews requests panel (`finance_access` added to `OWNER_DECIDABLE_TYPES`, `_owner_may_decide`
+    made group-precise); approval sets the **per-group** role (`_approve_finance_access` writes the
+    group's `finance_roles` map). **Direct-set flow:** groups lambda `set_finance_role` +
+    `/group-finance-role/{group_id}/{player_id}` route (template) + `setGroupFinanceRole` frontend
+    helper — all in and tested. **Caveat / follow-up:** the owner-facing *panel* to browse group
+    members and set their roles inline isn't surfaced yet (the existing role panel stays
+    SuperAdmin-global to avoid regression); owners grant via the request→approve flow today, and the
+    direct-set endpoint is ready to wire into an owner panel next. Needs hands-on staging test.
+  - **Stage 4 — per-group time slots.** Slots become per-group: `group.slots = [...]`, owner-defined
+    (fixed list). Owner assigns members to slots (a member can be in several). Finance records key on
+    `(group_id, slot)`. Members get **view by default** in their group; edit/delete is requested from
+    the owner (rides the Stage 3 approval flow). (Owner request 2026-07-31.)
+  - **Stage 5 — co-owners, ownership transfer, per-group payee.** `roles` supports multiple owners /
+    co-owners; guarded transfer + promote/demote endpoint. On transfer, the **previous owner is
+    demoted to a regular member** (keeps view access like any member). Group gets an explicit
+    `finance_payee = <player_id>` (any owner/co-owner eligible; the owner picks which account
+    collects) — the UPI QR/deep-link resolves to that payee, so it updates on transfer instead of
+    being freely editable. Removal from group already revokes finance access live (Stage 2).
+  - **Stage 6 — member dues + UPI tap-to-pay.** A logged-in member sees their outstanding dues
+    **itemised by group and slot** (not one lumped total), grouped by each group's payee. Extend
+    `_settlement_rows` to a per-member rollup. Because payee is per-group, "pay all" is **one UPI
+    deep-link per payee** (`upi://pay?pa=<payee_upi>&am=<sum>`), with a pay button per payee.
+    (Owner request 2026-07-31.)
+  - **Security guardrails (apply across Stages 5–6).** NetWorth never processes payments — UPI
+    tap-to-pay only builds an `upi://pay?pa=...&am=...` deep-link the OS hands to the user's UPI app;
+    no money, bank details, or card data flow through the app. Two things to gate carefully: (a) a
+    payee **VPA** is member-visible only (Cognito-gated per group), NOT on a public route unless the
+    owner explicitly wants a public pay page; (b) the per-member **dues** endpoint returns only the
+    caller's own breakdown (owners see their group's). The pre-filled amount is editable in the payer's
+    app and the app gets no payment confirmation, so **"mark as paid" stays a manual step** — never
+    auto-reconciled — and the UI must say so.
+  - **Final — cut-over (destructive, LAST).** Retire the shared `FINANCE_VIEW_KEY` + the legacy open
     `/finance/{proxy+}` route once Stages 2–3 are verified in prod. Route/template change + a
     KNOWN_ISSUES update. Do NOT do this before the new path is proven.
 
@@ -100,6 +135,12 @@
 
 ## Done
 
+- ✅ 2026-07-31 — **Group-scoped finance Stage 3 (frontend + owner approval).** Finance-tab group
+  selector; group_id threaded through all finance calls; logged-in users routed to `/finance-secure`;
+  members request finance access per-group → owners approve in Reviews (sets per-group role); groups
+  lambda `set_finance_role` + `/group-finance-role` route + `setGroupFinanceRole`. Fixed a coarse
+  global gate that blocked group owners. Backend logic unit-tested. Caveat: owner-facing inline
+  role-set panel not surfaced yet (grant via request→approve); needs staging test.
 - ✅ 2026-07-31 — **Group-scoped finance Stage 2 (backend scoping).** Finance lambda scopes all
   record reads/writes/deletes + summary/insights to a `group_id` (defaults to "Club (default)");
   access resolved per-group (`_group_finance_level`) with a default-group-only legacy floor; added

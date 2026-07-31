@@ -332,7 +332,7 @@ def create_claim_request(event):
 # granting one would hand access across every group; that waits for true
 # group-scoped finance (see docs/BACKLOG.md). new_profile carries no group, so
 # it also can't be owner-scoped and stays SuperAdmin-only.
-OWNER_DECIDABLE_TYPES = {'claim', 'edit_own_name'}
+OWNER_DECIDABLE_TYPES = {'claim', 'edit_own_name', 'finance_access'}
 
 
 def _caller_owned_group_ids(claims):
@@ -361,10 +361,15 @@ def _player_group_ids(player_id):
 
 def _owner_may_decide(req, owned_group_ids):
     """True if a group owner/admin (owning owned_group_ids) may act on req:
-    the request type must be owner-decidable AND its target player must belong
-    to one of the caller's groups."""
+    the request type must be owner-decidable AND the request must belong to
+    one of the caller's groups. A finance_access request names a specific
+    group, so the caller must own THAT group; claim/rename resolve via the
+    target player's group memberships."""
     if req.get('type', 'claim') not in OWNER_DECIDABLE_TYPES:
         return False
+    gid = req.get('group_id')
+    if gid:
+        return gid in owned_group_ids
     target_pid = req.get('player_id')
     if not target_pid:
         return False
@@ -834,9 +839,10 @@ def _create_match_request(claims, body, action_type):
 
 
 def _create_finance_access_request(claims, body):
-    """A member asking for a finance role (view / write / delete). Approving
-    it sets that role - handled in decide_claim_request so the same
-    approve/reject UI covers it."""
+    """A member asking for a finance role (view / write / delete) IN A GROUP.
+    Approving it sets that per-group role - handled in decide_claim_request so
+    the same approve/reject UI covers it. A request without a group_id is the
+    legacy global grant (kept for back-compat during rollout)."""
     pid = claims.get('custom:player_id')
     player = table.get_item(Key={'player_id': pid}).get('Item') if pid else None
     if not player:
@@ -844,19 +850,32 @@ def _create_finance_access_request(claims, body):
     requested = (body or {}).get('role', 'view')
     if requested not in ('view', 'write', 'delete'):
         return _response(400, {'error': 'role must be view, write or delete'})
-    # Don't let someone request a level they already have or below.
-    current = player.get('finance_role')
-    if not current and player.get('finance_access'):
-        current = 'write'  # legacy boolean
-    current = current or 'none'
+    group_id = (body or {}).get('group_id')
+    group = None
+    if group_id:
+        if not groups_table:
+            return _response(400, {'error': 'group finance is not configured on this stack'})
+        group = groups_table.get_item(Key={'group_id': group_id}).get('Item')
+        if not group:
+            return _response(404, {'error': 'group not found'})
+        if pid not in group.get('member_ids', []):
+            return _response(403, {'error': 'you must be a member of this group to request finance access'})
+        if group.get('roles', {}).get(pid) in ('owner', 'admin'):
+            return _response(400, {'error': 'you already have full finance access as an owner/admin here'})
+        current = group.get('finance_roles', {}).get(pid) or 'none'
+    else:
+        current = player.get('finance_role')
+        if not current and player.get('finance_access'):
+            current = 'write'  # legacy boolean
+        current = current or 'none'
     if FINANCE_LEVELS.get(current, 0) >= FINANCE_LEVELS[requested]:
         return _response(400, {'error': f'you already have {current} access'})
     pending = claim_requests_table.scan().get('Items', [])
     if any(r.get('status') == 'pending' and r.get('type') == 'finance_access'
-           and r.get('player_id') == pid for r in pending):
+           and r.get('player_id') == pid and r.get('group_id') == group_id for r in pending):
         return _response(400, {'error': 'your finance access request is already waiting'})
     request_id = str(uuid.uuid4())
-    claim_requests_table.put_item(Item={
+    item = {
         'request_id': request_id, 'type': 'finance_access',
         'player_id': pid, 'player_name': player.get('name'),
         'player_nickname': player.get('nickname'),
@@ -864,17 +883,37 @@ def _create_finance_access_request(claims, body):
         'requester_email': claims.get('email'),
         'requester_username': claims.get('cognito:username') or claims.get('email'),
         'status': 'pending', 'created_at': datetime.now(timezone.utc).isoformat()
-    })
+    }
+    if group_id:
+        item['group_id'] = group_id
+        item['group_name'] = group.get('group_name')
+    claim_requests_table.put_item(Item=item)
     return _response(200, {'request_id': request_id, 'status': 'pending'})
 
 
 def _approve_finance_access(req):
     role = req.get('requested_role', 'view')
-    table.update_item(
-        Key={'player_id': req['player_id']},
-        UpdateExpression='SET finance_role = :r REMOVE finance_access',
-        ExpressionAttributeValues={':r': role}
-    )
+    gid = req.get('group_id')
+    if gid and groups_table:
+        # Per-group grant: write into that group's finance_roles map.
+        group = groups_table.get_item(Key={'group_id': gid}).get('Item') or {}
+        fr = dict(group.get('finance_roles', {}))
+        if role == 'none':
+            fr.pop(req['player_id'], None)
+        else:
+            fr[req['player_id']] = role
+        groups_table.update_item(
+            Key={'group_id': gid},
+            UpdateExpression='SET finance_roles = :fr',
+            ExpressionAttributeValues={':fr': fr}
+        )
+    else:
+        # Legacy global grant (no group on the request).
+        table.update_item(
+            Key={'player_id': req['player_id']},
+            UpdateExpression='SET finance_role = :r REMOVE finance_access',
+            ExpressionAttributeValues={':r': role}
+        )
     return None
 
 
