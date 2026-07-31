@@ -323,6 +323,7 @@ Resources:
         Variables:
           PLAYERS_TABLE: !Ref PlayersTable
           CLAIM_REQUESTS_TABLE: !Ref ClaimRequestsTable
+          GROUPS_TABLE: !Ref GroupsTable
           USER_POOL_ID: !Ref UserPool
           UPLOADS_BUCKET: !Ref WebsiteBucket
           CONFIRMATION_CODE: !Ref ConfirmationCode

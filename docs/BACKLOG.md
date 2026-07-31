@@ -11,25 +11,16 @@
 
 ## Now / high priority
 
-- `[feat] L` **Group-owner approval console + group-scoped approvals.** Today `list_claim_requests`
-  / `decide_claim_request` (players lambda) and finance-access approval are effectively SuperAdmin.
-  Goal: a group **owner** sees the same approval UI as the SuperAdmin, but **scoped to their own
-  group's members** — both claim/profile requests and finance-role requests. Touches: (a) requests
-  must carry the target's `group_id` (or resolve it at read time via the group `roles` map);
-  (b) `list_claim_requests` filters to groups the caller owns (`canManageGroup`/roles); (c)
-  `decide_claim_request` + `_approve_finance_access` authorize a group-owner for their own group;
-  (d) frontend shows the approval panel to owners, not just SuperAdmin. **Risk: high — this is the
-  live permission system.** Ship on its own branch with careful staging verification; do NOT bundle
-  with unrelated changes. (Owner request 2026-07-31.)
-- `[feat] M` **Same-side (partnership) filter on the profile card.** Alongside the existing
-  opponent head-to-head (`loadProfileHeadToHead` / `compute_head_to_head`), add a "player 1 + player 2
-  on the **same** side" view — i.e. how this player performs *with* a chosen partner. Partner data
-  already exists (`compute_partnerships`, `compute_partner_distribution`, `compute_head_to_head`'s
-  mirror). Likely a contained frontend addition + a small backend "with-partner record" helper.
-  Design Q to confirm with owner: put it on the profile card as a second picker next to head-to-head. 
-- `[feat] M` **Pagination for large record lists.** `list_matches` / the game log render everything.
-  Start with client-side pagination on the game log (simplest, fine for current scale); move to
-  server-side DynamoDB `LastEvaluatedKey` only if match counts grow large. (Owner request 2026-07-31.)
+- `[feat] M` **Finance approval for group owners — blocked on group-scoped finance.** Owners can
+  now approve claim/rename requests for their group (done 2026-07-31), but NOT finance-access:
+  finance roles are still club-**global**, so an owner granting one would hand access across every
+  group. To let owners approve finance for their members, finance must first become group-scoped
+  (below). Then add `finance_access` to `OWNER_DECIDABLE_TYPES` and un-hide the Finance-access panel
+  in `updateReviewTabScope`. (Owner request 2026-07-31.)
+- `[feat] L` **Group-scoped finance.** Today there's one shared club finance (one view-key, one
+  global `finance_role` per player). Make finance per-group so each group owner manages their own.
+  Prereq for the finance-approval item above. (Was in Later; promoted because two requests depend
+  on it.)
 
 
 - `[security] M` Retire or lock down the legacy open `/finance/{proxy+}` route once nothing
@@ -63,7 +54,6 @@
   resolution + BWF score validity via the same rules as `_is_valid_completed_game`) before writing;
   show a review/confirm step before any match is recorded. Owner is still deciding the hosting shape.
   (Owner idea 2026-07-31.)
-- `[feat] M` Group-scoped finance (currently one shared club finance view/key).
 - `[feat] M` Per-group leaderboards & season resets.
 - `[feat] S` Export tournament recap as image already exists (`downloadTournamentImage`); extend to
   a shareable per-player season card.
@@ -84,6 +74,20 @@
 
 ## Done
 
+- ✅ 2026-07-31 — **Feature:** same-side (partnership) filter on the profile card. Backend
+  `compute_with_partner()` (matches lambda) + `with_partner`/`partner` query; frontend
+  `loadProfileWithPartner()` + a "With a partner (same side)" picker under Head-to-head.
+- ✅ 2026-07-31 — **Feature:** game-log pagination. `loadGameLog` now fills state and hands off to
+  `renderGameLog()` + `gameLogGoto()` (25/page, Prev/Next, "X–Y of N · page a/b"). Filtering still
+  runs on the full set; only display is paged.
+- ✅ 2026-07-31 — **Feature:** group-owner approvals (partial). A group owner/admin now sees the
+  Reviews tab and can approve/reject **claim** and **rename** requests **scoped to their own group's
+  members** (players lambda: `_caller_owned_group_ids`, `_player_group_ids`, `_owner_may_decide`,
+  `OWNER_DECIDABLE_TYPES`; `GROUPS_TABLE` env added — no IAM change, shared role already had read).
+  Frontend shows the tab to owners and hides every SuperAdmin-only panel (`updateReviewTabScope`).
+  **Held on purpose:** finance-access approval and delete/match-change approvals stay SuperAdmin-only
+  (see Now/high-priority for why finance is held). `new_profile` requests carry no group, so they
+  also stay SuperAdmin-only for now.
 - ✅ 2026-07-31 — **Fix:** voice button showed literal `U0001F3A4` — the code used JS-invalid
   `\U0001F3A4`/`\U0001F534` escapes (capital `U`). Replaced with surrogate pairs
   `\uD83C\uDFA4` (🎤) and `\uD83D\uDD34` (🔴) in `app.js` (5 spots). ASCII-safe, renders correctly.

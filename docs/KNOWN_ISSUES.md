@@ -37,6 +37,13 @@ A Cognito account can exist with no linked player. Every write path relies on
 **Safe move:** any new write endpoint must call that gate; forgetting it silently lets stranger
 accounts act.
 
+### 4b. Finance roles are club-GLOBAL, which constrains group-owner delegation  · sev: low (design)
+`finance_role` is a single global level per player, and the finance tab shows one shared club
+finance. So finance approval can't yet be safely delegated to group owners: granting a member finance
+access grants it across every group. This is why `OWNER_DECIDABLE_TYPES` deliberately excludes
+`finance_access` (group owners approve claim/rename only). **Safe move:** don't add `finance_access`
+to owner-decidable types until finance is group-scoped (BACKLOG "Now / high priority").
+
 ---
 
 ## Correctness / data integrity
