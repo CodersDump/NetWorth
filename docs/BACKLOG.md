@@ -17,6 +17,32 @@
   group. To let owners approve finance for their members, finance must first become group-scoped
   (below). Then add `finance_access` to `OWNER_DECIDABLE_TYPES` and un-hide the Finance-access panel
   in `updateReviewTabScope`. (Owner request 2026-07-31.)
+- `[feat] L` **Group-scoped finance — staged rollout (in progress).** Decided design: every finance
+  record belongs to exactly one group (fully separate ledgers); the group **owner has full finance**
+  for their group, others get a **per-group** finance role; existing records migrate under a new
+  **"Club (default)"** group; and finance moves **off the shared view-key** onto Cognito group-role
+  gating, retiring the legacy open `/finance/{proxy+}` route. Sequenced so a live ledger is never at
+  risk:
+  - **Stage 1 — migrate data (DONE 2026-07-31, additive/safe).** `scripts/backfill_finance_groups.py`
+    creates the "Club (default)" group and stamps `group_id` on every existing finance record.
+    Dry-run by default, idempotent, only adds an attribute. Run locally after committing; no deploy.
+  - **Stage 2 — backend read/write scoping (DONE 2026-07-31).** Finance lambda now scopes every
+    record op to a `group_id` (defaults to the "Club (default)" group so the current UI is unchanged):
+    `_group_for_request`, `_group_finance_level`, `_default_group_id`; `_scan_type`/`list_records`/
+    `create_records`/`update_record`/`delete_record`/`summary`/`insights`/`_settlement_rows` all take
+    a group; update/delete reject cross-group records; public walk-ins scoped to the default group.
+    Access = SuperAdmin (all) / owner+admin (full on own group) / per-group `finance_roles` map /
+    legacy global grant as a floor **on the default group only** (no cross-group leak). Added
+    `GROUPS_TABLE` env to the finance function. Verified with an access-matrix unit test.
+    **Stage 2b (still to do):** a set-per-member-finance-role endpoint in the groups lambda +
+    `finance_roles` seeded on group creation — folded into Stage 3 where the UI to manage it lives.
+  - **Stage 3 — frontend.** Group selector on the Finance tab; owner sees full control for their
+    group, members see per-group-role UI. Then un-hide the finance-access panel for owners and add
+    `finance_access` back to `OWNER_DECIDABLE_TYPES` (unlocks owner finance approval).
+  - **Stage 4 — cut-over (destructive, LAST).** Retire the shared `FINANCE_VIEW_KEY` + the legacy open
+    `/finance/{proxy+}` route once Stages 2–3 are verified in prod. Route/template change + a
+    KNOWN_ISSUES update. Do NOT do this before the new path is proven.
+
 - `[feat] L` **Group-scoped finance.** Today there's one shared club finance (one view-key, one
   global `finance_role` per player). Make finance per-group so each group owner manages their own.
   Prereq for the finance-approval item above. (Was in Later; promoted because two requests depend
@@ -74,6 +100,15 @@
 
 ## Done
 
+- ✅ 2026-07-31 — **Group-scoped finance Stage 2 (backend scoping).** Finance lambda scopes all
+  record reads/writes/deletes + summary/insights to a `group_id` (defaults to "Club (default)");
+  access resolved per-group (`_group_finance_level`) with a default-group-only legacy floor; added
+  `GROUPS_TABLE` env. Backward-compatible: the current finance UI sends no `group_id`, so it operates
+  on the default group exactly as before. Access matrix unit-tested.
+- ✅ 2026-07-31 — **Group-scoped finance Stage 1 (data migration).** Added
+  `scripts/backfill_finance_groups.py`: creates the "Club (default)" group and stamps `group_id`
+  on every existing finance record. Dry-run by default, idempotent (`attribute_not_exists` guard),
+  additive-only. Stages 2–4 (backend scoping, frontend, key/route cut-over) tracked above.
 - ✅ 2026-07-31 — **Feature:** partner match-list. The "with a partner (same side)" view now lists
   every same-side match under the W/L summary — date, opponents, score, result — most-recent-first,
   paginated 25/page (`renderPartnerGames` / `partnerGamesGoto`). Backend `compute_with_partner` now

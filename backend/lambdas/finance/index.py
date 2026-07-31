@@ -61,6 +61,13 @@ dynamodb = boto3.resource('dynamodb')
 finance_table = dynamodb.Table(os.environ['FINANCE_TABLE'])
 players_table = dynamodb.Table(os.environ['PLAYERS_TABLE'])
 matches_table = dynamodb.Table(os.environ['MATCHES_TABLE'])
+# Stage 2 of group-scoped finance: needed to resolve a caller's role in a
+# group (owner/admin -> full finance for that group) and the group's
+# per-member finance_roles map. Optional so older stacks still import.
+GROUPS_TABLE = os.environ.get('GROUPS_TABLE')
+groups_table = dynamodb.Table(GROUPS_TABLE) if GROUPS_TABLE else None
+DEFAULT_GROUP_NAME = 'Club (default)'
+_default_group_id_cache = None
 
 # Both secrets arrive as environment variables set by CloudFormation
 # parameters (NoEcho), which CI passes in from GitHub repository secrets.
@@ -117,6 +124,55 @@ def _finance_level(claims):
 def _has_finance_access(claims):
     """View or better - the gate for reading finance at all."""
     return _finance_level(claims) >= FINANCE_LEVELS['view']
+
+
+def _default_group_id():
+    """The group_id of the 'Club (default)' group that the pre-migration
+    ledger lives under. Cached per warm container. Returns None if the
+    migration hasn't been run or the groups table isn't wired."""
+    global _default_group_id_cache
+    if _default_group_id_cache is not None:
+        return _default_group_id_cache
+    if not groups_table:
+        return None
+    for g in groups_table.scan().get('Items', []):
+        if g.get('group_name') == DEFAULT_GROUP_NAME:
+            _default_group_id_cache = g.get('group_id')
+            return _default_group_id_cache
+    return None
+
+
+def _group_for_request(params, body):
+    """The group_id this finance op targets. Falls back to the default group
+    so pre-Stage-3 clients (which don't send group_id yet) keep working
+    exactly as before - they operate on the existing ledger."""
+    return (params.get('group_id') or body.get('group_id') or _default_group_id())
+
+
+def _group_finance_level(claims, group_id):
+    """A caller's finance level (0-3) FOR A SPECIFIC GROUP.
+      - SuperAdmin: full on every group.
+      - Group owner/admin: full on their own group.
+      - Otherwise: the group's per-member finance_roles map.
+      - Transition floor: a legacy GLOBAL finance_role counts only on the
+        DEFAULT group (where the old shared ledger lives), so existing
+        grant-holders keep their access and it never leaks into other groups.
+    """
+    if _is_super_admin(claims):
+        return FINANCE_LEVELS['delete']
+    pid = claims.get('custom:player_id')
+    group = {}
+    if groups_table and group_id:
+        group = groups_table.get_item(Key={'group_id': group_id}).get('Item') or {}
+    if pid:
+        if group.get('roles', {}).get(pid) in ('owner', 'admin'):
+            return FINANCE_LEVELS['delete']
+        per_group = (group.get('finance_roles') or {}).get(pid)
+        if per_group in FINANCE_LEVELS:
+            return FINANCE_LEVELS[per_group]
+    if group_id and group_id == _default_group_id():
+        return _finance_level(claims)  # transition floor, default group only
+    return 0
 
 
 def finance_key_for_caller(event):
@@ -217,24 +273,31 @@ def handler(event, context):
         if supplied_key != VIEW_KEY:
             return _response(403, {'error': 'view key is missing or incorrect'})
 
+        # Which group's ledger this request targets (defaults to the "Club
+        # (default)" group so existing clients keep working). All record
+        # reads/writes below are scoped to it.
+        target_group = _group_for_request(params, body)
+
         # Tiered enforcement applies only when we actually know who the
-        # caller is. Requests arriving via the authenticated route carry
-        # claims and get gated by role. Requests using only the shared key
-        # (the legacy open route, no authorizer) have no identity to gate
-        # on, so the key alone keeps the full access it always had - this
-        # is what stops existing key-holders from suddenly being view-only.
+        # caller is, and is now scoped to the TARGET GROUP. Requests using
+        # only the shared key (the legacy open route, no claims) have no
+        # identity to gate on, so the key alone keeps the full access it
+        # always had on the default group.
         claims_for_role = _caller_claims(event)
         if claims_for_role:
-            if method in ('POST', 'PUT') and _finance_level(claims_for_role) < FINANCE_LEVELS['write']:
-                return _response(403, {'error': 'you have view-only finance access - ask an admin for write access'})
-            if method == 'DELETE' and _finance_level(claims_for_role) < FINANCE_LEVELS['delete']:
-                return _response(403, {'error': 'you need delete access for this - ask an admin'})
+            lvl = _group_finance_level(claims_for_role, target_group)
+            if method == 'GET' and lvl < FINANCE_LEVELS['view']:
+                return _response(403, {'error': 'you do not have finance access to this group'})
+            if method in ('POST', 'PUT') and lvl < FINANCE_LEVELS['write']:
+                return _response(403, {'error': 'you have view-only finance access here - ask an owner for write access'})
+            if method == 'DELETE' and lvl < FINANCE_LEVELS['delete']:
+                return _response(403, {'error': 'you need delete access for this - ask an owner'})
 
         if parts == ['summary'] and method == 'GET':
-            return summary()
+            return summary(target_group)
         if parts == ['insights'] and method == 'GET':
             insights._params = params
-            return insights()
+            return insights(target_group)
         if parts == ['settings']:
             if method == 'GET':
                 return get_settings()
@@ -245,14 +308,14 @@ def handler(event, context):
             rtype = kind[:-1] if kind != 'memberships' else 'membership'
             if parts == [kind]:
                 if method == 'GET':
-                    return list_records(rtype, params)
+                    return list_records(rtype, params, target_group)
                 if method == 'POST':
-                    return create_records(rtype, body)
+                    return create_records(rtype, body, target_group)
             if len(parts) == 2 and parts[0] == kind:
                 if method == 'PUT':
-                    return update_record(rtype, parts[1], body)
+                    return update_record(rtype, parts[1], body, target_group)
                 if method == 'DELETE':
-                    return delete_record(rtype, parts[1], body)
+                    return delete_record(rtype, parts[1], body, target_group)
 
         return _response(404, {'error': 'not found'})
     except Exception as e:
@@ -261,9 +324,15 @@ def handler(event, context):
 
 # ---------- helpers ----------
 
-def _scan_type(record_type):
+def _scan_type(record_type, group_id=None):
     items = finance_table.scan().get('Items', [])
-    return [i for i in items if i.get('record_type') == record_type]
+    items = [i for i in items if i.get('record_type') == record_type]
+    if group_id is not None:
+        # Records stamped with a different group are invisible to this group.
+        # Legacy records all carry the default group_id after the Stage 1
+        # migration, so nothing is silently hidden.
+        items = [i for i in items if i.get('group_id') == group_id]
+    return items
 
 
 def _num(v, default=0):
@@ -312,8 +381,8 @@ def _resolve_name(pid_cache, player_id):
 
 # ---------- CRUD ----------
 
-def list_records(record_type, params):
-    items = _scan_type(record_type)
+def list_records(record_type, params, group_id=None):
+    items = _scan_type(record_type, group_id)
     if record_type == 'walkin':
         # Walk-ins carry an ISO date rather than month/year fields, so
         # month/year filters translate to a date prefix.
@@ -346,14 +415,14 @@ def list_records(record_type, params):
                                    i.get('slot', ''), i.get('display_name', '')))
     resp = {record_type + 's': items}
     if record_type == 'membership' and params.get('month') and params.get('year') and params.get('slot'):
-        row = _settlement_rows().get((str(params['month']), int(_num(params['year'])), str(params['slot'])))
+        row = _settlement_rows(group_id).get((str(params['month']), int(_num(params['year'])), str(params['slot'])))
         if row:
             resp['cost_per_head'] = row['cost_per_head']
             resp['estimated_total'] = row['estimated_total']
     return _response(200, resp)
 
 
-def create_records(record_type, body):
+def create_records(record_type, body, group_id=None):
     raw_items = body.get('items') if isinstance(body.get('items'), list) else [body]
     created = []
     errors = []
@@ -365,6 +434,8 @@ def create_records(record_type, body):
         item = _clean(record_type, raw)
         item['record_id'] = str(uuid.uuid4())
         item['record_type'] = record_type
+        if group_id:
+            item['group_id'] = group_id
         finance_table.put_item(Item=item)
         created.append(item['record_id'])
     result = {'created': created}
@@ -373,10 +444,13 @@ def create_records(record_type, body):
     return _response(200, result)
 
 
-def update_record(record_type, record_id, body):
+def update_record(record_type, record_id, body, group_id=None):
     existing = finance_table.get_item(Key={'record_id': record_id}).get('Item')
     if not existing or existing.get('record_type') != record_type:
         return _response(404, {'error': f'{record_type} not found'})
+    # Can't reach across into another group's ledger.
+    if group_id is not None and existing.get('group_id') not in (None, group_id):
+        return _response(403, {'error': 'this record belongs to a different group'})
 
     # Payment confirmation stores the per-head AMOUNT confirmed. Validity is
     # derived, not stored: if expenses change or the Yes-roster changes, the
@@ -384,7 +458,7 @@ def update_record(record_type, record_id, body):
     # confirmation automatically shows as needing re-confirmation.
     if record_type == 'membership' and 'confirm_payment' in body:
         if body['confirm_payment']:
-            row = _settlement_rows().get((str(existing.get('month')), int(_num(existing.get('year'))),
+            row = _settlement_rows(existing.get('group_id')).get((str(existing.get('month')), int(_num(existing.get('year'))),
                                            str(existing.get('slot'))))
             cph = row['cost_per_head'] if row else None
             if cph is None:
@@ -436,12 +510,14 @@ def delete_record_enforced(record_type, record_id, event):
     return delete_record(record_type, record_id, body)
 
 
-def delete_record(record_type, record_id, body):
+def delete_record(record_type, record_id, body, group_id=None):
     if body.get('confirm') != CONFIRMATION_CODE:
         return _response(400, {'error': 'confirmation code is missing or incorrect'})
     existing = finance_table.get_item(Key={'record_id': record_id}).get('Item')
     if not existing or existing.get('record_type') != record_type:
         return _response(404, {'error': f'{record_type} not found'})
+    if group_id is not None and existing.get('group_id') not in (None, group_id):
+        return _response(403, {'error': 'this record belongs to a different group'})
     finance_table.delete_item(Key={'record_id': record_id})
     return _response(200, {'deleted': record_id})
 
@@ -484,7 +560,9 @@ def public_walkins():
     settings = finance_table.get_item(Key={'record_id': 'settings'}).get('Item') or {}
     if not settings.get('walkins_public'):
         return _response(404, {'error': 'not available'})
-    items = _scan_type('walkin')
+    # Public list is the club-wide default group only (guests pay walk-in
+    # fees for the main club sessions).
+    items = _scan_type('walkin', _default_group_id())
     cache = {}
     rows = []
     for i in items:
@@ -498,7 +576,7 @@ def public_walkins():
 
 # ---------- settlement summary (the Excel formulas, retired with honor) ----------
 
-def _settlement_rows():
+def _settlement_rows(group_id=None):
     """Per (month, year, slot): the exact math from the Calculations sheet.
         estimated_total = SUM(estimated_cost * estimated_qty)
         actual_total    = SUM(actual_cost * actual_qty)   [falls back to estimated]
@@ -508,9 +586,9 @@ def _settlement_rows():
         residual_per_head = (estimated_total - actual_total + extra_collected)
                              / player_count                [relief owed each]
     """
-    expenses = _scan_type('expense')
-    memberships = _scan_type('membership')
-    walkins = _scan_type('walkin')
+    expenses = _scan_type('expense', group_id)
+    memberships = _scan_type('membership', group_id)
+    walkins = _scan_type('walkin', group_id)
 
     periods = {}
 
@@ -574,8 +652,8 @@ def _settlement_rows():
     return periods
 
 
-def summary():
-    rows = list(_settlement_rows().values())
+def summary(group_id=None):
+    rows = list(_settlement_rows(group_id).values())
     rows.sort(key=lambda r: (r['year'], MONTHS.index(r['month']) if r['month'] in MONTHS else 99, r['slot']))
     return _response(200, {'summary': rows})
 
@@ -591,7 +669,7 @@ SESSION_RATE = 15.0 / 18.0          # sessions actually held per untracked day
 ACTIVE_DAYS_THRESHOLD = 10          # below this, offer the estimated count
 
 
-def insights():
+def insights(group_id=None):
     """Per-member monthly economics, ghosts, and walk-in conversion.
 
     Effective cost model (per member, per month, ACROSS slots):
@@ -615,10 +693,10 @@ def insights():
     f_month = params_holder.get('month')
     f_year = int(_num(params_holder.get('year'))) if params_holder.get('year') else None
 
-    memberships = _scan_type('membership')
-    walkins = _scan_type('walkin')
+    memberships = _scan_type('membership', group_id)
+    walkins = _scan_type('walkin', group_id)
     matches = matches_table.scan().get('Items', [])
-    settlement = _settlement_rows()
+    settlement = _settlement_rows(group_id)
 
     # matches per (player_id, 'yyyy-mm') and distinct active days
     played, active_days = {}, {}

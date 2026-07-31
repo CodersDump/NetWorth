@@ -374,6 +374,7 @@ Resources:
           FINANCE_TABLE: !Ref FinanceTable
           PLAYERS_TABLE: !Ref PlayersTable
           MATCHES_TABLE: !Ref MatchesTable
+          GROUPS_TABLE: !Ref GroupsTable
           CONFIRMATION_CODE: !Ref ConfirmationCode
           FINANCE_VIEW_KEY: !Ref FinanceViewKey
       Code: ../backend/lambdas/finance
