@@ -381,6 +381,20 @@ let userPool = null;
         slotsHtml += `<button class="secondary" style="margin-top:8px; padding:4px 10px; font-size:12px;" onclick="manageGroupSlots('${groupId}')">Edit slot list</button>`;
       }
       slotsHtml += '</div>';
+
+      // Ownership + payee (Stage 5). Transfer is owner-only; payee any owner/admin.
+      const iAmOwner = (currentGroupRoles[myPlayerId()] === 'owner');
+      const payee = data.finance_payee || {};
+      if (iCanManage) {
+        slotsHtml += '<div style="margin-top:14px; padding-top:12px; border-top:1px solid var(--border);"><strong>Ownership &amp; payments</strong>';
+        const payeeName = payee.player_id ? (nameOf(payee.player_id) + (payee.upi_id ? ` (${payee.upi_id})` : '')) : '<span style="color:var(--text-secondary);">not set</span>';
+        slotsHtml += `<div class="member-row"><span>Payments collected by: ${payeeName}</span><button style="padding:2px 8px; font-size:11px; margin:0;" onclick="setGroupPayee('${groupId}')">Set payee</button></div>`;
+        slotsHtml += '<p style="font-size:12px; color:var(--text-secondary); margin:6px 0 0;">Promote a member to owner/admin from their role control above to add a co-owner.</p>';
+        if (iAmOwner) {
+          slotsHtml += `<button class="secondary" style="margin-top:8px; padding:4px 10px; font-size:12px;" onclick="transferGroupOwnership('${groupId}')">Transfer ownership</button>`;
+        }
+        slotsHtml += '</div>';
+      }
       membersEl.innerHTML += slotsHtml;
     }
 
@@ -4419,6 +4433,48 @@ let userPool = null;
         const { res, error } = await authedFetch(`${API_BASE_URL}/group-slots/${groupId}`, {
           method: 'PUT', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ slot_members: slotMembers })
+        });
+        if (!res.ok) { alert(`Error: ${error}`); return; }
+        loadGroupMembers(groupId);
+      } catch (e) { alert(`Failed: ${e.message}`); }
+    }
+
+    async function transferGroupOwnership(groupId) {
+      const cur = await (await fetch(`${API_BASE_URL}/groups/${groupId}`)).json();
+      const members = cur.members || [];
+      const nick = prompt('Transfer ownership to which member? Enter their nickname.\n\nYou will become a regular member (view access) afterwards.');
+      if (nick === null) return;
+      const target = members.find(m => (m.nickname || '').toLowerCase() === nick.trim().toLowerCase()
+        || (m.name || '').toLowerCase() === nick.trim().toLowerCase());
+      if (!target) { alert('No member with that nickname in this group.'); return; }
+      if (!confirm(`Make ${target.nickname || target.name} the owner? You will be demoted to a regular member.`)) return;
+      try {
+        const { res, error } = await authedFetch(`${API_BASE_URL}/group-slots/${groupId}`, {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ transfer_to: target.player_id })
+        });
+        if (!res.ok) { alert(`Error: ${error}`); return; }
+        loadGroupMembers(groupId);
+      } catch (e) { alert(`Failed: ${e.message}`); }
+    }
+
+    async function setGroupPayee(groupId) {
+      const cur = await (await fetch(`${API_BASE_URL}/groups/${groupId}`)).json();
+      const members = cur.members || [];
+      const existing = cur.finance_payee || {};
+      const nick = prompt('Who collects payments for this group? Enter their nickname (must be a member):',
+        existing.player_id ? (members.find(m => m.player_id === existing.player_id) || {}).nickname || '' : '');
+      if (nick === null) return;
+      const target = members.find(m => (m.nickname || '').toLowerCase() === nick.trim().toLowerCase()
+        || (m.name || '').toLowerCase() === nick.trim().toLowerCase());
+      if (!target) { alert('No member with that nickname in this group.'); return; }
+      const upi = prompt(`UPI ID for ${target.nickname || target.name} (e.g. name@bank):`, existing.upi_id || '');
+      if (upi === null) return;
+      const upiName = prompt('Name shown on the payment (optional):', existing.upi_name || target.name || '');
+      try {
+        const { res, error } = await authedFetch(`${API_BASE_URL}/group-slots/${groupId}`, {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ finance_payee: { player_id: target.player_id, upi_id: (upi || '').trim(), upi_name: (upiName || '').trim() } })
         });
         if (!res.ok) { alert(`Error: ${error}`); return; }
         loadGroupMembers(groupId);
