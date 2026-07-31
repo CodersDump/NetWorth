@@ -2749,6 +2749,46 @@ let userPool = null;
       } catch (_) { bar.style.display = 'none'; }
     }
 
+    async function loadUnconfirmedUsers() {
+      const listEl = document.getElementById('unconfirmed-users-list');
+      const countEl = document.getElementById('review-unconfirmed-count');
+      if (!listEl) return;
+      listEl.textContent = 'Loading...';
+      try {
+        const { res, data } = await authedFetch(`${API_BASE_URL}/unconfirmed-users`);
+        if (!res.ok) { listEl.textContent = `Error: ${data.error || 'could not load'}`; return; }
+        const users = data.unconfirmed || [];
+        if (countEl) countEl.textContent = users.length ? String(users.length) : '';
+        if (!users.length) {
+          listEl.innerHTML = '<p class="card-sub" style="margin:0;">No unconfirmed sign-ups. Everyone who signed up has verified their email.</p>';
+          return;
+        }
+        listEl.innerHTML = users.map(u => {
+          const when = u.created_at ? new Date(u.created_at).toLocaleDateString() : '';
+          const email = escapeHtml(u.email || u.username || '');
+          const uname = encodeURIComponent(u.username || u.email || '');
+          return `
+          <div style="display:flex; justify-content:space-between; align-items:center; padding:6px 0; border-bottom:1px solid var(--border);">
+            <span>${email} <span style="color:var(--text-secondary);">signed up ${when}</span></span>
+            <button class="secondary" type="button" style="margin:0; padding:4px 10px; font-size:12px;" onclick="deleteUnconfirmedUser('${uname}', '${email}')">Delete</button>
+          </div>`;
+        }).join('');
+      } catch (e) { listEl.textContent = `Could not load: ${e.message}`; }
+    }
+
+    async function deleteUnconfirmedUser(username, email) {
+      if (!confirm(`Delete the unconfirmed sign-up for ${email}?\n\nThey'll be able to register again with this email. This only works on accounts that never verified.`)) return;
+      try {
+        const { res, data } = await authedFetch(`${API_BASE_URL}/unconfirmed-users`, {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username: decodeURIComponent(username) })
+        });
+        if (!res.ok) { alert(`Error: ${data.error || 'could not delete'}`); return; }
+        loadUnconfirmedUsers();
+      } catch (e) { alert(`Request failed: ${e.message}`); }
+    }
+
     async function loadClaimRequests() {
       const listEl = document.getElementById('settings-requests-list');
       listEl.textContent = 'Loading...';
@@ -6756,6 +6796,7 @@ let userPool = null;
           loadClaimRequests();
           if (isSuperAdmin()) {
             loadFinanceAccessList();
+            loadUnconfirmedUsers();
             loadAppSettings();
             loadEventsAdmin();
             loadStoreAdmin();

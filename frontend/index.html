@@ -946,6 +946,15 @@
         </details>
 
         <details class="review-section">
+          <summary>Unconfirmed sign-ups <span id="review-unconfirmed-count" class="review-badge"></span></summary>
+          <div style="padding:10px 0;">
+            <button class="secondary" type="button" style="margin:0 0 8px; padding:4px 10px; font-size:12px;" onclick="loadUnconfirmedUsers()">Refresh</button>
+            <p class="card-sub" style="margin:0 0 10px;">People who signed up but never verified their email. Deleting one frees that address so they can register again.</p>
+            <div id="unconfirmed-users-list" style="font-size:13px;"></div>
+          </div>
+        </details>
+
+        <details class="review-section">
           <summary>Finance access</summary>
           <div style="padding:10px 0;">
             <button class="secondary" type="button" style="margin:0 0 8px; padding:4px 10px; font-size:12px;" onclick="loadFinanceAccessList()">Refresh</button>
