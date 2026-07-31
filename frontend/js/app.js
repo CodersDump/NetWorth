@@ -1156,7 +1156,7 @@ let userPool = null;
        wrap.id = 'nw-voice-wrap';
        wrap.style.cssText = 'margin:0 0 10px;';
        wrap.innerHTML =
-         '<button type="button" id="nw-voice-btn" style="display:inline-flex;align-items:center;gap:8px;padding:9px 14px;border:0;border-radius:10px;background:var(--court,#2fa968);color:#fff;font-weight:600;cursor:pointer;">\U0001F3A4 Record by voice</button>' +
+         '<button type="button" id="nw-voice-btn" style="display:inline-flex;align-items:center;gap:8px;padding:9px 14px;border:0;border-radius:10px;background:var(--court,#2fa968);color:#fff;font-weight:600;cursor:pointer;">\uD83C\uDFA4 Record by voice</button>' +
          '<span id="nw-voice-hint" style="margin-left:10px;font-size:12px;color:var(--text-secondary,#888);">e.g. "Aditya and Sohan beat Sourabh and Mayank 21-18"</span>' +
          '<div id="nw-voice-status" style="margin-top:8px;font-size:13px;"></div>';
        form.parentNode.insertBefore(wrap, form);
@@ -1204,7 +1204,7 @@ let userPool = null;
 
          rec.onstart = () => {
            btn.textContent = '\u23F9 Stop & fill';
-           status.textContent = '\U0001F534 Listening - Speak now!';
+           status.textContent = '\uD83D\uDD34 Listening - Speak now!';
          };
 
          rec.onresult = (ev) => {
@@ -1219,7 +1219,7 @@ let userPool = null;
          rec.onerror = (ev) => {
            if (ev.error === 'no-speech') return;
            listening = false;
-           btn.textContent = '\U0001F3A4 Record by voice';
+           btn.textContent = '\uD83C\uDFA4 Record by voice';
            status.style.color = '#c0392b';
            status.textContent = ev.error === 'not-allowed'
              ? 'Microphone blocked - allow mic access for this site and try again.'
@@ -1235,7 +1235,7 @@ let userPool = null;
 
            listening = false;
            recognizer = null;
-           btn.textContent = '\U0001F3A4 Record by voice';
+           btn.textContent = '\uD83C\uDFA4 Record by voice';
            const said = currentSaid;
            if (!said || said.startsWith('Voice error') || said.startsWith('Microphone') || said.startsWith('Opening')) {
              if (!status.textContent.startsWith('Voice error') && !status.textContent.startsWith('Microphone')) {
@@ -1255,7 +1255,7 @@ let userPool = null;
              '<div style="margin-top:4px;color:var(--text-secondary,#888);">Filled the form - review and tap Record match.</div>';
          };
 
-         try { rec.start(); } catch(e){ listening = false; btn.textContent = '\U0001F3A4 Record by voice'; }
+         try { rec.start(); } catch(e){ listening = false; btn.textContent = '\uD83C\uDFA4 Record by voice'; }
        });
     }
     nwVoiceMatchInit();
@@ -5163,7 +5163,29 @@ let userPool = null;
       window._pendingAuthUser = user;
       user.authenticateUser(authDetails, {
         onSuccess: (session) => { window._pendingAuthUser = null; setAuthSession(session, user); },
-        onFailure: (err) => { statusEl.textContent = err.message; },
+        onFailure: (err) => {
+          // Stuck-onboarding recovery: the account exists in Cognito but its
+          // email was never verified (e.g. they signed up, then closed the
+          // site before entering the code). Login can never succeed for them,
+          // and there was previously no way back to the code screen. Send a
+          // fresh code and drop them straight onto the confirm view - stashing
+          // the password so confirmation can auto-log them in and open the
+          // profile/claim chooser, exactly like a first-time signup would.
+          if (err && err.code === 'UserNotConfirmedException') {
+            statusEl.textContent = 'Your email was never verified - sending a fresh code...';
+            window._pendingSignupPassword = password;
+            document.getElementById('auth-confirm-code').dataset.email = email;
+            const cu = new AmazonCognitoIdentity.CognitoUser({ Username: email, Pool: userPool });
+            cu.resendConfirmationCode((rErr) => {
+              const cs = document.getElementById('auth-confirm-status');
+              if (rErr) { statusEl.textContent = rErr.message; return; }
+              showAuthView('confirm');
+              if (cs) cs.textContent = 'We sent a new code to ' + email + '. Enter it to finish signing up.';
+            });
+            return;
+          }
+          statusEl.textContent = err.message;
+        },
         newPasswordRequired: () => { showAuthView('newpassword'); }
       });
     }
@@ -5221,6 +5243,20 @@ let userPool = null;
           statusEl.textContent = 'Confirmed! You can log in now.';
           setTimeout(() => showAuthView('login'), 1200);
         }
+      });
+    }
+
+    // Manual "resend code" from the confirm screen, for anyone who lost the
+    // original email or let the code expire. Uses the email stashed on the
+    // confirm-code field (set by signup or by the login recovery path above).
+    function doResendConfirmCode() {
+      const email = document.getElementById('auth-confirm-code').dataset.email;
+      const statusEl = document.getElementById('auth-confirm-status');
+      if (!email) { statusEl.textContent = 'Start from the Log in or Sign up screen so we know your email.'; return; }
+      if (!userPool) { statusEl.textContent = 'Sign up is not configured yet.'; return; }
+      const user = new AmazonCognitoIdentity.CognitoUser({ Username: email, Pool: userPool });
+      user.resendConfirmationCode((err) => {
+        statusEl.textContent = err ? err.message : ('New code sent to ' + email + '.');
       });
     }
 
@@ -5315,6 +5351,7 @@ let userPool = null;
     document.getElementById('auth-newpassword-submit-btn').addEventListener('click', doNewPassword);
     document.getElementById('auth-signup-submit-btn').addEventListener('click', doSignup);
     document.getElementById('auth-confirm-submit-btn').addEventListener('click', doConfirmSignup);
+    document.getElementById('auth-confirm-resend-btn').addEventListener('click', doResendConfirmCode);
     document.getElementById('auth-forgot-submit-btn').addEventListener('click', doForgotPassword);
     document.getElementById('auth-forgot-confirm-btn').addEventListener('click', doConfirmForgotPassword);
     document.getElementById('complete-profile-submit-btn').addEventListener('click', submitCompleteProfile);
