@@ -471,7 +471,7 @@ def profile_view_enforced(event):
     params = event.get('queryStringParameters') or {}
     target = (params.get('profile_bundle_for') or params.get('player_id')
               or params.get('partnerships_for') or params.get('radar_for')
-              or params.get('head_to_head'))
+              or params.get('head_to_head') or params.get('with_partner'))
     if not target:
         return _response(400, {'error': 'no player specified'})
     if not _can_view_profile(claims, target):

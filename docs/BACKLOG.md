@@ -74,6 +74,10 @@
 
 ## Done
 
+- ✅ 2026-07-31 — **Fix:** partner filter returned 400. `compute_with_partner` was wired into
+  `list_matches`, but the `/profile-secure` gate (`profile_view_enforced`) resolves the target
+  player from a param whitelist that didn't include `with_partner`, so the request was rejected
+  ("no player specified") before reaching the dispatch. Added `with_partner` to that whitelist.
 - ✅ 2026-07-31 — **Feature:** same-side (partnership) filter on the profile card. Backend
   `compute_with_partner()` (matches lambda) + `with_partner`/`partner` query; frontend
   `loadProfileWithPartner()` + a "With a partner (same side)" picker under Head-to-head.
