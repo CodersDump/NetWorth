@@ -2216,6 +2216,20 @@ let userPool = null;
       } catch (e) { listEl.textContent = 'Could not load players.'; }
     }
 
+    // Owner/admin sets a member's per-group finance role directly (the
+    // no-request path). Backend: PUT /group-finance-role/{group_id}/{player_id}.
+    async function setGroupFinanceRole(groupId, playerId, role) {
+      try {
+        const { res, error } = await authedFetch(`${API_BASE_URL}/group-finance-role/${groupId}/${playerId}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ finance_role: role })
+        });
+        if (!res.ok) { alert(`Error: ${error}`); return false; }
+        return true;
+      } catch (e) { alert(`Request failed: ${e.message}`); return false; }
+    }
+
     async function setFinanceRole(playerId, role) {
       try {
         const { res, error } = await authedFetch(`${API_BASE_URL}/finance-access`, {
@@ -4154,24 +4168,29 @@ let userPool = null;
       });
     }
 
+    let currentFinanceGroupId = null;   // which group's ledger the Finance tab is showing
+
     function finQS(extra) {
       const p = new URLSearchParams(extra || {});
       p.set('view_key', financeKey);
+      if (currentFinanceGroupId) p.set('group_id', currentFinanceGroupId);
       return p.toString();
     }
 
-    // SuperAdmin (once logged in) routes through /finance-secure, which
-    // the Lambda additionally requires SuperAdmin for on top of the
-    // existing view_key check. Anyone not logged in as SuperAdmin keeps
-    // using the original /finance path unchanged, exactly as before.
+    // Any logged-in user routes through /finance-secure so their Cognito
+    // claims reach the Lambda (that's how per-group access is resolved -
+    // owners get their group, members get their per-group role). Only a
+    // not-logged-in shared-key holder falls back to the legacy open route.
     function financeBaseUrl() {
-      return isSuperAdmin() ? `${API_BASE_URL}/finance-secure` : `${API_BASE_URL}/finance`;
+      return getAuthHeaders().Authorization ? `${API_BASE_URL}/finance-secure` : `${API_BASE_URL}/finance`;
     }
 
     async function finPost(path, method, bodyObj) {
+      const body = { ...bodyObj, view_key: financeKey };
+      if (currentFinanceGroupId) body.group_id = currentFinanceGroupId;
       const res = await fetch(`${financeBaseUrl()}/${path}`, {
         method, headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
-        body: JSON.stringify({ ...bodyObj, view_key: financeKey })
+        body: JSON.stringify(body)
       });
       return { ok: res.ok, data: await res.json() };
     }
@@ -4183,6 +4202,42 @@ let userPool = null;
      * secret again. The manual box stays as a fallback for anyone off the
      * list who still knows the key.
      */
+    // Which groups' finance can this caller see? SuperAdmin: all. Otherwise:
+    // groups they own/admin, plus any group where they hold a per-group
+    // finance role. Defaults the selector to "Club (default)" (the migrated
+    // club-wide ledger) when present.
+    function populateFinanceGroups() {
+      const sel = document.getElementById('finance_group_select');
+      if (!sel) return;
+      const mine = myPlayerId();
+      const visible = (allGroups || []).filter(g => {
+        if (isSuperAdmin()) return true;
+        if (canManageGroup(g)) return true;
+        return mine && (g.finance_roles || {})[mine];
+      });
+      sel.innerHTML = '';
+      visible.forEach(g => {
+        const o = document.createElement('option');
+        o.value = g.group_id;
+        o.textContent = g.group_name || g.name || g.group_id;
+        sel.appendChild(o);
+      });
+      // Prefer the default club ledger as the initial selection.
+      const def = visible.find(g => (g.group_name || g.name) === 'Club (default)');
+      currentFinanceGroupId = (def && def.group_id) || (visible[0] && visible[0].group_id) || null;
+      if (currentFinanceGroupId) sel.value = currentFinanceGroupId;
+      const hint = document.getElementById('finance-group-hint');
+      if (hint) hint.textContent = visible.length > 1
+        ? 'Switch which group\u2019s finances you\u2019re viewing.'
+        : '';
+      document.getElementById('finance-group-card').style.display = visible.length > 1 ? '' : 'none';
+    }
+
+    function reloadFinanceForGroup() {
+      loadFinanceSummary(); loadFinanceExpenses(); loadFinanceMembers();
+      if (typeof loadFinanceWalkins === 'function') loadFinanceWalkins();
+    }
+
     async function tryAutoFinanceUnlock() {
       if (!isLoggedIn()) return false;
       try {
@@ -4194,6 +4249,7 @@ let userPool = null;
         document.getElementById('finance-content').style.display = 'block';
         document.getElementById('finance-lock-card').style.display = 'none';
         applyFinanceRoleVisibility();
+        populateFinanceGroups();
         const s = await (await fetch(`${financeBaseUrl()}/settings?${finQS()}`, { headers: getAuthHeaders() })).json();
         document.getElementById('finance_walkins_public').checked = !!s.walkins_public;
         document.getElementById('finance_upi_id').value = s.upi_id || '';
@@ -4216,9 +4272,9 @@ let userPool = null;
       try {
         const { res, error } = await authedFetch(`${API_BASE_URL}/action-request`, {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ type: 'finance_access', role: r })
+          body: JSON.stringify({ type: 'finance_access', role: r, group_id: currentFinanceGroupId })
         });
-        el.textContent = res.ok ? `Request for ${r} access sent - an admin will review it.` : `Error: ${error}`;
+        el.textContent = res.ok ? `Request for ${r} access sent - the group owner will review it.` : `Error: ${error}`;
       } catch (e) { el.textContent = `Failed: ${e.message}`; }
     }
 
@@ -4720,6 +4776,10 @@ let userPool = null;
     }
 
     document.getElementById('finance-unlock-btn').addEventListener('click', financeUnlock);
+    document.getElementById('finance_group_select').addEventListener('change', (e) => {
+      currentFinanceGroupId = e.target.value || null;
+      reloadFinanceForGroup();
+    });
     document.getElementById('finance-load-summary-btn').addEventListener('click', loadFinanceSummary);
     document.getElementById('finance-add-expense-btn').addEventListener('click', addFinanceExpense);
     document.getElementById('finance-cancel-expense-edit-btn').addEventListener('click', resetExpenseEdit);

@@ -175,13 +175,30 @@ def _group_finance_level(claims, group_id):
     return 0
 
 
+def _has_any_group_finance(claims):
+    """True if the caller has finance access in ANY group (owner/admin, or a
+    per-group finance_roles entry). Lets group owners obtain the shared key
+    during the transition, before it's retired."""
+    pid = claims.get('custom:player_id')
+    if not pid or not groups_table:
+        return False
+    for g in groups_table.scan().get('Items', []):
+        if g.get('roles', {}).get(pid) in ('owner', 'admin'):
+            return True
+        if (g.get('finance_roles') or {}).get(pid) in FINANCE_LEVELS:
+            return True
+    return False
+
+
 def finance_key_for_caller(event):
-    """Hands the shared view key to any caller with view access or better,
-    plus their own role so the UI can hide write/delete controls."""
+    """Hands the shared view key to any caller with finance access - global
+    (legacy) OR in any group (owner/admin/per-group role) - plus their global
+    role so the UI can hide write/delete controls at the coarse level. Real
+    per-group enforcement happens on each finance call."""
     claims = _caller_claims(event)
     if not claims:
         return _response(403, {'error': 'log in to access finance'})
-    if not _has_finance_access(claims):
+    if not (_has_finance_access(claims) or _has_any_group_finance(claims)):
         return _response(403, {'error': 'you do not have finance access - ask an admin'})
     return _response(200, {'view_key': VIEW_KEY, 'finance_role': _finance_role(claims)})
 
@@ -238,22 +255,14 @@ def handler(event, context):
                 return set_finance_access(event)
 
 
-        # Epic 4 (increment 5): if this request has an 'authorizer' context
-        # at all, it arrived via the new /finance-secure/{proxy+} catch-all
-        # - checked by KEY PRESENCE, not claims truthiness, so an edge case
-        # of an empty-but-present claims dict can't silently skip the check
-        # the way `if claims:` would (empty dict is falsy in Python).
-        # Requests with no authorizer key at all came via the original open
-        # /finance/{proxy+} route and are completely unaffected.
-        # The authenticated /finance-secure route used to be SuperAdmin-only,
-        # which predates finance roles. It now admits anyone with view access
-        # or better; the per-method role check further down enforces write
-        # and delete. Key presence (not claims truthiness) still identifies
-        # the route, so an empty-but-present claims dict can't skip the gate.
-        came_via_secure_route = 'authorizer' in (event.get('requestContext') or {})
+        # Epic 4 (increment 5): a request carrying an 'authorizer' context
+        # arrived via /finance-secure/{proxy+}; one with none came via the
+        # legacy open /finance/{proxy+} route. We no longer apply a coarse
+        # GLOBAL access gate here - it predated group-scoped finance and would
+        # wrongly block a group owner who has no global role. Access is now
+        # enforced per-group, per-method below (a GET with < view on the
+        # target group returns 403), which correctly admits group owners.
         claims = _caller_claims(event)
-        if came_via_secure_route and not _has_finance_access(claims):
-            return _response(403, {'error': 'you do not have finance access - ask an admin'})
 
         proxy = path_params.get('proxy', '')
         parts = [p for p in proxy.split('/') if p] if proxy else []

@@ -65,6 +65,10 @@ def handler(event, context):
         # Gateway won't allow named path params as siblings of {proxy+}.
         # Method disambiguates between them since they share a path shape.
         if 'group_id' in path_params and 'player_id' in path_params and method == 'PUT':
+            # /group-finance-role and /group-role share the same path shape
+            # ({group_id}/{player_id} PUT), so resource disambiguates them.
+            if (event.get('resource') or '').startswith('/group-finance-role'):
+                return set_finance_role(path_params['group_id'], path_params['player_id'], event)
             return set_role(path_params['group_id'], path_params['player_id'], event)
         if 'group_id' in path_params and 'player_id' in path_params and method == 'DELETE':
             return remove_player_enforced(path_params['group_id'], path_params['player_id'], event)
@@ -587,6 +591,49 @@ def set_role(group_id, player_id, event):
         ExpressionAttributeValues={':r': roles}
     )
     return _response(200, {'group_id': group_id, 'player_id': player_id, 'role': role})
+
+
+FINANCE_ROLE_LEVELS = {'none', 'view', 'write', 'delete'}
+
+
+def set_finance_role(group_id, player_id, event):
+    """Set a member's per-group FINANCE role (none/view/write/delete) in this
+    group's `finance_roles` map. Mirrors set_role's authorization: caller must
+    be SuperAdmin or owner/admin of THIS group. This is the 'owner sets a
+    member's finance access directly' path; the request-and-approve path runs
+    through the players lambda's claim-request flow, which lands here on
+    approval. Owners/admins already have full finance implicitly (resolved in
+    the finance lambda), so this map is only for non-owner members."""
+    claims = _caller_claims(event)
+    caller_player_id = claims.get('custom:player_id')
+
+    body = json.loads(event.get('body') or '{}')
+    role = body.get('finance_role', body.get('role'))
+    if role not in FINANCE_ROLE_LEVELS:
+        return _response(400, {'error': f"finance_role must be one of {sorted(FINANCE_ROLE_LEVELS)}"})
+
+    group = groups_table.get_item(Key={'group_id': group_id}).get('Item')
+    if not group:
+        return _response(404, {'error': 'group not found'})
+
+    caller_role = group.get('roles', {}).get(caller_player_id) if caller_player_id else None
+    if not _is_super_admin(claims) and caller_role not in ('owner', 'admin'):
+        return _response(403, {'error': 'you must be an owner or admin of this group to set finance access'})
+
+    if player_id not in group.get('member_ids', []):
+        return _response(400, {'error': 'player is not a member of this group - add them first'})
+
+    finance_roles = dict(group.get('finance_roles', {}))
+    if role == 'none':
+        finance_roles.pop(player_id, None)  # 'none' = no explicit grant
+    else:
+        finance_roles[player_id] = role
+    groups_table.update_item(
+        Key={'group_id': group_id},
+        UpdateExpression='SET finance_roles = :fr',
+        ExpressionAttributeValues={':fr': finance_roles}
+    )
+    return _response(200, {'group_id': group_id, 'player_id': player_id, 'finance_role': role})
 
 
 def _response(status_code, body_dict):
