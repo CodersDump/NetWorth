@@ -471,7 +471,7 @@ def profile_view_enforced(event):
     params = event.get('queryStringParameters') or {}
     target = (params.get('profile_bundle_for') or params.get('player_id')
               or params.get('partnerships_for') or params.get('radar_for')
-              or params.get('head_to_head'))
+              or params.get('head_to_head') or params.get('with_partner'))
     if not target:
         return _response(400, {'error': 'no player specified'})
     if not _can_view_profile(claims, target):
@@ -1126,6 +1126,8 @@ def list_matches(event):
         return _response(200, compute_progress_history_summary(scope, period))
     if params.get('head_to_head') and params.get('opponent'):
         return _response(200, compute_head_to_head(params.get('head_to_head'), params.get('opponent'), items))
+    if params.get('with_partner') and params.get('partner'):
+        return _response(200, compute_with_partner(params.get('with_partner'), params.get('partner'), items))
     if params.get('recent_form'):
         limit = int(params.get('limit', 10))
         return _response(200, compute_recent_form(params.get('recent_form'), items, limit))
@@ -1808,6 +1810,37 @@ def compute_head_to_head(player_id, opponent_id, matches):
     total = wins + losses
     return {
         'player_id': player_id, 'opponent_id': opponent_id,
+        'matches': total, 'wins': wins, 'losses': losses,
+        'win_rate': round(wins / total * 100, 1) if total else 0
+    }
+
+
+def compute_with_partner(player_id, partner_id, matches):
+    """One player's win/loss record when partnered WITH another player on
+    the SAME side - the mirror of compute_head_to_head, which counts them on
+    opposite sides. Doubles only (both must be on the same team). Distinct
+    from compute_partnerships, which tallies every partner at once; this
+    answers 'how do I do specifically alongside X'."""
+    wins = 0
+    losses = 0
+    for m in matches:
+        team_a = m.get('team_a') or []
+        team_b = m.get('team_b') or []
+        winner = m.get('winner')
+        if winner not in ('A', 'B'):
+            continue
+        both_a = player_id in team_a and partner_id in team_a
+        both_b = player_id in team_b and partner_id in team_b
+        if not (both_a or both_b):
+            continue  # not teammates in this match (or one/both absent)
+        team_won = (winner == 'A' and both_a) or (winner == 'B' and both_b)
+        if team_won:
+            wins += 1
+        else:
+            losses += 1
+    total = wins + losses
+    return {
+        'player_id': player_id, 'partner_id': partner_id,
         'matches': total, 'wins': wins, 'losses': losses,
         'win_rate': round(wins / total * 100, 1) if total else 0
     }

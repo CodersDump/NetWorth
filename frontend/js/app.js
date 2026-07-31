@@ -150,6 +150,28 @@ let userPool = null;
       const role = myRoleInGroup(group);
       return role === 'owner' || role === 'admin';
     }
+    // A group owner/admin can review requests for their own group's members,
+    // so they get the Reviews tab too - but the backend scopes what they see
+    // and can act on (claim/rename only), and the SuperAdmin-only panels in
+    // that tab stay hidden for them (see updateReviewTabScope).
+    function ownsAnyGroup() {
+      return (allGroups || []).some(g => canManageGroup(g));
+    }
+    function canReviewRequests() {
+      return isSuperAdmin() || ownsAnyGroup();
+    }
+    // In the Reviews tab, a group owner (non-super) only gets the claim/rename
+    // requests panel. Every other section there - finance access, feature
+    // settings, quests, events, store - is a SuperAdmin-only control, so hide
+    // them. The claim panel is the one holding #settings-requests-list.
+    function updateReviewTabScope() {
+      const sections = document.querySelectorAll('#tab-review .review-section');
+      const showAll = isSuperAdmin();
+      sections.forEach(sec => {
+        const isRequests = !!sec.querySelector('#settings-requests-list');
+        sec.style.display = (showAll || isRequests) ? '' : 'none';
+      });
+    }
 
     // ---------- nickname/name display toggle ----------
     // Deliberately zero new API calls: GET /players (and everywhere that
@@ -1591,32 +1613,65 @@ let userPool = null;
         }
         if (!data.matches.length) { logEl.innerHTML = '<p style="font-size:13px;color:#555;">No matches yet.</p>'; return; }
 
-        let html = '<table><tr><th>Date</th><th>Team A</th><th>Team B</th><th>Score</th><th>Notes</th><th></th></tr>';
-        data.matches.forEach(m => {
-          const date = new Date(m.date).toLocaleString();
-          const teamA = (m.team_a_names || []).join(' & ');
-          const teamB = (m.team_b_names || []).join(' & ');
-          let notes = '';
-          if (m.momentum && m.momentum.winner_overcame_deficit > 0) {
-            notes = `Comeback: overcame a ${m.momentum.winner_overcame_deficit}-point deficit`;
-          }
-          const perm = matchPermissions(m);
-          const label = `${teamA} vs ${teamB}`;
-          let actions = '';
-          if (perm.canSee) {
-            const editLabel = perm.canActDirectly ? 'Edit' : 'Request edit';
-            const delLabel = perm.canActDirectly ? 'Delete' : 'Request delete';
-            const gid = m.group_id || '';
-            actions = `<button class="secondary" style="margin-top:0;padding:4px 8px;font-size:11px;" onclick="editMatchScore('${m.match_id}', ${m.score_a}, ${m.score_b}, '${encodeURIComponent(label)}', '${gid}')">${editLabel}</button> `
-                    + `<button class="secondary" style="margin-top:0;padding:4px 8px;font-size:11px;" onclick="deleteMatch('${m.match_id}', '${encodeURIComponent(label)}', '${gid}')">${delLabel}</button>`;
-          }
-          html += `<tr><td>${date}</td><td>${teamA}</td><td>${teamB}</td><td>${m.score_a} - ${m.score_b}</td><td>${notes}</td><td>${actions}</td></tr>`;
-        });
-        html += '</table>';
-        logEl.innerHTML = html;
+        // Hand off to the paginated renderer. Large clubs accumulate hundreds
+        // of matches; rendering them all at once is slow and unwieldy on a
+        // phone, so the log is chunked into pages (filtering still happens on
+        // the full set above - only the display is paged).
+        gameLogRows = data.matches;
+        gameLogPage = 0;
+        renderGameLog();
       } catch (err) {
         logEl.textContent = `Request failed: ${err.message}`;
       }
+    }
+
+    let gameLogRows = [];
+    let gameLogPage = 0;
+    const GAME_LOG_PAGE_SIZE = 25;
+
+    function gameLogGoto(p) { gameLogPage = p; renderGameLog(); }
+
+    function renderGameLog() {
+      const logEl = document.getElementById('game-log');
+      const total = gameLogRows.length;
+      const pages = Math.max(1, Math.ceil(total / GAME_LOG_PAGE_SIZE));
+      if (gameLogPage >= pages) gameLogPage = pages - 1;
+      if (gameLogPage < 0) gameLogPage = 0;
+      const start = gameLogPage * GAME_LOG_PAGE_SIZE;
+      const pageRows = gameLogRows.slice(start, start + GAME_LOG_PAGE_SIZE);
+
+      let html = '<table><tr><th>Date</th><th>Team A</th><th>Team B</th><th>Score</th><th>Notes</th><th></th></tr>';
+      pageRows.forEach(m => {
+        const date = new Date(m.date).toLocaleString();
+        const teamA = (m.team_a_names || []).join(' & ');
+        const teamB = (m.team_b_names || []).join(' & ');
+        let notes = '';
+        if (m.momentum && m.momentum.winner_overcame_deficit > 0) {
+          notes = `Comeback: overcame a ${m.momentum.winner_overcame_deficit}-point deficit`;
+        }
+        const perm = matchPermissions(m);
+        const label = `${teamA} vs ${teamB}`;
+        let actions = '';
+        if (perm.canSee) {
+          const editLabel = perm.canActDirectly ? 'Edit' : 'Request edit';
+          const delLabel = perm.canActDirectly ? 'Delete' : 'Request delete';
+          const gid = m.group_id || '';
+          actions = `<button class="secondary" style="margin-top:0;padding:4px 8px;font-size:11px;" onclick="editMatchScore('${m.match_id}', ${m.score_a}, ${m.score_b}, '${encodeURIComponent(label)}', '${gid}')">${editLabel}</button> `
+                  + `<button class="secondary" style="margin-top:0;padding:4px 8px;font-size:11px;" onclick="deleteMatch('${m.match_id}', '${encodeURIComponent(label)}', '${gid}')">${delLabel}</button>`;
+        }
+        html += `<tr><td>${date}</td><td>${teamA}</td><td>${teamB}</td><td>${m.score_a} - ${m.score_b}</td><td>${notes}</td><td>${actions}</td></tr>`;
+      });
+      html += '</table>';
+
+      if (pages > 1) {
+        const from = start + 1, to = Math.min(start + GAME_LOG_PAGE_SIZE, total);
+        html += `<div style="display:flex;align-items:center;justify-content:space-between;margin-top:10px;font-size:13px;">`
+              + `<button class="secondary" style="margin:0;padding:5px 12px;" ${gameLogPage === 0 ? 'disabled' : ''} onclick="gameLogGoto(${gameLogPage - 1})">Prev</button>`
+              + `<span style="color:var(--text-secondary);">${from}-${to} of ${total} &middot; page ${gameLogPage + 1}/${pages}</span>`
+              + `<button class="secondary" style="margin:0;padding:5px 12px;" ${gameLogPage >= pages - 1 ? 'disabled' : ''} onclick="gameLogGoto(${gameLogPage + 1})">Next</button>`
+              + `</div>`;
+      }
+      logEl.innerHTML = html;
     }
     document.getElementById('load-log-btn').addEventListener('click', loadGameLog);
     ['log_group_filter', 'log_player_filter', 'log_opponent_filter', 'log_date_from', 'log_date_to'].forEach(id => {
@@ -1870,6 +1925,7 @@ let userPool = null;
         const selectionIsMine = profileSelectionOwner === myPlayerId();
         populateSelect(document.getElementById('profile_player_select'), labeledVisible, 'player_id', 'label', null);
         populateSelect(document.getElementById('profile_h2h_opponent_select'), labeledVisible, 'player_id', 'label', null);
+        populateSelect(document.getElementById('profile_partner_select'), labeledVisible, 'player_id', 'label', null);
         populateSelect(document.getElementById('profile_compare2_select'), labeledVisible, 'player_id', 'label', 'None');
         populateSelect(document.getElementById('profile_compare3_select'), labeledVisible, 'player_id', 'label', 'None');
         populateSelect(document.getElementById('profile_compare4_select'), labeledVisible, 'player_id', 'label', 'None');
@@ -3436,6 +3492,30 @@ let userPool = null;
       }
     }
 
+    async function loadProfileWithPartner(playerId) {
+      const partnerId = document.getElementById('profile_partner_select').value;
+      const el = document.getElementById('profile-partner-result');
+      if (!partnerId) {
+        el.innerHTML = '<p style="font-size:13px;color:var(--text-secondary);">Pick a partner to see your record together.</p>';
+        return;
+      }
+      if (partnerId === playerId) {
+        el.innerHTML = '<p style="font-size:13px;color:var(--text-secondary);">Pick a different player as the partner.</p>';
+        return;
+      }
+      try {
+        const res = await fetch(`${API_BASE_URL}/profile-secure/matches?with_partner=${playerId}&partner=${partnerId}`, { headers: getAuthHeaders() });
+        const data = await res.json();
+        if (!data.matches) {
+          el.innerHTML = '<p style="font-size:13px;color:var(--text-secondary);">These two have never played on the same side.</p>';
+        } else {
+          el.innerHTML = `<p><strong>${data.wins}-${data.losses}</strong> (${data.win_rate}% win rate) across ${data.matches} match${data.matches === 1 ? '' : 'es'} as partners</p>`;
+        }
+      } catch (err) {
+        el.textContent = `Request failed: ${err.message}`;
+      }
+    }
+
     function skeletonHTML(lines = 3) {
       const widths = ['70%', '90%', '55%', '80%', '65%'];
       return Array.from({ length: lines }, (_, i) =>
@@ -3519,7 +3599,8 @@ let userPool = null;
         loadProfileBundle(playerId),
         loadProfileRatingChart(playerId),
         loadProfilePartnershipsAndRadar(playerId),
-        loadProfileHeadToHead(playerId)
+        loadProfileHeadToHead(playerId),
+        loadProfileWithPartner(playerId)
       ]);
     }
     /** Manual reload of whoever is currently selected. Before this, the
@@ -3557,6 +3638,7 @@ let userPool = null;
 
     document.getElementById('profile_player_select').addEventListener('change', loadProfile);
     document.getElementById('profile_h2h_opponent_select').addEventListener('change', loadProfile);
+    document.getElementById('profile_partner_select').addEventListener('change', () => loadProfileWithPartner(document.getElementById('profile_player_select').value));
     ['profile_compare2_select', 'profile_compare3_select', 'profile_compare4_select', 'profile_xaxis_mode',
      'profile_partnerships_scope_group', 'profile_partnerships_tournament_filter',
      'profile_partnerships_top_n', 'profile_partnerships_highlight_tournament'].forEach(id => {
@@ -4785,7 +4867,8 @@ let userPool = null;
       // The reorder tool rewrites rating history, so it's SuperAdmin-only -
       // hidden entirely for everyone else rather than just disabled.
       const reviewBtn = document.getElementById('review-tab-btn');
-      if (reviewBtn) reviewBtn.style.display = isSuperAdmin() ? '' : 'none';
+      if (reviewBtn) reviewBtn.style.display = canReviewRequests() ? '' : 'none';
+      updateReviewTabScope();
       const storeBtn = document.getElementById('store-tab-btn');
       if (storeBtn) storeBtn.style.display = xpVisible() ? '' : 'none';
       if (typeof updateHeaderCoins === 'function') updateHeaderCoins();
@@ -5305,7 +5388,7 @@ let userPool = null;
       // it - which is exactly how one account ended up showing another
       // account's Player Card by default.
       profileSelectionOwner = null;
-      ['profile_player_select', 'profile_h2h_opponent_select',
+      ['profile_player_select', 'profile_h2h_opponent_select', 'profile_partner_select',
        'profile_compare2_select', 'profile_compare3_select', 'profile_compare4_select']
         .forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
       renderProfileCardBanner(null);
@@ -6562,14 +6645,20 @@ let userPool = null;
         // The Reviews & Approvals tab is where claim/change requests and
         // finance access now live - load them on open (SuperAdmin only, and
         // the tab itself is hidden for everyone else).
-        if (btn.dataset.tab === 'review' && isSuperAdmin()) {
+        // The Reviews & Approvals tab: claim/change requests load for anyone
+        // who can review (SuperAdmin or a group owner - the backend scopes the
+        // results). The rest are SuperAdmin-only controls.
+        if (btn.dataset.tab === 'review' && canReviewRequests()) {
+          updateReviewTabScope();
           loadClaimRequests();
-          loadFinanceAccessList();
-          loadAppSettings();
-          loadEventsAdmin();
-          loadStoreAdmin();
-          loadQuestsAdmin();
-          if (typeof onStoreTypeChange === 'function') onStoreTypeChange();
+          if (isSuperAdmin()) {
+            loadFinanceAccessList();
+            loadAppSettings();
+            loadEventsAdmin();
+            loadStoreAdmin();
+            loadQuestsAdmin();
+            if (typeof onStoreTypeChange === 'function') onStoreTypeChange();
+          }
         }
         if (btn.dataset.tab === 'store') {
           loadStore();

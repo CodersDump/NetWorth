@@ -113,10 +113,10 @@ def frontend_md():
         groups.setdefault(sec_for(i), []).append((i, name, args))
 
     out = [f"### Frontend (`frontend/js/app.js` — {len(all_lines)} LOC, "
-           f"single IIFE, ~{len(funcs)} functions)\n",
+           f"flat global script, ~{len(funcs)} functions)\n",
            "_Loaded by `index.html` after an inline `<script>` defines the globals "
            "`API_BASE_URL`, `COGNITO_USER_POOL_ID`, `COGNITO_CLIENT_ID`, `UPI_ID`, "
-           "`FINANCE_VIEW_KEY` placeholders. All functions share one closure; most are "
+           "`FINANCE_VIEW_KEY` placeholders. Functions live in global scope (not an IIFE); most are "
            "wired to `onclick=` in the HTML._\n"]
     for (bl, title) in sorted(groups):
         out.append(f"\n**{title}**  (from L{bl})")

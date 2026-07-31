@@ -29,6 +29,13 @@ USER_POOL_ID = os.environ.get('USER_POOL_ID')
 UPLOADS_BUCKET = os.environ.get('UPLOADS_BUCKET')
 claim_requests_table = dynamodb.Table(CLAIM_REQUESTS_TABLE) if CLAIM_REQUESTS_TABLE else None
 
+# Read-only here: used to resolve which group(s) a player belongs to so a
+# group owner/admin can be scoped to approving only their own members'
+# requests. The shared execution role already grants read on this table;
+# only the env var is new. Optional so older stacks still import.
+GROUPS_TABLE = os.environ.get('GROUPS_TABLE')
+groups_table = dynamodb.Table(GROUPS_TABLE) if GROUPS_TABLE else None
+
 
 def sanitize_nickname(raw):
     """Same rule as register_player's version (duplicated on purpose -
@@ -318,12 +325,64 @@ def create_claim_request(event):
     return _response(200, {'request_id': request_id, 'status': 'pending'})
 
 
+# Request types a group owner/admin may decide for their OWN group's members.
+# Deliberately narrow: destructive/global actions (delete_player, match_edit,
+# match_delete) and finance_access stay SuperAdmin-only. finance_access is
+# excluded on purpose - finance roles are still club-GLOBAL, so a group owner
+# granting one would hand access across every group; that waits for true
+# group-scoped finance (see docs/BACKLOG.md). new_profile carries no group, so
+# it also can't be owner-scoped and stays SuperAdmin-only.
+OWNER_DECIDABLE_TYPES = {'claim', 'edit_own_name'}
+
+
+def _caller_owned_group_ids(claims):
+    """The set of group_ids where the caller's linked player is owner or admin.
+    SuperAdmin is handled separately (they see everything), so this is only
+    consulted for non-super callers. Empty set if unlinked or in no group."""
+    if not groups_table:
+        return set()
+    pid = claims.get('custom:player_id')
+    if not pid:
+        return set()
+    owned = set()
+    for g in groups_table.scan().get('Items', []):
+        if g.get('roles', {}).get(pid) in ('owner', 'admin'):
+            owned.add(g.get('group_id'))
+    return owned
+
+
+def _player_group_ids(player_id):
+    """Every group_id whose roles map contains this player."""
+    if not groups_table or not player_id:
+        return set()
+    return {g.get('group_id') for g in groups_table.scan().get('Items', [])
+            if player_id in (g.get('roles', {}) or {})}
+
+
+def _owner_may_decide(req, owned_group_ids):
+    """True if a group owner/admin (owning owned_group_ids) may act on req:
+    the request type must be owner-decidable AND its target player must belong
+    to one of the caller's groups."""
+    if req.get('type', 'claim') not in OWNER_DECIDABLE_TYPES:
+        return False
+    target_pid = req.get('player_id')
+    if not target_pid:
+        return False
+    return bool(_player_group_ids(target_pid) & owned_group_ids)
+
+
 def list_claim_requests(event):
     claims = _caller_claims(event)
-    if not _is_super_admin(claims):
-        return _response(403, {'error': 'only a SuperAdmin can review claim requests'})
+    is_super = _is_super_admin(claims)
+    owned = set() if is_super else _caller_owned_group_ids(claims)
+    if not is_super and not owned:
+        return _response(403, {'error': 'only a SuperAdmin or a group owner can review requests'})
     items = claim_requests_table.scan().get('Items', []) if claim_requests_table else []
     items.sort(key=lambda r: r.get('created_at', ''), reverse=True)
+    if not is_super:
+        # A group owner sees only the request types they may act on, and only
+        # for players in a group they own/admin.
+        items = [r for r in items if _owner_may_decide(r, owned)]
     pending = [r for r in items if r.get('status') == 'pending']
     # Recent decisions are worth returning too - it's the only record of
     # who approved what, and it makes a mistaken approval visible.
@@ -826,8 +885,7 @@ def decide_claim_request(event):
     because the self-service updateAttributes call requires the
     requester's own session, which we obviously don't have here."""
     claims = _caller_claims(event)
-    if not _is_super_admin(claims):
-        return _response(403, {'error': 'only a SuperAdmin can decide claim requests'})
+    is_super = _is_super_admin(claims)
     if not claim_requests_table:
         return _response(500, {'error': 'claim requests are not configured on this stack'})
 
@@ -844,6 +902,14 @@ def decide_claim_request(event):
         return _response(404, {'error': 'request not found'})
     if req.get('status') != 'pending':
         return _response(400, {'error': f"this request was already {req.get('status')}"})
+
+    # SuperAdmin may decide anything. A group owner/admin may decide only the
+    # owner-decidable types (claim / edit_own_name) for players in a group they
+    # own - everything else (finance, deletes, match changes) stays SuperAdmin.
+    if not is_super:
+        owned = _caller_owned_group_ids(claims)
+        if not owned or not _owner_may_decide(req, owned):
+            return _response(403, {'error': 'you can only approve claim or rename requests for members of a group you own'})
 
     decided = {
         'status': 'approved' if action == 'approve' else 'rejected',
