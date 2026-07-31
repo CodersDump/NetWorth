@@ -273,6 +273,13 @@ def handler(event, context):
         if parts == ['walkins', 'public'] and method == 'GET':
             return public_walkins()
 
+        # Member-safe "what do I owe / am I owed" view. Any logged-in MEMBER of
+        # the group may see their OWN settlement lines (no view key, no finance
+        # role needed) - expenses and other members' numbers are never included.
+        # This is the "own-settlement-only" access level (Stage 4b).
+        if parts == ['my-settlement'] and method == 'GET':
+            return my_settlement(claims, _group_for_request(params, body))
+
         # UPI payment details are public too - guests pay walk-in fees by
         # scanning the QR, so this must work with no key and no login.
         if parts == ['upi', 'public'] and method == 'GET':
@@ -563,6 +570,62 @@ def public_upi():
     are exposed - nothing financial about the club."""
     item = finance_table.get_item(Key={'record_id': 'settings'}).get('Item') or {}
     return _response(200, {'upi_id': item.get('upi_id', ''), 'upi_name': item.get('upi_name', '')})
+
+
+def my_settlement(claims, group_id):
+    """A single member's own dues in a group: for every (month, slot) where
+    they were a confirmed ('Yes') member, what they were expected to pay
+    (cost_per_head) and what is owed back to them (residual_per_head, the
+    relief/refund - this is the walk-in share returned when actuals came in
+    under estimate). Members can see ONLY their own lines; expenses and other
+    members' numbers are never exposed. Available to any member of the group,
+    regardless of finance role."""
+    pid = claims.get('custom:player_id')
+    if not pid:
+        return _response(403, {'error': 'link your profile to see your dues'})
+    if not groups_table or not group_id:
+        return _response(400, {'error': 'group is not specified'})
+    group = groups_table.get_item(Key={'group_id': group_id}).get('Item') or {}
+    if pid not in group.get('member_ids', []) and not _is_super_admin(claims):
+        return _response(403, {'error': 'you are not a member of this group'})
+
+    rows = _settlement_rows(group_id)
+    memberships = _scan_type('membership', group_id)
+    lines = []
+    owe_total = 0.0
+    owed_back_total = 0.0
+    for m in memberships:
+        if m.get('player_id') != pid or m.get('status') != 'Yes':
+            continue
+        key = (str(m.get('month')), int(_num(m.get('year'))), str(m.get('slot')))
+        b = rows.get(key)
+        if not b:
+            continue
+        cph = b.get('cost_per_head')
+        rph = b.get('residual_per_head')
+        confirmed_amt = m.get('payment_confirmed_amount')
+        # Unpaid if we have no confirmed amount matching the current per-head.
+        paid = confirmed_amt is not None and cph is not None and abs(_num(confirmed_amt) - cph) < 0.01
+        owe = 0.0 if (paid or cph is None) else cph
+        owed_back = rph or 0.0
+        owe_total += owe
+        owed_back_total += owed_back
+        lines.append({
+            'month': b['month'], 'year': b['year'], 'slot': b['slot'],
+            'expected_per_head': cph,
+            'you_paid': paid,
+            'you_owe': round(owe, 2),
+            'owed_back_to_you': round(owed_back, 2),
+            'collection_status': b.get('collection_status'),
+        })
+    lines.sort(key=lambda l: (l['year'], l['month'], l['slot']), reverse=True)
+    return _response(200, {
+        'group_id': group_id,
+        'lines': lines,
+        'total_you_owe': round(owe_total, 2),
+        'total_owed_back_to_you': round(owed_back_total, 2),
+        'net': round(owed_back_total - owe_total, 2),  # positive = club owes you
+    })
 
 
 def public_walkins():

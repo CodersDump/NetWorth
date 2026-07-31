@@ -358,6 +358,30 @@ let userPool = null;
         const displayLabel = formatPlayerLabel(m.name, m.nickname);
         return `<div class="member-row"><span>${displayLabel} (${m.rating})${roleTag}</span>${removeBtn}</div>`;
       }).join('');
+
+      // Per-group time slots (Stage 4). Owners/admins define the slot list and
+      // who plays which slot; that drives slot-scoped finance and dues.
+      const slots = data.slots || [];
+      const slotMembers = data.slot_members || {};
+      const nameOf = (pid) => {
+        const mm = (data.members || []).find(x => x.player_id === pid);
+        return mm ? formatPlayerLabel(mm.name, mm.nickname) : pid;
+      };
+      let slotsHtml = '<div style="margin-top:14px; padding-top:12px; border-top:1px solid var(--border);"><strong>Time slots</strong>';
+      if (slots.length) {
+        slotsHtml += slots.map(s => {
+          const assigned = (slotMembers[s] || []).map(nameOf).join(', ') || '<span style="color:var(--text-secondary);">no one assigned</span>';
+          const assignBtn = iCanManage ? ` <button style="padding:2px 8px; font-size:11px; margin:0;" onclick="assignSlotMembers('${groupId}','${encodeURIComponent(s)}')">Assign</button>` : '';
+          return `<div class="member-row"><span><strong>${s}</strong>: ${assigned}</span>${assignBtn}</div>`;
+        }).join('');
+      } else {
+        slotsHtml += '<p style="font-size:13px; color:var(--text-secondary); margin:4px 0;">No slots defined yet.</p>';
+      }
+      if (iCanManage) {
+        slotsHtml += `<button class="secondary" style="margin-top:8px; padding:4px 10px; font-size:12px;" onclick="manageGroupSlots('${groupId}')">Edit slot list</button>`;
+      }
+      slotsHtml += '</div>';
+      membersEl.innerHTML += slotsHtml;
     }
 
     function applyGroupDefaultsToForm(prefix, settings) {
@@ -4301,6 +4325,106 @@ let userPool = null;
       } catch (e) { return false; }
     }
 
+    // Member self-settlement: what I owe / am owed, my slots only. Available
+    // to any logged-in member without the view key or a finance role.
+    function myFinanceGroups() {
+      const mine = myPlayerId();
+      return (allGroups || []).filter(g => mine && (g.member_ids || []).includes(mine));
+    }
+
+    function populateMyDuesGroups() {
+      const card = document.getElementById('my-dues-card');
+      const sel = document.getElementById('my_dues_group_select');
+      const label = document.getElementById('my-dues-group-label');
+      if (!card || !isLoggedIn() || !hasLinkedPlayer()) { if (card) card.style.display = 'none'; return; }
+      const groups = myFinanceGroups();
+      if (!groups.length) { card.style.display = 'none'; return; }
+      card.style.display = '';
+      sel.innerHTML = '';
+      groups.forEach(g => {
+        const o = document.createElement('option');
+        o.value = g.group_id; o.textContent = g.group_name || g.group_id;
+        sel.appendChild(o);
+      });
+      label.style.display = groups.length > 1 ? '' : 'none';
+      loadMyDues(sel.value);
+    }
+
+    async function loadMyDues(groupId) {
+      const el = document.getElementById('my-dues-result');
+      if (!el) return;
+      el.textContent = 'Loading...';
+      try {
+        const base = getAuthHeaders().Authorization ? `${API_BASE_URL}/finance-secure` : `${API_BASE_URL}/finance`;
+        const { res, data } = await authedFetch(`${base}/my-settlement?group_id=${encodeURIComponent(groupId)}`);
+        if (!res.ok) { el.textContent = `Error: ${data.error || 'could not load'}`; return; }
+        const lines = data.lines || [];
+        if (!lines.length) { el.innerHTML = '<p style="color:var(--text-secondary);">No dues on record for you in this group yet.</p>'; return; }
+        let html = '<table><tr><th>Month</th><th>Slot</th><th>You owe</th><th>Owed back</th></tr>';
+        lines.forEach(l => {
+          html += `<tr><td>${l.month} ${l.year}</td><td>${l.slot}</td>`
+                + `<td>${l.you_paid ? '<span style="color:var(--court,#2fa968);">paid</span>' : '\u20b9' + l.you_owe}</td>`
+                + `<td>${l.owed_back_to_you ? '\u20b9' + l.owed_back_to_you : '-'}</td></tr>`;
+        });
+        html += '</table>';
+        const net = data.net;
+        const netMsg = net > 0
+          ? `<strong style="color:var(--court,#2fa968);">The club owes you \u20b9${net}</strong>`
+          : net < 0
+            ? `<strong>You owe \u20b9${Math.abs(net)}</strong>`
+            : '<strong>You\u2019re all settled up.</strong>';
+        html += `<p style="margin-top:10px;">${netMsg}</p>`;
+        el.innerHTML = html;
+      } catch (e) { el.textContent = `Could not load: ${e.message}`; }
+    }
+
+    // Owner/admin: edit the group's slot list (comma-separated).
+    async function manageGroupSlots(groupId) {
+      const cur = await (await fetch(`${API_BASE_URL}/groups/${groupId}`)).json();
+      const existing = (cur.slots || []).join(', ');
+      const input = prompt('Time slots for this group, comma-separated\n(e.g. 7-8AM, 8-9AM):', existing);
+      if (input === null) return;
+      const slots = input.split(',').map(s => s.trim()).filter(Boolean);
+      try {
+        const { res, error } = await authedFetch(`${API_BASE_URL}/group-slots/${groupId}`, {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ slots })
+        });
+        if (!res.ok) { alert(`Error: ${error}`); return; }
+        loadGroupMembers(groupId);
+      } catch (e) { alert(`Failed: ${e.message}`); }
+    }
+
+    // Owner/admin: assign members to a slot. Prompts with nicknames; resolves
+    // to player_ids against the group's current members.
+    async function assignSlotMembers(groupId, slotEnc) {
+      const slot = decodeURIComponent(slotEnc);
+      const cur = await (await fetch(`${API_BASE_URL}/groups/${groupId}`)).json();
+      const members = cur.members || [];
+      const byNick = {};
+      members.forEach(m => { byNick[(m.nickname || '').toLowerCase()] = m.player_id; byNick[(m.name || '').toLowerCase()] = m.player_id; });
+      const currentPids = (cur.slot_members || {})[slot] || [];
+      const currentNicks = currentPids.map(pid => {
+        const m = members.find(x => x.player_id === pid); return m ? (m.nickname || m.name) : pid;
+      }).join(', ');
+      const input = prompt(`Who plays the ${slot} slot? Comma-separated nicknames:`, currentNicks);
+      if (input === null) return;
+      const wanted = input.split(',').map(s => s.trim()).filter(Boolean);
+      const pids = [];
+      const unknown = [];
+      wanted.forEach(w => { const pid = byNick[w.toLowerCase()]; if (pid) pids.push(pid); else unknown.push(w); });
+      if (unknown.length && !confirm(`Not found in this group (will be skipped): ${unknown.join(', ')}\n\nContinue?`)) return;
+      const slotMembers = { ...(cur.slot_members || {}), [slot]: pids };
+      try {
+        const { res, error } = await authedFetch(`${API_BASE_URL}/group-slots/${groupId}`, {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ slot_members: slotMembers })
+        });
+        if (!res.ok) { alert(`Error: ${error}`); return; }
+        loadGroupMembers(groupId);
+      } catch (e) { alert(`Failed: ${e.message}`); }
+    }
+
     async function requestFinanceAccess() {
       const el = document.getElementById('finance-request-status');
       if (!isLoggedIn() || !hasLinkedPlayer()) { el.textContent = 'Log in and link your profile first.'; return; }
@@ -4815,6 +4939,7 @@ let userPool = null;
       el.innerHTML = html + '</table>';
     }
 
+    document.getElementById('my_dues_group_select').addEventListener('change', (e) => loadMyDues(e.target.value));
     document.getElementById('finance-unlock-btn').addEventListener('click', financeUnlock);
     document.getElementById('finance_group_select').addEventListener('change', (e) => {
       currentFinanceGroupId = e.target.value || null;
@@ -6811,6 +6936,9 @@ let userPool = null;
         if (btn.dataset.tab === 'finance'
             && document.getElementById('finance-content').style.display !== 'block') {
           tryAutoFinanceUnlock();
+        }
+        if (btn.dataset.tab === 'finance') {
+          populateMyDuesGroups();
         }
         // Leaving the Player Card has to hand the page back to your own
         // background, so this is re-evaluated on every switch rather than

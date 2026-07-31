@@ -595,6 +595,15 @@
         <a id="upi-deeplink" style="display:inline-block; margin-top:4px;"><button type="button">Open UPI app to pay</button></a>
       </div>
 
+      <div class="card" id="my-dues-card" style="display:none;">
+        <h2>My dues</h2>
+        <p class="card-sub">What you owe and what's owed back to you (your slots only). Refunds are the relief share returned when actual costs came in under estimate.</p>
+        <label id="my-dues-group-label" style="display:none;">Group
+          <select id="my_dues_group_select"></select>
+        </label>
+        <div id="my-dues-result" style="font-size:14px; margin-top:10px;"></div>
+      </div>
+
       <div class="card" id="finance-lock-card">
         <h2>Finance</h2>
         <p class="card-sub">Court costs, monthly memberships, walk-in fees and settlement. Access requires the finance view key - this data is checked server-side, so nothing loads without it.</p>
