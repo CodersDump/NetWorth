@@ -720,6 +720,7 @@ are gitignored where they contain PII.
 | `reconstruct_july19_tournament.py` | One-time reconstruction of the July-19 tournament |
 | `rename_player_history.py` | Correct a player's name in historical records |
 | `repair_ratings_after.py` | Fix stale `ratings_after` snapshots |
+| `backfill_finance_groups.py` | Group-scoped finance Stage 1: create "Club (default)" group + stamp `group_id` on finance records (dry-run default, idempotent) |
 | `seed_finance_from_excel.py` | Seed finance table from the court-expenses xlsx |
 | `set_group_owner.py` | Force-set a group's owner |
 | `tag_july19_matches.py` | Tag the July-19 tournament's 15 matches |
