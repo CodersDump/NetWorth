@@ -330,38 +330,41 @@ _NetWorth - tournaments Lambda (singles or doubles)_
 | `substitute_player` | tournament_id, event | 971 | Swap a player out of a team for all of that team's FUTURE (unplayed) |
 | `_response` | status_code, body_dict | 1050 | — |
 
-#### `finance` — 801 LOC
+#### `finance` — 879 LOC
 _NetWorth - finance Lambda_
 
-**Module constants:** `VIEW_KEY`, `CONFIRMATION_CODE`, `MONTHS`, `FINANCE_LEVELS`, `ALLOWED_FIELDS`, `NUMERIC_FIELDS`, `REQUIRED_FIELDS`, `AVG_GAMES_PER_SESSION`, `SESSION_RATE`, `ACTIVE_DAYS_THRESHOLD`
+**Module constants:** `GROUPS_TABLE`, `DEFAULT_GROUP_NAME`, `VIEW_KEY`, `CONFIRMATION_CODE`, `MONTHS`, `FINANCE_LEVELS`, `ALLOWED_FIELDS`, `NUMERIC_FIELDS`, `REQUIRED_FIELDS`, `AVG_GAMES_PER_SESSION`, `SESSION_RATE`, `ACTIVE_DAYS_THRESHOLD`
 
 | Function | Args | Line | What it does |
 |---|---|---|---|
-| `_caller_claims` | event | 75 | Claims API Gateway's Cognito Authorizer attaches to the request. |
-| `_is_super_admin` | claims | 83 | — |
-| `_finance_role` | claims | 97 | — |
-| `_finance_level` | claims | 113 | — |
-| `_has_finance_access` | claims | 117 | View or better - the gate for reading finance at all. |
-| `finance_key_for_caller` | event | 122 | Hands the shared view key to any caller with view access or better, |
-| `set_finance_access` | event | 133 | SuperAdmin sets a player's finance role directly. |
-| `handler` | event, context | 157 | — |
-| `_scan_type` | record_type | 264 | — |
-| `_num` | v, default | 269 | — |
-| `_clean` | record_type, data | 292 | — |
-| `_resolve_name` | pid_cache, player_id | 304 | — |
-| `list_records` | record_type, params | 315 | — |
-| `create_records` | record_type, body | 356 | — |
-| `update_record` | record_type, record_id, body | 376 | — |
-| `delete_record_enforced` | record_type, record_id, event | 416 | Triple-gated: SuperAdmin identity + FINANCE_VIEW_KEY + the existing |
-| `delete_record` | record_type, record_id, body | 439 | — |
-| `get_settings` |  | 451 | — |
-| `put_settings` | body | 460 | — |
-| `public_upi` |  | 475 | The pay card is shown to guests (they pay walk-in fees), so the UPI |
-| `public_walkins` |  | 483 | — |
-| `_settlement_rows` |  | 501 | Per (month, year, slot): the exact math from the Calculations sheet. |
-| `summary` |  | 577 | — |
-| `insights` |  | 594 | Per-member monthly economics, ghosts, and walk-in conversion. |
-| `_response` | status_code, body_dict | 792 | — |
+| `_caller_claims` | event | 82 | Claims API Gateway's Cognito Authorizer attaches to the request. |
+| `_is_super_admin` | claims | 90 | — |
+| `_finance_role` | claims | 104 | — |
+| `_finance_level` | claims | 120 | — |
+| `_has_finance_access` | claims | 124 | View or better - the gate for reading finance at all. |
+| `_default_group_id` |  | 129 | The group_id of the 'Club (default)' group that the pre-migration |
+| `_group_for_request` | params, body | 145 | The group_id this finance op targets. Falls back to the default group |
+| `_group_finance_level` | claims, group_id | 152 | A caller's finance level (0-3) FOR A SPECIFIC GROUP. |
+| `finance_key_for_caller` | event | 178 | Hands the shared view key to any caller with view access or better, |
+| `set_finance_access` | event | 189 | SuperAdmin sets a player's finance role directly. |
+| `handler` | event, context | 213 | — |
+| `_scan_type` | record_type, group_id | 327 | — |
+| `_num` | v, default | 338 | — |
+| `_clean` | record_type, data | 361 | — |
+| `_resolve_name` | pid_cache, player_id | 373 | — |
+| `list_records` | record_type, params, group_id | 384 | — |
+| `create_records` | record_type, body, group_id | 425 | — |
+| `update_record` | record_type, record_id, body, group_id | 447 | — |
+| `delete_record_enforced` | record_type, record_id, event | 490 | Triple-gated: SuperAdmin identity + FINANCE_VIEW_KEY + the existing |
+| `delete_record` | record_type, record_id, body, group_id | 513 | — |
+| `get_settings` |  | 527 | — |
+| `put_settings` | body | 536 | — |
+| `public_upi` |  | 551 | The pay card is shown to guests (they pay walk-in fees), so the UPI |
+| `public_walkins` |  | 559 | — |
+| `_settlement_rows` | group_id | 579 | Per (month, year, slot): the exact math from the Calculations sheet. |
+| `summary` | group_id | 655 | — |
+| `insights` | group_id | 672 | Per-member monthly economics, ghosts, and walk-in conversion. |
+| `_response` | status_code, body_dict | 870 | — |
 
 #### `progress_scheduler` — 220 LOC
 _NetWorth - progress_scheduler Lambda_

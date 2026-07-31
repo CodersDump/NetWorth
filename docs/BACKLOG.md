@@ -26,10 +26,16 @@
   - **Stage 1 — migrate data (DONE 2026-07-31, additive/safe).** `scripts/backfill_finance_groups.py`
     creates the "Club (default)" group and stamps `group_id` on every existing finance record.
     Dry-run by default, idempotent, only adds an attribute. Run locally after committing; no deploy.
-  - **Stage 2 — backend read/write scoping.** Finance lambda: every op requires a `group_id`; access =
-    owner/admin of that group OR a per-group finance role (SuperAdmin sees all). Add a per-group
-    `finance_roles` map + a set-role endpoint in the groups lambda. Keep the shared key path working
-    during transition. Needs `GROUPS_TABLE` + `PLAYERS_TABLE` on the finance function (verify env).
+  - **Stage 2 — backend read/write scoping (DONE 2026-07-31).** Finance lambda now scopes every
+    record op to a `group_id` (defaults to the "Club (default)" group so the current UI is unchanged):
+    `_group_for_request`, `_group_finance_level`, `_default_group_id`; `_scan_type`/`list_records`/
+    `create_records`/`update_record`/`delete_record`/`summary`/`insights`/`_settlement_rows` all take
+    a group; update/delete reject cross-group records; public walk-ins scoped to the default group.
+    Access = SuperAdmin (all) / owner+admin (full on own group) / per-group `finance_roles` map /
+    legacy global grant as a floor **on the default group only** (no cross-group leak). Added
+    `GROUPS_TABLE` env to the finance function. Verified with an access-matrix unit test.
+    **Stage 2b (still to do):** a set-per-member-finance-role endpoint in the groups lambda +
+    `finance_roles` seeded on group creation — folded into Stage 3 where the UI to manage it lives.
   - **Stage 3 — frontend.** Group selector on the Finance tab; owner sees full control for their
     group, members see per-group-role UI. Then un-hide the finance-access panel for owners and add
     `finance_access` back to `OWNER_DECIDABLE_TYPES` (unlocks owner finance approval).
@@ -94,6 +100,11 @@
 
 ## Done
 
+- ✅ 2026-07-31 — **Group-scoped finance Stage 2 (backend scoping).** Finance lambda scopes all
+  record reads/writes/deletes + summary/insights to a `group_id` (defaults to "Club (default)");
+  access resolved per-group (`_group_finance_level`) with a default-group-only legacy floor; added
+  `GROUPS_TABLE` env. Backward-compatible: the current finance UI sends no `group_id`, so it operates
+  on the default group exactly as before. Access matrix unit-tested.
 - ✅ 2026-07-31 — **Group-scoped finance Stage 1 (data migration).** Added
   `scripts/backfill_finance_groups.py`: creates the "Club (default)" group and stamps `group_id`
   on every existing finance record. Dry-run by default, idempotent (`attribute_not_exists` guard),
