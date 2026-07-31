@@ -1823,6 +1823,7 @@ def compute_with_partner(player_id, partner_id, matches):
     answers 'how do I do specifically alongside X'."""
     wins = 0
     losses = 0
+    games = []
     for m in matches:
         team_a = m.get('team_a') or []
         team_b = m.get('team_b') or []
@@ -1838,11 +1839,30 @@ def compute_with_partner(player_id, partner_id, matches):
             wins += 1
         else:
             losses += 1
+        # The opponents are whichever side the pair was NOT on. Names/scores
+        # are stored on the match, so no extra lookups are needed.
+        if both_a:
+            opp_names = m.get('team_b_names') or []
+            our_score, their_score = m.get('score_a'), m.get('score_b')
+        else:
+            opp_names = m.get('team_a_names') or []
+            our_score, their_score = m.get('score_b'), m.get('score_a')
+        games.append({
+            'match_id': m.get('match_id'),
+            'date': m.get('date'),
+            'opponents': opp_names,
+            'our_score': our_score,
+            'their_score': their_score,
+            'won': team_won,
+        })
+    # Most recent first, to match how the game log reads.
+    games.sort(key=lambda g: g.get('date') or '', reverse=True)
     total = wins + losses
     return {
         'player_id': player_id, 'partner_id': partner_id,
         'matches': total, 'wins': wins, 'losses': losses,
-        'win_rate': round(wins / total * 100, 1) if total else 0
+        'win_rate': round(wins / total * 100, 1) if total else 0,
+        'games': games
     }
 
 

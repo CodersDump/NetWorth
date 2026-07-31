@@ -3509,11 +3509,54 @@ let userPool = null;
         if (!data.matches) {
           el.innerHTML = '<p style="font-size:13px;color:var(--text-secondary);">These two have never played on the same side.</p>';
         } else {
-          el.innerHTML = `<p><strong>${data.wins}-${data.losses}</strong> (${data.win_rate}% win rate) across ${data.matches} match${data.matches === 1 ? '' : 'es'} as partners</p>`;
+          partnerGames = data.games || [];
+          partnerPage = 0;
+          const summary = `<p><strong>${data.wins}-${data.losses}</strong> (${data.win_rate}% win rate) across ${data.matches} match${data.matches === 1 ? '' : 'es'} as partners</p>`;
+          el.innerHTML = summary + '<div id="profile-partner-games"></div>';
+          renderPartnerGames();
         }
       } catch (err) {
         el.textContent = `Request failed: ${err.message}`;
       }
+    }
+
+    let partnerGames = [];
+    let partnerPage = 0;
+    const PARTNER_PAGE_SIZE = 25;
+
+    function partnerGamesGoto(p) { partnerPage = p; renderPartnerGames(); }
+
+    function renderPartnerGames() {
+      const wrap = document.getElementById('profile-partner-games');
+      if (!wrap) return;
+      const total = partnerGames.length;
+      if (!total) { wrap.innerHTML = ''; return; }
+      const pages = Math.max(1, Math.ceil(total / PARTNER_PAGE_SIZE));
+      if (partnerPage >= pages) partnerPage = pages - 1;
+      if (partnerPage < 0) partnerPage = 0;
+      const start = partnerPage * PARTNER_PAGE_SIZE;
+      const pageRows = partnerGames.slice(start, start + PARTNER_PAGE_SIZE);
+
+      let html = '<table><tr><th>Date</th><th>Opponents</th><th>Score</th><th>Result</th></tr>';
+      pageRows.forEach(g => {
+        const date = g.date ? new Date(g.date).toLocaleDateString() : '';
+        const opps = (g.opponents || []).join(' & ') || '-';
+        const result = g.won
+          ? '<span style="color:var(--court,#2fa968);font-weight:600;">Won</span>'
+          : '<span style="color:#c0392b;font-weight:600;">Lost</span>';
+        html += `<tr><td>${date}</td><td>${opps}</td><td>${g.our_score} - ${g.their_score}</td><td>${result}</td></tr>`;
+      });
+      html += '</table>';
+
+      if (pages > 1) {
+        const from = start + 1, to = Math.min(start + PARTNER_PAGE_SIZE, total);
+        html += `<div style="display:flex;align-items:center;justify-content:space-between;margin-top:10px;font-size:13px;">`
+              + `<button class="secondary" style="margin:0;padding:5px 12px;" ${partnerPage === 0 ? 'disabled' : ''} onclick="partnerGamesGoto(${partnerPage - 1})">Prev</button>`
+              + `<span style="color:var(--text-secondary);">${from}-${to} of ${total} &middot; page ${partnerPage + 1}/${pages}</span>`
+              + `<button class="secondary" style="margin:0;padding:5px 12px;" ${partnerPage >= pages - 1 ? 'disabled' : ''} onclick="partnerGamesGoto(${partnerPage + 1})">Next</button>`
+              + `</div>`;
+      }
+      wrap.innerHTML = html;
     }
 
     function skeletonHTML(lines = 3) {
