@@ -421,6 +421,7 @@ def list_groups():
          'roles': i.get('roles', {}),
          'slots': i.get('slots', []),
          'slot_members': i.get('slot_members', {}),
+         'finance_payee': i.get('finance_payee', {}),
          'finance_roles': i.get('finance_roles', {})}
         for i in items
     ]
@@ -446,6 +447,7 @@ def get_group(group_id):
         'roles': roles,
         'slots': item.get('slots', []),
         'slot_members': item.get('slot_members', {}),
+        'finance_payee': item.get('finance_payee', {}),
         'default_tournament_settings': item.get('default_tournament_settings')
     })
 
@@ -472,19 +474,65 @@ def update_group_defaults(group_id, event):
 
 
 def set_group_slots(group_id, event):
-    """Owner/admin sets this group's slot list and which members are in which
-    slot. Reached via the Cognito-authorized PUT /group-slots/{group_id} route
-    (the /groups/{proxy+} route is unauthenticated, so slot management can't
-    live there). slots = ["7-8AM", ...]; slot_members = {slot: [player_id,...]}."""
+    """Owner/admin group settings via the Cognito-authorized PUT
+    /group-slots/{group_id} route (the /groups/{proxy+} route is
+    unauthenticated). Handles, by body content:
+      - slots / slot_members  : per-group time slots + assignment (Stage 4)
+      - finance_payee         : who collects money for this group (Stage 5)
+      - transfer_to           : transfer ownership to another member (Stage 5)
+    """
     body = json.loads(event.get('body') or '{}')
     claims = _caller_claims(event)
     caller_pid = claims.get('custom:player_id')
     group = groups_table.get_item(Key={'group_id': group_id}).get('Item')
     if not group:
         return _response(404, {'error': 'group not found'})
-    if not _is_super_admin(claims) and group.get('roles', {}).get(caller_pid) not in ('owner', 'admin'):
-        return _response(403, {'error': 'you must be an owner or admin of this group to manage slots'})
+    caller_role = group.get('roles', {}).get(caller_pid)
+    is_super = _is_super_admin(claims)
+    if not is_super and caller_role not in ('owner', 'admin'):
+        return _response(403, {'error': 'you must be an owner or admin of this group to manage it'})
 
+    # --- Ownership transfer (owner or SuperAdmin only) ---
+    if 'transfer_to' in body:
+        if not is_super and caller_role != 'owner':
+            return _response(403, {'error': 'only the group owner can transfer ownership'})
+        new_owner = body.get('transfer_to')
+        if new_owner not in group.get('member_ids', []):
+            return _response(400, {'error': 'the new owner must be a member of this group'})
+        roles = dict(group.get('roles', {}))
+        # The person handing over becomes a regular member with view access.
+        for pid, r in list(roles.items()):
+            if r == 'owner':
+                roles[pid] = 'member'
+        roles[new_owner] = 'owner'
+        groups_table.update_item(
+            Key={'group_id': group_id},
+            UpdateExpression='SET #r = :r',
+            ExpressionAttributeNames={'#r': 'roles'},
+            ExpressionAttributeValues={':r': roles}
+        )
+        return _response(200, {'group_id': group_id, 'new_owner': new_owner, 'roles': roles})
+
+    # --- Per-group payee (who money is paid to) ---
+    if 'finance_payee' in body:
+        payee = body.get('finance_payee') or {}
+        pid = payee.get('player_id')
+        if pid and pid not in group.get('member_ids', []):
+            return _response(400, {'error': 'the payee must be a member of this group'})
+        # Any owner/co-owner is eligible; the owner picks which account collects.
+        clean_payee = {
+            'player_id': pid,
+            'upi_id': (payee.get('upi_id') or '').strip(),
+            'upi_name': (payee.get('upi_name') or '').strip(),
+        }
+        groups_table.update_item(
+            Key={'group_id': group_id},
+            UpdateExpression='SET finance_payee = :p',
+            ExpressionAttributeValues={':p': clean_payee}
+        )
+        return _response(200, {'group_id': group_id, 'finance_payee': clean_payee})
+
+    # --- Slots + assignment ---
     updates = {}
     if 'slots' in body:
         slots = body.get('slots') or []

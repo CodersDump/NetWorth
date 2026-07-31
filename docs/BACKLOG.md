@@ -65,12 +65,12 @@
     should see only that slot's expenses/walk-ins in the main finance tab (not just their own dues).
     Needs slot-filtering threaded through `list_records`/`summary` for non-owner view members. The
     member's own dues are already slot-safe via 4b; this is the remaining nice-to-have.
-  - **Stage 5 — co-owners, ownership transfer, per-group payee.** `roles` supports multiple owners /
-    co-owners; guarded transfer + promote/demote endpoint. On transfer, the **previous owner is
-    demoted to a regular member** (keeps view access like any member). Group gets an explicit
-    `finance_payee = <player_id>` (any owner/co-owner eligible; the owner picks which account
-    collects) — the UPI QR/deep-link resolves to that payee, so it updates on transfer instead of
-    being freely editable. Removal from group already revokes finance access live (Stage 2).
+  - **Stage 5 — co-owners, ownership transfer, per-group payee (DONE 2026-07-31).** Ownership
+    transfer (owner-only) via `transfer_to` on `PUT /group-slots/{group_id}` — old owner demotes to
+    regular member (view access). Per-group `finance_payee` ({player_id, upi_id, upi_name}, must be a
+    member) set by any owner/admin. Co-owners: use the existing role control to promote a member to
+    owner/admin. `get_group`/`list_groups` return `finance_payee`. Frontend: Transfer ownership + Set
+    payee controls in the group detail. Transfer + payee logic unit-tested.
   - **Stage 6 — member dues + UPI tap-to-pay.** A logged-in member sees their outstanding dues
     **itemised by group and slot** (not one lumped total), grouped by each group's payee. Extend
     `_settlement_rows` to a per-member rollup. Because payee is per-group, "pay all" is **one UPI
@@ -145,6 +145,11 @@
 
 ## Done
 
+- ✅ 2026-07-31 — **Group-scoped finance Stage 5 (co-owners, transfer, payee) + deploy cache fix.**
+  Ownership transfer (owner-only, old owner → member) and per-group `finance_payee` via
+  `PUT /group-slots/{group_id}`; co-owners via existing role promotion; group detail UI. Also added
+  `--cache-control "no-cache"` to the frontend upload in deploy.yml so a stale `app.js` can't sit in
+  the browser cache after a deploy (the cause of "loadUnconfirmedUsers is not defined").
 - ✅ 2026-07-31 — **Group-scoped finance Stage 4 + 4b (per-group slots + member dues).** Groups get
   owner-managed `slots`/`slot_members` via `PUT /group-slots/{group_id}` (`set_group_slots`, new
   Cognito route); group detail UI for slot list + assignment. `GET /finance/my-settlement`
