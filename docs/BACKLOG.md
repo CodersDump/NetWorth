@@ -74,6 +74,10 @@
 
 ## Done
 
+- ✅ 2026-07-31 — **Feature:** partner match-list. The "with a partner (same side)" view now lists
+  every same-side match under the W/L summary — date, opponents, score, result — most-recent-first,
+  paginated 25/page (`renderPartnerGames` / `partnerGamesGoto`). Backend `compute_with_partner` now
+  also returns a `games` array (opponents resolved from whichever side the pair wasn't on).
 - ✅ 2026-07-31 — **Fix:** partner filter returned 400. `compute_with_partner` was wired into
   `list_matches`, but the `/profile-secure` gate (`profile_view_enforced`) resolves the target
   player from a param whitelist that didn't include `with_partner`, so the request was rejected
