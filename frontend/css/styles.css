@@ -364,3 +364,35 @@
    be `none`. Trade-off: a one-finger swipe that starts ON the chart won't
    scroll the page (scroll using the area outside the chart instead). */
 #profile-rating-canvas { touch-action: none; }
+
+/* ---- Themed modal (nwConfirm / nwAlert / nwPrompt), replaces native dialogs.
+   Uses the app's CSS vars so it follows light/dark automatically. ---- */
+.nw-modal-overlay {
+  position: fixed; inset: 0; z-index: 10000;
+  background: rgba(0,0,0,0.55);
+  display: flex; align-items: center; justify-content: center;
+  padding: 20px; opacity: 0; transition: opacity 0.12s ease;
+}
+.nw-modal-overlay.nw-open { opacity: 1; }
+.nw-modal {
+  background: var(--surface); color: var(--text);
+  border: 1px solid var(--border); border-radius: var(--radius);
+  max-width: 420px; width: 100%; padding: 20px;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.4);
+  transform: translateY(6px) scale(0.98); transition: transform 0.12s ease;
+}
+.nw-modal-overlay.nw-open .nw-modal { transform: none; }
+.nw-modal-msg { font-size: 15px; line-height: 1.5; white-space: pre-wrap; margin-bottom: 16px; }
+.nw-modal-input {
+  width: 100%; box-sizing: border-box; margin-bottom: 16px; padding: 9px 11px;
+  background: var(--surface-2); color: var(--text);
+  border: 1px solid var(--border); border-radius: 8px; font-size: 14px;
+}
+.nw-modal-actions { display: flex; gap: 8px; justify-content: flex-end; }
+.nw-modal-btn {
+  padding: 8px 16px; border-radius: 8px; border: 1px solid var(--border);
+  background: var(--surface-2); color: var(--text); cursor: pointer;
+  font-size: 14px; font-weight: 600;
+}
+.nw-modal-btn.nw-primary { background: var(--court); border-color: var(--court); color: #fff; }
+.nw-modal-btn.nw-danger { background: var(--smash); border-color: var(--smash); color: #fff; }

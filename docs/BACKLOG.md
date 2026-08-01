@@ -146,6 +146,12 @@
 
 ## Done
 
+- ✅ 2026-08-01 — **Feature + fix:** (1) themed modal system — `nwConfirm`/`nwAlert`/`nwPrompt`
+  (Promise-based) replace ALL 137 native browser confirm/alert/prompt calls; styled via the app's CSS
+  vars so they follow light/dark automatically (Esc/click-out cancels, Enter confirms). (2) Race-fix:
+  the Finance tab now loads groups BEFORE rendering the dues card + ledger selector, so they no longer
+  intermittently fail to appear (they read allGroups, which was sometimes still loading).
+
 - ✅ 2026-08-01 — **Feature (money):** payment confirmation now uses the relief-adjusted (effective)
   amount. Members list returns per-member `relief` + `effective` (cost_per_head − relief); the card
   shows "Pay ₹X (₹cost − ₹relief relief)"; the confirm dialog and paid badge use effective. Confirm
@@ -154,10 +160,6 @@
   the single source of truth (insights refactored onto them). Math unit-tested (825 − 175 relief =
   650; settled matches on 650, not the pre-relief 825).
 
-### Next: NetWorth-themed confirm/alert/prompt modals (light + dark)
-Replace the native browser confirm()/alert()/prompt() everywhere with a themed modal component that
-matches the app (dark + light). Mechanical but wide - dozens of call sites (delete, forfeit, transfer,
-payee, claim-audit, membership confirm, etc.). Build the component + sweep all call sites. Its own pass.
 
 ### Then: optional slot-less (group-wide) expenses/walk-ins
 A record with no slot splits its cost across ALL DISTINCT "Yes" members across every slot that month

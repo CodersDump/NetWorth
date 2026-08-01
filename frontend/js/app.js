@@ -240,6 +240,71 @@ let userPool = null;
 
     let allPlayers = [];
     let allGroups = [];
+
+    // ---- Themed modal system: nwConfirm / nwAlert / nwPrompt ----
+    // Async replacements for the native browser dialogs so they match the
+    // match the app (light + dark via CSS vars). Return Promises.
+    function _nwModal({ message, input, defaultValue, okText, cancelText, danger }) {
+      return new Promise(resolve => {
+        const overlay = document.createElement('div');
+        overlay.className = 'nw-modal-overlay';
+        const box = document.createElement('div');
+        box.className = 'nw-modal';
+        const msg = document.createElement('div');
+        msg.className = 'nw-modal-msg';
+        msg.textContent = message == null ? '' : String(message);
+        box.appendChild(msg);
+        let field = null;
+        if (input) {
+          field = document.createElement('input');
+          field.className = 'nw-modal-input';
+          field.value = defaultValue == null ? '' : String(defaultValue);
+          box.appendChild(field);
+        }
+        const actions = document.createElement('div');
+        actions.className = 'nw-modal-actions';
+        const cleanup = (val) => {
+          overlay.classList.remove('nw-open');
+          setTimeout(() => overlay.remove(), 140);
+          document.removeEventListener('keydown', onKey);
+          resolve(val);
+        };
+        if (cancelText !== null) {
+          const cancel = document.createElement('button');
+          cancel.className = 'nw-modal-btn';
+          cancel.textContent = cancelText || 'Cancel';
+          cancel.onclick = () => cleanup(input ? null : false);
+          actions.appendChild(cancel);
+        }
+        const ok = document.createElement('button');
+        ok.className = 'nw-modal-btn ' + (danger ? 'nw-danger' : 'nw-primary');
+        ok.textContent = okText || 'OK';
+        ok.onclick = () => cleanup(input ? field.value : true);
+        actions.appendChild(ok);
+        box.appendChild(actions);
+        overlay.appendChild(box);
+        // Click outside = cancel (for confirm/prompt); alerts have no cancel.
+        overlay.addEventListener('mousedown', e => { if (e.target === overlay && cancelText !== null) cleanup(input ? null : false); });
+        const onKey = (e) => {
+          if (e.key === 'Escape' && cancelText !== null) cleanup(input ? null : false);
+          if (e.key === 'Enter') { e.preventDefault(); ok.click(); }
+        };
+        document.addEventListener('keydown', onKey);
+        document.body.appendChild(overlay);
+        requestAnimationFrame(() => overlay.classList.add('nw-open'));
+        if (field) { field.focus(); field.select(); }
+      });
+    }
+    function nwConfirm(message, opts = {}) {
+      return _nwModal({ message, okText: opts.okText || 'Confirm', cancelText: opts.cancelText || 'Cancel', danger: opts.danger });
+    }
+    function nwAlert(message, opts = {}) {
+      return _nwModal({ message, okText: opts.okText || 'OK', cancelText: null });
+    }
+    function nwPrompt(message, defaultValue = '', opts = {}) {
+      return _nwModal({ message, input: true, defaultValue, okText: opts.okText || 'OK', cancelText: opts.cancelText || 'Cancel' });
+    }
+
     // Which account the current Player Card selection belongs to. Compared
     // against myPlayerId() so a selection made by a previous login in the
     // same tab is discarded rather than inherited.
@@ -442,7 +507,7 @@ let userPool = null;
     }
 
     async function removePlayerFromGroup(groupId, playerId) {
-      const confirmText = prompt('Enter the confirmation code to remove this player from the group:');
+      const confirmText = await nwPrompt('Enter the confirmation code to remove this player from the group:');
       if (!confirmText) return;
 
       // Logged-in users go through the new Cognito-enforced route (proves
@@ -462,7 +527,7 @@ let userPool = null;
         loadGroups();
       } else {
         const data = await res.json();
-        alert(data.error);
+        nwAlert(data.error);
       }
     }
 
@@ -567,7 +632,7 @@ let userPool = null;
           document.getElementById(id).value = '';
         });
         if (showAlertOnFail) {
-          alert(`Need at least ${needed} players${groupId ? ' in this group' : ''} to randomize.`);
+          nwAlert(`Need at least ${needed} players${groupId ? ' in this group' : ''} to randomize.`);
         }
         return;
       }
@@ -867,7 +932,7 @@ let userPool = null;
       // request shows up in their own queue for a one-tap approval, which
       // costs one extra click and buys a complete record of every
       // deletion, who asked, and who approved it.
-      const reason = prompt(`Request deletion of ${label}?\n\nGive a brief reason (optional):`);
+      const reason = await nwPrompt(`Request deletion of ${label}?\n\nGive a brief reason (optional):`);
       if (reason === null) { resultEl.textContent = 'Cancelled.'; return; }
       resultEl.textContent = 'Sending request...';
       try {
@@ -969,7 +1034,7 @@ let userPool = null;
       if (!groupId) { resultEl.textContent = 'Select a group first.'; return; }
 
       const label = selectedOption ? selectedOption.textContent : groupId;
-      const confirmText = prompt(`Enter the confirmation code to delete the group "${label}". Players in this group are NOT deleted - only the group itself.`);
+      const confirmText = await nwPrompt(`Enter the confirmation code to delete the group "${label}". Players in this group are NOT deleted - only the group itself.`);
       if (!confirmText) { resultEl.textContent = 'Cancelled.'; return; }
 
       resultEl.textContent = 'Deleting...';
@@ -1056,7 +1121,7 @@ let userPool = null;
     // ---------- matches ----------
 
     document.getElementById('match-quick-add-player-btn').addEventListener('click', async () => {
-      const name = prompt("New player's name:");
+      const name = await nwPrompt("New player's name:");
       if (!name || !name.trim()) return;
       const groupId = document.getElementById('match_group_select').value;
       const body = { name: name.trim(), skill_level: 'intermediate' };
@@ -1066,9 +1131,9 @@ let userPool = null;
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body)
       });
-      if (!res.ok) { alert('Error: ' + error); return; }
+      if (!res.ok) { nwAlert('Error: ' + error); return; }
       await loadPlayers();  // refreshes allPlayers + every team-select dropdown
-      alert(`${name.trim()} is registered${data.added_to_group ? ' and added to ' + data.added_to_group : ''} - pick them from the team dropdowns below.`);
+      nwAlert(`${name.trim()} is registered${data.added_to_group ? ' and added to ' + data.added_to_group : ''} - pick them from the team dropdowns below.`);
     });
 
 
@@ -1471,7 +1536,7 @@ let userPool = null;
       const scoreDisplay = document.getElementById('live_scoring_toggle').checked
         ? '(final score determined by live scoring)'
         : `${score_a}-${score_b}`;
-      if (!confirm(`Confirm recording this match?\n\n${teamAName} vs ${teamBName}\nScore: ${scoreDisplay}`)) {
+      if (!await nwConfirm(`Confirm recording this match?\n\n${teamAName} vs ${teamBName}\nScore: ${scoreDisplay}`)) {
         return;
       }
 
@@ -1543,7 +1608,7 @@ let userPool = null;
       el.style.borderLeft = `4px solid ${ok ? 'var(--court)' : 'var(--smash)'}`;
       el.style.background = ok ? 'rgba(47,169,104,0.12)' : 'rgba(214,64,64,0.12)';
       el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      if (!ok) alert(`Match NOT recorded\n\n${message}`);
+      if (!ok) nwAlert(`Match NOT recorded\n\n${message}`);
     }
 
     // ---------- unsaved-match safety net ----------
@@ -1625,9 +1690,9 @@ let userPool = null;
           });
           if (res && res.ok) { clearPendingMatch(); offerPendingMatchRestore(); loadPlayers(); showMatchOutcome(true, 'Saved match recorded.'); }
           else if (sessionExpired) { handleSessionExpired(); btn.disabled = false; btn.textContent = 'Record it now'; }
-          else { btn.disabled = false; btn.textContent = 'Record it now'; alert('Still could not record: ' + (error || 'unknown')); }
+          else { btn.disabled = false; btn.textContent = 'Record it now'; nwAlert('Still could not record: ' + (error || 'unknown')); }
         } catch (err) {
-          btn.disabled = false; btn.textContent = 'Record it now'; alert('Still could not record: ' + err.message);
+          btn.disabled = false; btn.textContent = 'Record it now'; nwAlert('Still could not record: ' + err.message);
         }
       };
     }
@@ -1770,26 +1835,26 @@ let userPool = null;
     }
 
     async function requestMatchChange(matchId, type, label, groupId, extra) {
-      const reason = prompt(type === 'match_delete'
+      const reason = await nwPrompt(type === 'match_delete'
         ? `Request deletion of "${label}"?\n\nGive a reason for the admin:`
         : `Request a score correction for "${label}"?\n\nGive a reason for the admin:`);
       if (reason === null) return;
-      if (!reason.trim()) { alert('A reason is required.'); return; }
+      if (!reason.trim()) { nwAlert('A reason is required.'); return; }
       try {
         const { res, error } = await authedFetch(`${API_BASE_URL}/action-request`, {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ type, match_id: matchId, match_label: label,
                                  group_id: groupId || null, reason: reason.trim(), ...(extra || {}) })
         });
-        alert(res.ok ? 'Request sent to the admin for approval.' : `Error: ${error}`);
-      } catch (e) { alert(`Request failed: ${e.message}`); }
+        nwAlert(res.ok ? 'Request sent to the admin for approval.' : `Error: ${error}`);
+      } catch (e) { nwAlert(`Request failed: ${e.message}`); }
     }
 
     async function editMatchScore(matchId, currentScoreA, currentScoreB, encLabel, groupId) {
       const label = encLabel ? decodeURIComponent(encLabel) : matchId;
-      const newScoreA = prompt(`Current score: ${currentScoreA} - ${currentScoreB}\nEnter corrected Team A score:`, currentScoreA);
+      const newScoreA = await nwPrompt(`Current score: ${currentScoreA} - ${currentScoreB}\nEnter corrected Team A score:`, currentScoreA);
       if (newScoreA === null) return;
-      const newScoreB = prompt('Enter corrected Team B score:', currentScoreB);
+      const newScoreB = await nwPrompt('Enter corrected Team B score:', currentScoreB);
       if (newScoreB === null) return;
 
       // Non-admins file a request with a reason; only SuperAdmin edits live.
@@ -1798,7 +1863,7 @@ let userPool = null;
           { new_score_a: parseInt(newScoreA, 10), new_score_b: parseInt(newScoreB, 10) });
       }
 
-      const confirmText = prompt('Enter the confirmation code to save this correction. Note: this will recompute every player\'s rating from the corrected history.');
+      const confirmText = await nwPrompt('Enter the confirmation code to save this correction. Note: this will recompute every player\'s rating from the corrected history.');
       if (!confirmText) return;
 
       try {
@@ -1809,14 +1874,14 @@ let userPool = null;
         });
         const data = await res.json();
         if (res.ok) {
-          alert('Score corrected. All ratings have been recomputed.');
+          nwAlert('Score corrected. All ratings have been recomputed.');
           loadGameLog();
           loadPlayers();
         } else {
-          alert(`Error: ${data.error}`);
+          nwAlert(`Error: ${data.error}`);
         }
       } catch (err) {
-        alert(`Request failed: ${err.message}`);
+        nwAlert(`Request failed: ${err.message}`);
       }
     }
 
@@ -1827,9 +1892,9 @@ let userPool = null;
         return requestMatchChange(matchId, 'match_delete', label, groupId);
       }
 
-      if (!confirm('Permanently delete this match? This cannot be undone, and every player\'s rating will be recomputed from the remaining history.')) return;
+      if (!await nwConfirm('Permanently delete this match? This cannot be undone, and every player\'s rating will be recomputed from the remaining history.')) return;
 
-      const confirmText = prompt('Enter the confirmation code to permanently delete this match.');
+      const confirmText = await nwPrompt('Enter the confirmation code to permanently delete this match.');
       if (!confirmText) return;
 
       try {
@@ -1840,14 +1905,14 @@ let userPool = null;
         });
         const data = await res.json();
         if (res.ok) {
-          alert('Match deleted. All ratings have been recomputed.');
+          nwAlert('Match deleted. All ratings have been recomputed.');
           loadGameLog();
           loadPlayers();
         } else {
-          alert(`Error: ${data.error}`);
+          nwAlert(`Error: ${data.error}`);
         }
       } catch (err) {
-        alert(`Request failed: ${err.message}`);
+        nwAlert(`Request failed: ${err.message}`);
       }
     }
 
@@ -1881,7 +1946,7 @@ let userPool = null;
         ]));
         downloadCSV('networth-matches.csv', rows);
       } catch (err) {
-        alert(`Export failed: ${err.message}`);
+        nwAlert(`Export failed: ${err.message}`);
       }
     });
 
@@ -2280,9 +2345,9 @@ let userPool = null;
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ finance_role: role })
         });
-        if (!res.ok) { alert(`Error: ${error}`); return false; }
+        if (!res.ok) { nwAlert(`Error: ${error}`); return false; }
         return true;
-      } catch (e) { alert(`Request failed: ${e.message}`); return false; }
+      } catch (e) { nwAlert(`Request failed: ${e.message}`); return false; }
     }
 
     async function setFinanceRole(playerId, role) {
@@ -2292,9 +2357,9 @@ let userPool = null;
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ player_id: playerId, role })
         });
-        if (!res.ok) { alert(`Error: ${error}`); return; }
+        if (!res.ok) { nwAlert(`Error: ${error}`); return; }
         loadFinanceAccessList();
-      } catch (e) { alert(`Request failed: ${e.message}`); }
+      } catch (e) { nwAlert(`Request failed: ${e.message}`); }
     }
     function closeSettingsModal() {
       document.getElementById('settings-modal').style.display = 'none';
@@ -2378,7 +2443,7 @@ let userPool = null;
 
     async function recomputeNow() {
       const statusEl = document.getElementById('recompute-status');
-      if (!confirm('Recompute all ratings, XP, levels and coins from the full match history? This is safe but may take a few seconds.')) return;
+      if (!await nwConfirm('Recompute all ratings, XP, levels and coins from the full match history? This is safe but may take a few seconds.')) return;
       statusEl.textContent = 'Recomputing...';
       try {
         const { res, data, error } = await authedFetch(`${API_BASE_URL}/recompute`, { method: 'POST' });
@@ -2488,14 +2553,14 @@ let userPool = null;
         const { res, data, error } = await authedFetch(`${API_BASE_URL}/quest-claim`, {
           method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ quest_id: questId })
         });
-        if (!res.ok) { alert(`Error: ${error}`); return; }
+        if (!res.ok) { nwAlert(`Error: ${error}`); return; }
         const bits = [];
         if (data.reward_xp) bits.push(`${data.reward_xp} XP`);
         if (data.reward_coins) bits.push(`${data.reward_coins} coins`);
         if (data.reward_cosmetic) bits.push('a cosmetic');
-        alert(`Claimed! You earned ${bits.join(' + ')}.`);
+        nwAlert(`Claimed! You earned ${bits.join(' + ')}.`);
         await loadPlayers(); updateHeaderCoins(); loadQuests(); loadStore();
-      } catch (e) { alert(`Failed: ${e.message}`); }
+      } catch (e) { nwAlert(`Failed: ${e.message}`); }
     }
 
     // Admin quest management (in Reviews & Approvals)
@@ -2542,14 +2607,14 @@ let userPool = null;
     }
 
     async function deleteQuest(questId) {
-      if (!confirm('Delete this quest? Players who already claimed it keep their reward.')) return;
+      if (!await nwConfirm('Delete this quest? Players who already claimed it keep their reward.')) return;
       try {
         const { res, error } = await authedFetch(`${API_BASE_URL}/quests`, {
           method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ quest_id: questId })
         });
-        if (!res.ok) { alert(`Error: ${error}`); return; }
+        if (!res.ok) { nwAlert(`Error: ${error}`); return; }
         loadQuestsAdmin();
-      } catch (e) { alert(`Failed: ${e.message}`); }
+      } catch (e) { nwAlert(`Failed: ${e.message}`); }
     }
 
     // ---------- Store ----------
@@ -2589,16 +2654,16 @@ let userPool = null;
     }
 
     async function buyStoreItem(itemId) {
-      if (!confirm('Spend coins on this item?')) return;
+      if (!await nwConfirm('Spend coins on this item?')) return;
       try {
         const { res, data, error } = await authedFetch(`${API_BASE_URL}/store-purchase`, {
           method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ item_id: itemId })
         });
-        if (!res.ok) { alert(`Error: ${error}`); return; }
+        if (!res.ok) { nwAlert(`Error: ${error}`); return; }
         await loadPlayers();          // refresh coin balance + owned
         updateHeaderCoins();
         loadStore();
-      } catch (e) { alert(`Failed: ${e.message}`); }
+      } catch (e) { nwAlert(`Failed: ${e.message}`); }
     }
 
     // Admin catalog management (in Reviews & Approvals)
@@ -2714,14 +2779,14 @@ let userPool = null;
     }
 
     async function deleteStoreItem(itemId) {
-      if (!confirm('Delete this store item? Players who already bought it keep it.')) return;
+      if (!await nwConfirm('Delete this store item? Players who already bought it keep it.')) return;
       try {
         const { res, error } = await authedFetch(`${API_BASE_URL}/store`, {
           method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ item_id: itemId })
         });
-        if (!res.ok) { alert(`Error: ${error}`); return; }
+        if (!res.ok) { nwAlert(`Error: ${error}`); return; }
         loadStoreAdmin();
-      } catch (e) { alert(`Failed: ${e.message}`); }
+      } catch (e) { nwAlert(`Failed: ${e.message}`); }
     }
 
     async function loadEventsAdmin() {
@@ -2778,14 +2843,14 @@ let userPool = null;
     }
 
     async function deleteEvent(eventId) {
-      if (!confirm('Delete this event? Past matches keep the XP they already earned until the next recompute.')) return;
+      if (!await nwConfirm('Delete this event? Past matches keep the XP they already earned until the next recompute.')) return;
       try {
         const { res, error } = await authedFetch(`${API_BASE_URL}/events`, {
           method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ event_id: eventId })
         });
-        if (!res.ok) { alert(`Error: ${error}`); return; }
+        if (!res.ok) { nwAlert(`Error: ${error}`); return; }
         loadEventsAdmin(); refreshEventBanner();
-      } catch (e) { alert(`Failed: ${e.message}`); }
+      } catch (e) { nwAlert(`Failed: ${e.message}`); }
     }
 
     // Public: a small banner shown to everyone when an event is live.
@@ -2876,18 +2941,18 @@ let userPool = null;
     async function relinkAccount(usernameEnc, presetPlayerId) {
       const username = decodeURIComponent(usernameEnc);
       const playerId = presetPlayerId || (document.getElementById(`audit-pick-${usernameEnc}`) || {}).value;
-      if (!playerId) { alert('Pick a player to link to first.'); return; }
-      if (!confirm('Link this account to the selected profile? The user must log out and back in afterwards.')) return;
+      if (!playerId) { nwAlert('Pick a player to link to first.'); return; }
+      if (!await nwConfirm('Link this account to the selected profile? The user must log out and back in afterwards.')) return;
       await _claimAuditAction({ action: 'link', username, player_id: playerId });
     }
 
     async function unlinkAccount(usernameEnc) {
-      if (!confirm('Unlink this account from its profile? They will see no profile until re-linked or they re-claim.')) return;
+      if (!await nwConfirm('Unlink this account from its profile? They will see no profile until re-linked or they re-claim.')) return;
       await _claimAuditAction({ action: 'unlink', username: decodeURIComponent(usernameEnc) });
     }
 
     async function unlinkAndStrip(usernameEnc, playerId) {
-      if (!confirm('Strip the wrong email off this profile and unlink? This frees the profile to be claimed correctly.')) return;
+      if (!await nwConfirm('Strip the wrong email off this profile and unlink? This frees the profile to be claimed correctly.')) return;
       await _claimAuditAction({ action: 'unlink', username: decodeURIComponent(usernameEnc), player_id: playerId, strip_player_email: true });
     }
 
@@ -2896,10 +2961,10 @@ let userPool = null;
         const { res, data } = await authedFetch(`${API_BASE_URL}/claim-audit`, {
           method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(bodyObj)
         });
-        if (!res.ok) { alert(`Error: ${data.error || 'action failed'}`); return; }
-        if (data.note) alert(data.note);
+        if (!res.ok) { nwAlert(`Error: ${data.error || 'action failed'}`); return; }
+        if (data.note) nwAlert(data.note);
         loadClaimAudit();
-      } catch (e) { alert(`Request failed: ${e.message}`); }
+      } catch (e) { nwAlert(`Request failed: ${e.message}`); }
     }
 
     async function loadUnconfirmedUsers() {
@@ -2930,16 +2995,16 @@ let userPool = null;
     }
 
     async function deleteUnconfirmedUser(username, email) {
-      if (!confirm(`Delete the unconfirmed sign-up for ${email}?\n\nThey'll be able to register again with this email. This only works on accounts that never verified.`)) return;
+      if (!await nwConfirm(`Delete the unconfirmed sign-up for ${email}?\n\nThey'll be able to register again with this email. This only works on accounts that never verified.`)) return;
       try {
         const { res, data } = await authedFetch(`${API_BASE_URL}/unconfirmed-users`, {
           method: 'DELETE',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ username: decodeURIComponent(username) })
         });
-        if (!res.ok) { alert(`Error: ${data.error || 'could not delete'}`); return; }
+        if (!res.ok) { nwAlert(`Error: ${data.error || 'could not delete'}`); return; }
         loadUnconfirmedUsers();
-      } catch (e) { alert(`Request failed: ${e.message}`); }
+      } catch (e) { nwAlert(`Request failed: ${e.message}`); }
     }
 
     async function loadClaimRequests() {
@@ -2993,7 +3058,7 @@ let userPool = null;
           edit_own_name: 'Approve this rename?\n\nTheir display name and nickname change everywhere, including past matches.',
           claim:         'Approve this request?\n\nThis links their login to that player permanently - their match history and rating become theirs.'
         }[requestType || 'claim'];
-        if (!confirm(msg)) return;
+        if (!await nwConfirm(msg)) return;
       }
       try {
         const { res, error } = await authedFetch(`${API_BASE_URL}/claim-request-decide`, {
@@ -3001,9 +3066,9 @@ let userPool = null;
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ request_id: requestId, action })
         });
-        if (!res.ok) { alert(`Error: ${error}`); return; }
+        if (!res.ok) { nwAlert(`Error: ${error}`); return; }
         if (action === 'reject' && (requestType === 'claim' || requestType === 'new_profile')) {
-          alert('Rejected. Their login has been removed, so that email address is free to sign up again.');
+          nwAlert('Rejected. Their login has been removed, so that email address is free to sign up again.');
         }
         await loadClaimRequests();
         await loadPlayers();
@@ -3014,7 +3079,7 @@ let userPool = null;
           loadFinanceAccessList();
         }
       } catch (err) {
-        alert(`Request failed: ${err.message}`);
+        nwAlert(`Request failed: ${err.message}`);
       }
     }
 
@@ -3392,7 +3457,7 @@ let userPool = null;
             const sign = delta > 0 ? '+' : '';
             // Chip keeps its existing win/loss background color; the label
             // inside is now the rating change instead of the W/L letter.
-            return `<div class="form-chip ${f.result === 'W' ? 'win' : 'loss'}" title="${detailEscaped}" onclick="alert('${detailEscaped}')">${sign}${delta}</div>`;
+            return `<div class="form-chip ${f.result === 'W' ? 'win' : 'loss'}" title="${detailEscaped}" onclick="nwAlert('${detailEscaped}')">${sign}${delta}</div>`;
           }).join('');
         }
 
@@ -4585,7 +4650,7 @@ let userPool = null;
     async function manageGroupSlots(groupId) {
       const cur = await (await fetch(`${API_BASE_URL}/groups/${groupId}`)).json();
       const existing = (cur.slots || []).join(', ');
-      const input = prompt('Time slots for this group, comma-separated\n(e.g. 7-8AM, 8-9AM):', existing);
+      const input = await nwPrompt('Time slots for this group, comma-separated\n(e.g. 7-8AM, 8-9AM):', existing);
       if (input === null) return;
       const slots = input.split(',').map(s => s.trim()).filter(Boolean);
       try {
@@ -4593,9 +4658,9 @@ let userPool = null;
           method: 'PUT', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ slots })
         });
-        if (!res.ok) { alert(`Error: ${error}`); return; }
+        if (!res.ok) { nwAlert(`Error: ${error}`); return; }
         loadGroupMembers(groupId);
-      } catch (e) { alert(`Failed: ${e.message}`); }
+      } catch (e) { nwAlert(`Failed: ${e.message}`); }
     }
 
     // Owner/admin: assign members to a slot. Prompts with nicknames; resolves
@@ -4610,70 +4675,70 @@ let userPool = null;
       const currentNicks = currentPids.map(pid => {
         const m = members.find(x => x.player_id === pid); return m ? (m.nickname || m.name) : pid;
       }).join(', ');
-      const input = prompt(`Who plays the ${slot} slot? Comma-separated nicknames:`, currentNicks);
+      const input = await nwPrompt(`Who plays the ${slot} slot? Comma-separated nicknames:`, currentNicks);
       if (input === null) return;
       const wanted = input.split(',').map(s => s.trim()).filter(Boolean);
       const pids = [];
       const unknown = [];
       wanted.forEach(w => { const pid = byNick[w.toLowerCase()]; if (pid) pids.push(pid); else unknown.push(w); });
-      if (unknown.length && !confirm(`Not found in this group (will be skipped): ${unknown.join(', ')}\n\nContinue?`)) return;
+      if (unknown.length && !await nwConfirm(`Not found in this group (will be skipped): ${unknown.join(', ')}\n\nContinue?`)) return;
       const slotMembers = { ...(cur.slot_members || {}), [slot]: pids };
       try {
         const { res, error } = await authedFetch(`${API_BASE_URL}/group-slots/${groupId}`, {
           method: 'PUT', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ slot_members: slotMembers })
         });
-        if (!res.ok) { alert(`Error: ${error}`); return; }
+        if (!res.ok) { nwAlert(`Error: ${error}`); return; }
         loadGroupMembers(groupId);
-      } catch (e) { alert(`Failed: ${e.message}`); }
+      } catch (e) { nwAlert(`Failed: ${e.message}`); }
     }
 
     async function transferGroupOwnership(groupId) {
       const cur = await (await fetch(`${API_BASE_URL}/groups/${groupId}`)).json();
       const members = cur.members || [];
-      const nick = prompt('Transfer ownership to which member? Enter their nickname.\n\nYou will become a regular member (view access) afterwards.');
+      const nick = await nwPrompt('Transfer ownership to which member? Enter their nickname.\n\nYou will become a regular member (view access) afterwards.');
       if (nick === null) return;
       const target = members.find(m => (m.nickname || '').toLowerCase() === nick.trim().toLowerCase()
         || (m.name || '').toLowerCase() === nick.trim().toLowerCase());
-      if (!target) { alert('No member with that nickname in this group.'); return; }
-      if (!confirm(`Make ${target.nickname || target.name} the owner? You will be demoted to a regular member.`)) return;
+      if (!target) { nwAlert('No member with that nickname in this group.'); return; }
+      if (!await nwConfirm(`Make ${target.nickname || target.name} the owner? You will be demoted to a regular member.`)) return;
       try {
         const { res, error } = await authedFetch(`${API_BASE_URL}/group-slots/${groupId}`, {
           method: 'PUT', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ transfer_to: target.player_id })
         });
-        if (!res.ok) { alert(`Error: ${error}`); return; }
+        if (!res.ok) { nwAlert(`Error: ${error}`); return; }
         loadGroupMembers(groupId);
-      } catch (e) { alert(`Failed: ${e.message}`); }
+      } catch (e) { nwAlert(`Failed: ${e.message}`); }
     }
 
     async function setGroupPayee(groupId) {
       const cur = await (await fetch(`${API_BASE_URL}/groups/${groupId}`)).json();
       const members = cur.members || [];
       const existing = cur.finance_payee || {};
-      const nick = prompt('Who collects payments for this group? Enter their nickname (must be a member):',
+      const nick = await nwPrompt('Who collects payments for this group? Enter their nickname (must be a member):',
         existing.player_id ? (members.find(m => m.player_id === existing.player_id) || {}).nickname || '' : '');
       if (nick === null) return;
       const target = members.find(m => (m.nickname || '').toLowerCase() === nick.trim().toLowerCase()
         || (m.name || '').toLowerCase() === nick.trim().toLowerCase());
-      if (!target) { alert('No member with that nickname in this group.'); return; }
-      const upi = prompt(`UPI ID for ${target.nickname || target.name} (e.g. name@bank):`, existing.upi_id || '');
+      if (!target) { nwAlert('No member with that nickname in this group.'); return; }
+      const upi = await nwPrompt(`UPI ID for ${target.nickname || target.name} (e.g. name@bank):`, existing.upi_id || '');
       if (upi === null) return;
-      const upiName = prompt('Name shown on the payment (optional):', existing.upi_name || target.name || '');
+      const upiName = await nwPrompt('Name shown on the payment (optional):', existing.upi_name || target.name || '');
       try {
         const { res, error } = await authedFetch(`${API_BASE_URL}/group-slots/${groupId}`, {
           method: 'PUT', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ finance_payee: { player_id: target.player_id, upi_id: (upi || '').trim(), upi_name: (upiName || '').trim() } })
         });
-        if (!res.ok) { alert(`Error: ${error}`); return; }
+        if (!res.ok) { nwAlert(`Error: ${error}`); return; }
         loadGroupMembers(groupId);
-      } catch (e) { alert(`Failed: ${e.message}`); }
+      } catch (e) { nwAlert(`Failed: ${e.message}`); }
     }
 
     async function requestFinanceAccess() {
       const el = document.getElementById('finance-request-status');
       if (!isLoggedIn() || !hasLinkedPlayer()) { el.textContent = 'Log in and link your profile first.'; return; }
-      const role = prompt('What finance access do you need?\n\nType one of: view, write, delete\n\n- view: see the numbers\n- write: add and edit records\n- delete: also remove records', 'view');
+      const role = await nwPrompt('What finance access do you need?\n\nType one of: view, write, delete\n\n- view: see the numbers\n- write: add and edit records\n- delete: also remove records', 'view');
       if (role === null) return;
       const r = role.trim().toLowerCase();
       if (!['view','write','delete'].includes(r)) { el.textContent = 'Type view, write or delete.'; return; }
@@ -4805,7 +4870,7 @@ let userPool = null;
       const { ok, data } = editingExpenseId
         ? await finPost(`expenses/${editingExpenseId}`, 'PUT', body)
         : await finPost('expenses', 'POST', body);
-      if (!ok || (data.errors && data.errors.length)) { alert('Error: ' + JSON.stringify(data.errors || data.error)); return; }
+      if (!ok || (data.errors && data.errors.length)) { nwAlert('Error: ' + JSON.stringify(data.errors || data.error)); return; }
       resetExpenseEdit();
       loadFinanceExpenses(); loadFinanceSummary(); loadFinanceMembers();
     }
@@ -4864,28 +4929,28 @@ let userPool = null;
         const msg = turningOn
           ? 'Forfeit this member\u2019s refund for this month? Their share is redistributed to the other members (they get \u20b90 back). This does not change what they paid.'
           : 'Restore this member\u2019s refund (undo forfeit)?';
-        if (!confirm(msg)) return;
+        if (!await nwConfirm(msg)) return;
         const { ok, data: d } = await finPost(`memberships/${btn.dataset.id}`, 'PUT', { forfeit_residual: turningOn });
-        if (!ok) { alert('Error: ' + d.error); return; }
+        if (!ok) { nwAlert('Error: ' + d.error); return; }
         loadFinanceMembers(); loadFinanceSummary();
       }));
       el.querySelectorAll('.fin-confirm').forEach(btn => btn.addEventListener('click', async () => {
-        if (!confirm(`Confirm that ${btn.dataset.name} paid ₹${btn.dataset.eff} for ${document.getElementById('fmem_month').value} ${document.getElementById('fmem_slot').value}?`)) return;
+        if (!await nwConfirm(`Confirm that ${btn.dataset.name} paid ₹${btn.dataset.eff} for ${document.getElementById('fmem_month').value} ${document.getElementById('fmem_slot').value}?`)) return;
         const { ok, data: d } = await finPost(`memberships/${btn.dataset.id}`, 'PUT', { confirm_payment: true });
-        if (!ok) alert('Error: ' + d.error);
+        if (!ok) nwAlert('Error: ' + d.error);
         loadFinanceMembers(); loadFinanceSummary();
       }));
       el.querySelectorAll('.fin-unconfirm').forEach(btn => btn.addEventListener('click', async () => {
-        if (!confirm('Mark this payment as NOT confirmed?')) return;
+        if (!await nwConfirm('Mark this payment as NOT confirmed?')) return;
         const { ok, data: d } = await finPost(`memberships/${btn.dataset.id}`, 'PUT', { confirm_payment: false });
-        if (!ok) alert('Error: ' + d.error);
+        if (!ok) nwAlert('Error: ' + d.error);
         loadFinanceMembers(); loadFinanceSummary();
       }));
       el.querySelectorAll('.fin-refund').forEach(btn => btn.addEventListener('click', async () => {
-        const amount = parseFloat(prompt(`Refund amount for ${btn.dataset.name} (paid back from this slot's walk-in collection):`));
+        const amount = parseFloat(await nwPrompt(`Refund amount for ${btn.dataset.name} (paid back from this slot's walk-in collection):`));
         if (!amount || amount <= 0) return;
-        const reason = prompt('Reason (e.g. medical - ankle fracture):') || 'compassionate refund';
-        if (!confirm(`Issue a refund of ${amount} to ${btn.dataset.name}? Reason: ${reason}`)) return;
+        const reason = await nwPrompt('Reason (e.g. medical - ankle fracture):') || 'compassionate refund';
+        if (!await nwConfirm(`Issue a refund of ${amount} to ${btn.dataset.name}? Reason: ${reason}`)) return;
         const body = {
           date: new Date().toISOString().slice(0, 10),
           slot: document.getElementById('fmem_slot').value,
@@ -4895,15 +4960,15 @@ let userPool = null;
         };
         if (btn.dataset.pid) body.player_id = btn.dataset.pid;
         const { ok, data: d } = await finPost('walkins', 'POST', body);
-        if (!ok) { alert('Error: ' + JSON.stringify(d.errors || d.error)); return; }
-        alert('Refund recorded as a negative walk-in entry.');
+        if (!ok) { nwAlert('Error: ' + JSON.stringify(d.errors || d.error)); return; }
+        nwAlert('Refund recorded as a negative walk-in entry.');
         loadFinanceWalkins(); loadFinanceSummary(); loadFinanceMembers();
       }));
       el.querySelectorAll('.fin-mem-status').forEach(sel => sel.addEventListener('change', async (e) => {
         e.target.disabled = true;
         const { ok, data: d } = await finPost(`memberships/${e.target.dataset.id}`, 'PUT', { status: e.target.value });
         e.target.disabled = false;
-        if (!ok) { alert('Error: ' + d.error); return; }
+        if (!ok) { nwAlert('Error: ' + d.error); return; }
         // Saved immediately (data is safe), but per-head amounts only need
         // recomputing once you're done toggling - so instead of reloading the
         // whole section on every change (jarring when you set 10 members),
@@ -4949,7 +5014,7 @@ let userPool = null;
 
     async function bulkAddFromRoster() {
       const checked = [...document.querySelectorAll('#bulk-roster-list input:checked')];
-      if (!checked.length) { alert('Tick at least one player.'); return; }
+      if (!checked.length) { nwAlert('Tick at least one player.'); return; }
       const status = document.getElementById('bulk_status').value;
       const items = checked.map(cb => ({
         month: document.getElementById('fmem_month').value,
@@ -4958,7 +5023,7 @@ let userPool = null;
         display_name: cb.dataset.name, player_id: cb.value, status,
       }));
       const { ok, data } = await finPost('memberships', 'POST', { items });
-      if (!ok || (data.errors && data.errors.length)) { alert('Error: ' + JSON.stringify(data.errors || data.error)); return; }
+      if (!ok || (data.errors && data.errors.length)) { nwAlert('Error: ' + JSON.stringify(data.errors || data.error)); return; }
       loadFinanceMembers(); loadFinanceSummary();
     }
 
@@ -4972,9 +5037,9 @@ let userPool = null;
       const qs = finQS({ month: prevMonth, year: prevYear, slot });
       const res = await fetch(`${financeBaseUrl()}/memberships?${qs}`, { headers: getAuthHeaders() });
       const data = await res.json();
-      if (!res.ok) { alert('Error: ' + data.error); return; }
+      if (!res.ok) { nwAlert('Error: ' + data.error); return; }
       const prevYes = (data.memberships || []).filter(m => m.status === 'Yes');
-      if (!prevYes.length) { alert(`No Yes members found for ${prevMonth} ${prevYear} ${slot}.`); return; }
+      if (!prevYes.length) { nwAlert(`No Yes members found for ${prevMonth} ${prevYear} ${slot}.`); return; }
       // Dedup against the CURRENT month/slot as it actually is on the server
       // right now - not against lastMemberships, which may still hold a
       // different month/slot the user was viewing (that stale compare was
@@ -4988,13 +5053,13 @@ let userPool = null;
       } catch (_) { /* treat as empty target */ }
       const existingNames = new Set(currentMembers.map(m => m.player_id || `name:${m.display_name}`));
       const toAdd = prevYes.filter(m => !existingNames.has(m.player_id || `name:${m.display_name}`));
-      if (!toAdd.length) { alert('Everyone from last month is already on this month/slot.'); return; }
-      if (!confirm(`Add ${toAdd.length} member(s) from ${prevMonth} ${prevYear} to ${month} ${year} ${slot}, status No (pending renewal)?`)) return;
+      if (!toAdd.length) { nwAlert('Everyone from last month is already on this month/slot.'); return; }
+      if (!await nwConfirm(`Add ${toAdd.length} member(s) from ${prevMonth} ${prevYear} to ${month} ${year} ${slot}, status No (pending renewal)?`)) return;
       const items = toAdd.map(m => ({
         month, year, slot, display_name: m.display_name, player_id: m.player_id, status: 'No'
       }));
       const { ok, data: d } = await finPost('memberships', 'POST', { items });
-      if (!ok || (d.errors && d.errors.length)) { alert('Error: ' + JSON.stringify(d.errors || d.error)); return; }
+      if (!ok || (d.errors && d.errors.length)) { nwAlert('Error: ' + JSON.stringify(d.errors || d.error)); return; }
       loadFinanceMembers(); loadFinanceSummary();
     }
 
@@ -5002,7 +5067,7 @@ let userPool = null;
       const pid = document.getElementById('fmem_player').value;
       const name = document.getElementById('fmem_name').value.trim();
       const chosen = pid ? allPlayers.find(p => p.player_id === pid) : null;
-      if (!chosen && !name) { alert('Pick a roster player or type a name'); return; }
+      if (!chosen && !name) { nwAlert('Pick a roster player or type a name'); return; }
       const body = {
         month: document.getElementById('fmem_month').value,
         year: document.getElementById('fmem_year').value,
@@ -5013,7 +5078,7 @@ let userPool = null;
       };
       if (chosen) body.player_id = pid;
       const { ok, data } = await finPost('memberships', 'POST', body);
-      if (!ok || (data.errors && data.errors.length)) { alert('Error: ' + JSON.stringify(data.errors || data.error)); return; }
+      if (!ok || (data.errors && data.errors.length)) { nwAlert('Error: ' + JSON.stringify(data.errors || data.error)); return; }
       document.getElementById('fmem_name').value = '';
       document.getElementById('fmem_remark').value = '';
       loadFinanceMembers(); loadFinanceSummary();
@@ -5038,7 +5103,7 @@ let userPool = null;
         // at all) has no nickname concept, so their typed name stays as-is.
         const label = w.player_id ? playerLabelById(w.player_id, w.display_name) : w.display_name;
         html += `<tr><td>${w.date}</td><td>${w.slot}</td>` +
-          `<td>${label}${w.player_id ? '' : ' <span style="opacity:0.6;">(guest)</span>'}${w.note ? ` <span title="${String(w.note).replace(/"/g, '&quot;')}" onclick="alert('${String(w.note).replace(/'/g, "\\'").replace(/"/g, '&quot;')}')">📝</span>` : ''}</td>` +
+          `<td>${label}${w.player_id ? '' : ' <span style="opacity:0.6;">(guest)</span>'}${w.note ? ` <span title="${String(w.note).replace(/"/g, '&quot;')}" onclick="nwAlert('${String(w.note).replace(/'/g, "\\'").replace(/"/g, '&quot;')}')">📝</span>` : ''}</td>` +
           `<td>${w.fee}</td><td>${w.skill || ''}</td><td>${w.recruit_verdict || ''}</td>` +
           `<td><button type="button" class="secondary fin-del" data-kind="walkins" data-id="${w.record_id}">Delete</button></td></tr>`;
       });
@@ -5050,8 +5115,8 @@ let userPool = null;
       const pid = document.getElementById('fwalk_player').value;
       const name = document.getElementById('fwalk_name').value.trim();
       const chosen = pid ? allPlayers.find(p => p.player_id === pid) : null;
-      if (!chosen && !name) { alert('Pick a roster player or type a guest name'); return; }
-      if (!document.getElementById('fwalk_date').value) { alert('Pick a date'); return; }
+      if (!chosen && !name) { nwAlert('Pick a roster player or type a guest name'); return; }
+      if (!document.getElementById('fwalk_date').value) { nwAlert('Pick a date'); return; }
       const body = {
         date: document.getElementById('fwalk_date').value,
         slot: document.getElementById('fwalk_slot').value,
@@ -5063,7 +5128,7 @@ let userPool = null;
       };
       if (chosen) body.player_id = pid;
       const { ok, data } = await finPost('walkins', 'POST', body);
-      if (!ok || (data.errors && data.errors.length)) { alert('Error: ' + JSON.stringify(data.errors || data.error)); return; }
+      if (!ok || (data.errors && data.errors.length)) { nwAlert('Error: ' + JSON.stringify(data.errors || data.error)); return; }
       document.getElementById('fwalk_name').value = '';
       document.getElementById('fwalk_note').value = '';
       // Prepend the new row locally instead of re-fetching the whole table;
@@ -5100,7 +5165,7 @@ let userPool = null;
 
     function copyDuesForWhatsApp() {
       const data = lastInsights;
-      if (!data || !data.cost_rows || !data.cost_rows.length) { alert('Load insights first.'); return; }
+      if (!data || !data.cost_rows || !data.cost_rows.length) { nwAlert('Load insights first.'); return; }
       const month = data.cost_rows[0].month, year = data.cost_rows[0].year;
       const rows = data.cost_rows.map(r => ({
         name: r.display_name,
@@ -5127,18 +5192,18 @@ let userPool = null;
       out.push(line('TOTAL', money(tOwed), money(tRel), money(tPay)));
       out.push('```');
       const text = `*${month} ${year} dues*\n` + out.join('\n');
-      const done = () => alert('Copied - paste into your WhatsApp group (keep the ``` for the table to line up).');
+      const done = () => nwAlert('Copied - paste into your WhatsApp group (keep the ``` for the table to line up).');
       if (navigator.clipboard && navigator.clipboard.writeText) {
         navigator.clipboard.writeText(text).then(done).catch(() => fallbackCopy(text, done));
       } else { fallbackCopy(text, done); }
     }
 
-    function fallbackCopy(text, cb) {
+    async function fallbackCopy(text, cb) {
       const ta = document.createElement('textarea');
       ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
       document.body.appendChild(ta); ta.select();
       try { document.execCommand('copy'); cb && cb(); }
-      catch (e) { prompt('Copy this:', text); }
+      catch (e) { await nwPrompt('Copy this:', text); }
       document.body.removeChild(ta);
     }
 
@@ -5206,8 +5271,8 @@ let userPool = null;
       }
       el.innerHTML = html;
       el.querySelectorAll('.fin-attended').forEach(btn => btn.addEventListener('click', async () => {
-        const note = prompt(`How much did ${btn.dataset.name} attend? (optional note, e.g. 'came 3-4 times before injury')`) || '';
-        if (!confirm(`Mark ${btn.dataset.name} as having attended (removes them from the ghost list)?`)) return;
+        const note = await nwPrompt(`How much did ${btn.dataset.name} attend? (optional note, e.g. 'came 3-4 times before injury')`) || '';
+        if (!await nwConfirm(`Mark ${btn.dataset.name} as having attended (removes them from the ghost list)?`)) return;
         for (const id of btn.dataset.ids.split(',').filter(Boolean)) {
           await finPost(`memberships/${id}`, 'PUT', { attended_briefly: true, attendance_note: note });
         }
@@ -5229,7 +5294,7 @@ let userPool = null;
 
     document.addEventListener('click', async (e) => {
       if (!e.target.classList || !e.target.classList.contains('fin-del')) return;
-      const code = prompt('This permanently deletes the record. Enter the confirmation code:');
+      const code = await nwPrompt('This permanently deletes the record. Enter the confirmation code:');
       if (!code) return;
       const kind = e.target.dataset.kind;               // e.g. 'expenses', 'memberships', 'walkins'
       const recordType = kind.endsWith('s') ? kind.slice(0, -1) : kind;
@@ -5248,7 +5313,7 @@ let userPool = null;
       } else {
         ({ ok, data } = await finPost(`${kind}/${recordId}`, 'DELETE', { confirm: code }));
       }
-      if (!ok) { alert('Error: ' + data.error); return; }
+      if (!ok) { nwAlert('Error: ' + data.error); return; }
       loadFinanceExpenses(); loadFinanceMembers(); loadFinanceWalkins(); loadFinanceSummary();
     });
 
@@ -5440,7 +5505,7 @@ let userPool = null;
         return;
       }
 
-      if (!confirm('Apply this order?\n\nThe timestamps for this day\'s matches will be swapped to match, and every player\'s rating recomputed from scratch. This cannot be undone automatically.')) return;
+      if (!await nwConfirm('Apply this order?\n\nThe timestamps for this day\'s matches will be swapped to match, and every player\'s rating recomputed from scratch. This cannot be undone automatically.')) return;
       statusEl.textContent = 'Applying and recomputing...';
       try {
         const { res, error } = await authedFetch(`${API_BASE_URL}/reorder-matches`, {
@@ -5717,8 +5782,8 @@ let userPool = null;
           (claimable
             ? 'If that is you, link this login to that existing profile so your match history and rating stay in one place.\n\nOK = link me to that profile\nCancel = go back and pick a different nickname'
             : 'That profile is already linked to another account, so you will need a different nickname.');
-        if (!claimable) { alert(msg); return false; }
-        if (confirm(msg)) { showCompleteProfileMode('claim', exact.player_id); return false; }
+        if (!claimable) { nwAlert(msg); return false; }
+        if (await nwConfirm(msg)) { showCompleteProfileMode('claim', exact.player_id); return false; }
         return false;  // either way, do NOT create a duplicate under a colliding nickname
       }
 
@@ -5736,7 +5801,7 @@ let userPool = null;
       if (!near.length) return true;
 
       const list = near.slice(0, 5).map(p => `  - ${p.name} (${p.nickname})`).join('\n');
-      const answer = confirm(
+      const answer = await nwConfirm(
         `We already have ${near.length === 1 ? 'a player' : 'players'} who might be you:\n\n${list}\n\n` +
         'Creating a second profile splits your ratings and match history in two.\n\n' +
         'OK = one of these is me, link my account to it\n' +
@@ -5776,7 +5841,7 @@ let userPool = null;
         // creating a duplicate history.
         if (res.status === 409 && data && data.suggest_claim_player_id) {
           statusEl.textContent = '';
-          const claimIt = confirm(`${data.error}\n\nClaim that existing profile instead?`);
+          const claimIt = await nwConfirm(`${data.error}\n\nClaim that existing profile instead?`);
           if (claimIt) { showCompleteProfileMode('claim', data.suggest_claim_player_id); }
           return;
         }
@@ -5825,7 +5890,7 @@ let userPool = null;
     function finishRequestAndSignOut(message) {
       closeCompleteProfileModal();
       doLogout();
-      alert(`${message}\n\nYou'll be able to log in properly once it's approved. If it's rejected, you can sign up again with the same email.`);
+      nwAlert(`${message}\n\nYou'll be able to log in properly once it's approved. If it's rejected, you can sign up again with the same email.`);
     }
 
     async function doLogin() {
@@ -6252,7 +6317,7 @@ let userPool = null;
           renderTournament(data);
         } else {
           resultEl.textContent = `Error: ${error}`;
-          alert(`Tournament NOT created\n\n${error}`);
+          nwAlert(`Tournament NOT created\n\n${error}`);
         }
       } catch (err) {
         resultEl.textContent = `Request failed: ${err.message}`;
@@ -6366,7 +6431,7 @@ let userPool = null;
       if (!tournamentId) { resultEl.textContent = 'Select a tournament first.'; return; }
 
       const label = selectedOption ? selectedOption.textContent : tournamentId;
-      const confirmText = prompt(`Enter the confirmation code to delete "${label}". This only removes this exact tournament entry - player ratings and match history are untouched.`);
+      const confirmText = await nwPrompt(`Enter the confirmation code to delete "${label}". This only removes this exact tournament entry - player ratings and match history are untouched.`);
       if (!confirmText) {
         resultEl.textContent = 'Cancelled.';
         return;
@@ -6912,7 +6977,7 @@ let userPool = null;
     async function downloadTournamentImage() {
       const t = currentTournamentData;
       if (!t || !t.knockout || t.status !== 'completed') {
-        alert('This tournament is not completed yet.');
+        nwAlert('This tournament is not completed yet.');
         return;
       }
       const rounds = t.knockout.rounds;
@@ -7037,7 +7102,7 @@ let userPool = null;
       }
 
       canvas.toBlob((blob) => {
-        if (!blob) { alert('Could not generate the image.'); return; }
+        if (!blob) { nwAlert('Could not generate the image.'); return; }
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url; a.download = `${t.name.replace(/[^a-z0-9]+/gi, '_')}_results.png`;
@@ -7059,11 +7124,11 @@ let userPool = null;
     function copyTournamentRecap() {
       if (!currentTournamentData) return;
       const recap = generateTournamentRecap(currentTournamentData);
-      if (!recap) { alert('This tournament is not completed yet.'); return; }
+      if (!recap) { nwAlert('This tournament is not completed yet.'); return; }
       navigator.clipboard.writeText(recap).then(() => {
-        alert('Recap copied - paste it into WhatsApp.');
-      }).catch(() => {
-        prompt('Copy this text manually:', recap);
+        nwAlert('Recap copied - paste it into WhatsApp.');
+      }).catch(async () => {
+        await nwPrompt('Copy this text manually:', recap);
       });
     }
 
@@ -7088,11 +7153,11 @@ let userPool = null;
         renderTournament(data);
         loadPlayers();
       } else if (!override && data.error && data.error.startsWith('invalid game score')) {
-        if (confirm(`${data.error}\n\nThis doesn't match the tournament's configured scoring rules. Submit ${score_a}-${score_b} anyway as the actual result?`)) {
+        if (await nwConfirm(`${data.error}\n\nThis doesn't match the tournament's configured scoring rules. Submit ${score_a}-${score_b} anyway as the actual result?`)) {
           await submitGroupScoreDirect(tournamentId, subgroup, fixtureId, score_a, score_b, true, pointLog);
         }
       } else {
-        alert(data.error);
+        nwAlert(data.error);
       }
     }
 
@@ -7113,11 +7178,11 @@ let userPool = null;
         renderTournament(data);
         loadPlayers();
       } else if (!override && data.error && data.error.startsWith('invalid game score')) {
-        if (confirm(`${data.error}\n\nThis doesn't match the tournament's configured scoring rules. Submit ${score_a}-${score_b} anyway as the actual result?`)) {
+        if (await nwConfirm(`${data.error}\n\nThis doesn't match the tournament's configured scoring rules. Submit ${score_a}-${score_b} anyway as the actual result?`)) {
           await submitKnockoutScoreDirect(tournamentId, roundIndex, matchIndex, score_a, score_b, true, pointLog);
         }
       } else {
-        alert(data.error);
+        nwAlert(data.error);
       }
     }
 
@@ -7138,11 +7203,11 @@ let userPool = null;
         renderTournament(data);
         loadPlayers();
       } else if (!override && data.error && data.error.startsWith('invalid game score')) {
-        if (confirm(`${data.error}\n\nThis doesn't match the tournament's configured scoring rules. Submit ${score_a}-${score_b} anyway as the actual result?`)) {
+        if (await nwConfirm(`${data.error}\n\nThis doesn't match the tournament's configured scoring rules. Submit ${score_a}-${score_b} anyway as the actual result?`)) {
           await submitThirdPlaceScoreDirect(tournamentId, score_a, score_b, true, pointLog);
         }
       } else {
-        alert(data.error);
+        nwAlert(data.error);
       }
     }
 
@@ -7192,7 +7257,7 @@ let userPool = null;
       const log = getTournamentLiveLog(matchKey);
       const a = log.filter(p => p === 'A').length;
       const b = log.filter(p => p === 'B').length;
-      if (a === b) { alert('Record at least one decisive point before submitting.'); return; }
+      if (a === b) { nwAlert('Record at least one decisive point before submitting.'); return; }
       delete tournamentLiveLogs[matchKey];
       await submitGroupScoreDirect(tournamentId, subgroup, fixtureId, a, b, false, log);
     }
@@ -7201,7 +7266,7 @@ let userPool = null;
       const log = getTournamentLiveLog(matchKey);
       const a = log.filter(p => p === 'A').length;
       const b = log.filter(p => p === 'B').length;
-      if (a === b) { alert('Record at least one decisive point before submitting.'); return; }
+      if (a === b) { nwAlert('Record at least one decisive point before submitting.'); return; }
       delete tournamentLiveLogs[matchKey];
       await submitKnockoutScoreDirect(tournamentId, roundIndex, matchIndex, a, b, false, log);
     }
@@ -7210,7 +7275,7 @@ let userPool = null;
       const log = getTournamentLiveLog(matchKey);
       const a = log.filter(p => p === 'A').length;
       const b = log.filter(p => p === 'B').length;
-      if (a === b) { alert('Record at least one decisive point before submitting.'); return; }
+      if (a === b) { nwAlert('Record at least one decisive point before submitting.'); return; }
       delete tournamentLiveLogs[matchKey];
       await submitThirdPlaceScoreDirect(tournamentId, a, b, false, log);
     }
@@ -7274,12 +7339,20 @@ let userPool = null;
           loadStore();
           loadQuests();
         }
-        if (btn.dataset.tab === 'finance'
-            && document.getElementById('finance-content').style.display !== 'block') {
-          tryAutoFinanceUnlock();
-        }
         if (btn.dataset.tab === 'finance') {
-          populateMyDuesGroups();
+          // Dues card + ledger selector both read allGroups. If it hasn't
+          // finished loading yet (first open / slow network) they'd render
+          // empty and "disappear" - so load groups FIRST, then unlock and
+          // populate. This is why they only showed up sometimes.
+          (async () => {
+            if (!allGroups || !allGroups.length) { try { await loadGroups(); } catch (e) {} }
+            if (document.getElementById('finance-content').style.display !== 'block') {
+              await tryAutoFinanceUnlock();   // populates the ledger selector on success
+            } else {
+              populateFinanceGroups();
+            }
+            populateMyDuesGroups();
+          })();
         }
         // Leaving the Player Card has to hand the page back to your own
         // background, so this is re-evaluated on every switch rather than
