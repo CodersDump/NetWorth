@@ -146,10 +146,12 @@
 
 ## Done
 
-- ✅ 2026-08-01 — **Feature:** interactive zoom/pan on the rating-history chart. Added
-  `chartjs-plugin-zoom` (Chart.js 4.4.1) — pinch (touch) / wheel (desktop) zooms into the time axis
-  and drag pans, inside the plot instead of a browser page-zoom. Zoom hint + "Reset zoom" button
-  (`resetRatingZoom`). Frontend-only; min zoom range ~2 days.
+- ✅ 2026-08-01 — **Feature + fix:** interactive zoom/pan on the rating-history chart
+  (`chartjs-plugin-zoom`, Chart.js 4.4.1). Gestures reworked so they don't fight page scroll:
+  **drag a box** to zoom, **Shift+drag** to pan, **Ctrl+scroll** to zoom (desktop), **pinch** on
+  mobile. Added `touch-action: pan-y` on the canvas so the browser stops eating the pinch as a page
+  zoom while one-finger vertical scroll still works. "Reset zoom" button (`resetRatingZoom`).
+  Frontend-only; min zoom ~2 days.
 - ✅ 2026-08-01 — **Feature:** SuperAdmin claim-audit panel (User → profile mapping). Surfaces
   `claim_audit.py` in-app: Reviews-tab section shows every account's linked player, flags broken
   links at top (no_profile / dangling / claimed_unlinked / misstamp), with **re-link** (point an

@@ -358,3 +358,8 @@
   }
 
 .rating-zoom-hint { font-size: 11px; color: var(--text-secondary); }
+
+/* Chart zoom: pan-y lets a one-finger vertical swipe still scroll the page,
+   while the canvas captures two-finger pinch for chart zoom (without this the
+   browser eats the pinch as a page zoom). */
+#profile-rating-canvas { touch-action: pan-y; }

@@ -3618,11 +3618,15 @@ let userPool = null;
             plugins: {
               legend: { labels: { color: getComputedStyle(document.body).color } },
               zoom: {
-                pan: { enabled: true, mode: 'x' },
+                // Pan with SHIFT+drag (desktop) so plain drag is free for
+                // box-zoom; one/two-finger drag pans on touch.
+                pan: { enabled: true, mode: 'x', modifierKey: 'shift' },
                 zoom: {
-                  wheel: { enabled: true },
-                  pinch: { enabled: true },
-                  drag: { enabled: false },
+                  // CTRL+wheel zooms so a plain scroll still scrolls the page
+                  // (plain wheel-zoom was hijacking normal scrolling).
+                  wheel: { enabled: true, modifierKey: 'ctrl' },
+                  pinch: { enabled: true },                       // mobile
+                  drag: { enabled: true, backgroundColor: 'rgba(47,169,104,0.15)' },  // drag a box to zoom (desktop)
                   mode: 'x'
                 },
                 limits: { x: { minRange: 2 * 24 * 60 * 60 * 1000 } }  // don't zoom past ~2 days
