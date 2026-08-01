@@ -4848,11 +4848,22 @@ let userPool = null;
           ${pay}
           <div class="fin-mem-card-actions">
             <button type="button" class="secondary fin-refund" data-name="${m.display_name}" data-pid="${m.player_id || ''}">Refund…</button>
+            <button type="button" class="secondary fin-forfeit" data-id="${m.record_id}" data-on="${m.forfeit_residual ? '1' : ''}" title="Forfeit this month's refund and redistribute it to the other members">${m.forfeit_residual ? '\u2713 Refund forfeited' : 'Forfeit refund'}</button>
             <button type="button" class="secondary fin-del" data-kind="memberships" data-id="${m.record_id}">Delete</button>
           </div>
         </div>`;
       });
       el.innerHTML = html;
+      el.querySelectorAll('.fin-forfeit').forEach(btn => btn.addEventListener('click', async () => {
+        const turningOn = !btn.dataset.on;
+        const msg = turningOn
+          ? 'Forfeit this member\u2019s refund for this month? Their share is redistributed to the other members (they get \u20b90 back). This does not change what they paid.'
+          : 'Restore this member\u2019s refund (undo forfeit)?';
+        if (!confirm(msg)) return;
+        const { ok, data: d } = await finPost(`memberships/${btn.dataset.id}`, 'PUT', { forfeit_residual: turningOn });
+        if (!ok) { alert('Error: ' + d.error); return; }
+        loadFinanceMembers(); loadFinanceSummary();
+      }));
       el.querySelectorAll('.fin-confirm').forEach(btn => btn.addEventListener('click', async () => {
         if (!confirm(`Confirm that ${btn.dataset.name} paid ${cph} for ${document.getElementById('fmem_month').value} ${document.getElementById('fmem_slot').value}?`)) return;
         const { ok, data: d } = await finPost(`memberships/${btn.dataset.id}`, 'PUT', { confirm_payment: true });
@@ -5086,16 +5097,32 @@ let userPool = null;
       const data = lastInsights;
       if (!data || !data.cost_rows || !data.cost_rows.length) { alert('Load insights first.'); return; }
       const month = data.cost_rows[0].month, year = data.cost_rows[0].year;
-      const lines = [`*${month} ${year} dues*`, ''];
-      data.cost_rows.forEach(r => {
-        // Plain, no per-slot breakdown: name, owed (paid), relief, final (effective).
-        const owed = r.paid === null ? '-' : `\u20b9${r.paid}`;
-        const relief = (r.relief && r.relief != 0) ? ` (relief \u20b9${r.relief})` : '';
-        const pay = r.effective_cost === null ? 'pending' : `\u20b9${r.effective_cost}`;
-        lines.push(`${r.display_name}: owed ${owed}${relief} \u2192 pay *${pay}*`);
+      const rows = data.cost_rows.map(r => ({
+        name: r.display_name,
+        owed: r.paid === null ? null : Number(r.paid),
+        relief: (r.relief && r.relief != 0) ? Number(r.relief) : 0,
+        pay: r.effective_cost === null ? null : Number(r.effective_cost),
+      }));
+      const money = v => (v === null ? '-' : Number(v).toFixed(2));
+      // Column widths sized to the longest cell so it lines up in WhatsApp's
+      // monospace (```-wrapped) rendering.
+      const nameW = Math.max(6, ...rows.map(r => r.name.length));
+      const owedW = Math.max(4, ...rows.map(r => money(r.owed).length));
+      const relW = Math.max(6, ...rows.map(r => money(r.relief).length));
+      const payW = Math.max(3, ...rows.map(r => money(r.pay).length));
+      const pad = (s, w) => String(s).padEnd(w);
+      const padL = (s, w) => String(s).padStart(w);
+      const line = (n, o, r, p) => `${pad(n, nameW)}  ${padL(o, owedW)}  ${padL(r, relW)}  ${padL(p, payW)}`;
+      const out = ['```', line('Member', 'Owed', 'Relief', 'Pay')];
+      let tOwed = 0, tRel = 0, tPay = 0;
+      rows.forEach(r => {
+        out.push(line(r.name, money(r.owed), r.relief ? money(r.relief) : '-', money(r.pay)));
+        tOwed += r.owed || 0; tRel += r.relief || 0; tPay += r.pay || 0;
       });
-      const text = lines.join('\n');
-      const done = () => alert('Copied - paste into your WhatsApp group.');
+      out.push(line('TOTAL', money(tOwed), money(tRel), money(tPay)));
+      out.push('```');
+      const text = `*${month} ${year} dues*\n` + out.join('\n');
+      const done = () => alert('Copied - paste into your WhatsApp group (keep the ``` for the table to line up).');
       if (navigator.clipboard && navigator.clipboard.writeText) {
         navigator.clipboard.writeText(text).then(done).catch(() => fallbackCopy(text, done));
       } else { fallbackCopy(text, done); }
