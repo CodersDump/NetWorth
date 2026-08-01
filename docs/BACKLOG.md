@@ -146,6 +146,27 @@
 
 ## Done
 
+- ✅ 2026-08-01 — **Feature + fix:** (1) themed modal system — `nwConfirm`/`nwAlert`/`nwPrompt`
+  (Promise-based) replace ALL 137 native browser confirm/alert/prompt calls; styled via the app's CSS
+  vars so they follow light/dark automatically (Esc/click-out cancels, Enter confirms). (2) Race-fix:
+  the Finance tab now loads groups BEFORE rendering the dues card + ledger selector, so they no longer
+  intermittently fail to appear (they read allGroups, which was sometimes still loading).
+
+- ✅ 2026-08-01 — **Feature (money):** payment confirmation now uses the relief-adjusted (effective)
+  amount. Members list returns per-member `relief` + `effective` (cost_per_head − relief); the card
+  shows "Pay ₹X (₹cost − ₹relief relief)"; the confirm dialog and paid badge use effective. Confirm
+  now STORES the effective amount, and "settled" is checked against it (second pass in
+  `_settlement_rows`, since relief is cross-month). Shared `_prev_period`/`_member_relief` helpers are
+  the single source of truth (insights refactored onto them). Math unit-tested (825 − 175 relief =
+  650; settled matches on 650, not the pre-relief 825).
+
+
+### Then: optional slot-less (group-wide) expenses/walk-ins
+A record with no slot splits its cost across ALL DISTINCT "Yes" members across every slot that month
+(counted once even if in two slots). Requires a two-tier settlement: per-slot buckets + a group-wide
+bucket allocated across the union of Yes members. Money-critical - build + test carefully. Walk-ins
+may also be slot-less (date kept, slot optional).
+
 - ✅ 2026-08-01 — **Feature (money):** residual forfeit + redistribute. A membership can be marked
   `forfeit_residual` (owner-only "Forfeit refund" toggle on the card); that member's relief becomes ₹0
   and the residual pool is split among the remaining Yes members of that (month, slot) - each gets

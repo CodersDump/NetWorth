@@ -397,6 +397,30 @@ def _resolve_name(pid_cache, player_id):
 
 # ---------- CRUD ----------
 
+def _prev_period(month, year):
+    i = MONTHS.index(month)
+    return (MONTHS[i - 1], year - 1 if i == 0 else year)
+
+
+def _member_relief(settlement, memberships, ident, month, year):
+    """Relief a member gets in (month, year): the sum of LAST month's
+    residual_per_head for each slot they were a Yes member in then. A member
+    who forfeited that prior slot gets nothing from it. This is the single
+    source of truth used by both the members list and insights."""
+    p_month, p_year = _prev_period(month, year)
+    relief = 0.0
+    for m in memberships:
+        if (m.get('status') == 'Yes' and str(m.get('month')) == p_month
+                and int(_num(m.get('year'))) == p_year
+                and (m.get('player_id') or f"name:{m.get('display_name')}") == ident):
+            if m.get('forfeit_residual'):
+                continue
+            res = (settlement.get((p_month, p_year, str(m.get('slot')))) or {}).get('residual_per_head')
+            if res:
+                relief += res
+    return round(relief, 2)
+
+
 def list_records(record_type, params, group_id=None):
     items = _scan_type(record_type, group_id)
     if record_type == 'walkin':
@@ -431,10 +455,22 @@ def list_records(record_type, params, group_id=None):
                                    i.get('slot', ''), i.get('display_name', '')))
     resp = {record_type + 's': items}
     if record_type == 'membership' and params.get('month') and params.get('year') and params.get('slot'):
-        row = _settlement_rows(group_id).get((str(params['month']), int(_num(params['year'])), str(params['slot'])))
+        settlement = _settlement_rows(group_id)
+        row = settlement.get((str(params['month']), int(_num(params['year'])), str(params['slot'])))
         if row:
             resp['cost_per_head'] = row['cost_per_head']
             resp['estimated_total'] = row['estimated_total']
+            cph = row['cost_per_head']
+            # Per-member relief + effective (what they actually pay) so the
+            # card and the confirm dialog don't need the Insights tab.
+            all_mem = _scan_type('membership', group_id)
+            for it in items:
+                ident = it.get('player_id') or f"name:{it.get('display_name')}"
+                relief = _member_relief(settlement, all_mem, ident,
+                                        str(params['month']), int(_num(params['year'])))
+                it['relief'] = relief
+                if cph is not None:
+                    it['effective'] = round(max(cph - relief, 0), 2)
     return _response(200, resp)
 
 
@@ -474,12 +510,22 @@ def update_record(record_type, record_id, body, group_id=None):
     # confirmation automatically shows as needing re-confirmation.
     if record_type == 'membership' and 'confirm_payment' in body:
         if body['confirm_payment']:
-            row = _settlement_rows(existing.get('group_id')).get((str(existing.get('month')), int(_num(existing.get('year'))),
-                                           str(existing.get('slot'))))
+            settlement = _settlement_rows(existing.get('group_id'))
+            row = settlement.get((str(existing.get('month')), int(_num(existing.get('year'))),
+                                  str(existing.get('slot'))))
             cph = row['cost_per_head'] if row else None
             if cph is None:
                 return _response(400, {'error': 'per-head amount is not computable yet (no expenses or no Yes members)'})
-            existing['payment_confirmed_amount'] = Decimal(str(cph))
+            # Store what they ACTUALLY pay = per-head minus their relief, so the
+            # confirmed amount matches the collected amount (not the pre-relief
+            # figure). Change-detection still works: if cost or relief shifts,
+            # the effective amount shifts and the confirmation shows as stale.
+            ident = existing.get('player_id') or f"name:{existing.get('display_name')}"
+            all_mem = _scan_type('membership', existing.get('group_id'))
+            relief = _member_relief(settlement, all_mem, ident,
+                                    str(existing.get('month')), int(_num(existing.get('year'))))
+            effective = round(max(cph - relief, 0), 2)
+            existing['payment_confirmed_amount'] = Decimal(str(effective))
         else:
             existing.pop('payment_confirmed_amount', None)
         finance_table.put_item(Item=existing)
@@ -716,14 +762,6 @@ def _settlement_rows(group_id=None):
                 continue
             bucket(month, year, w.get('slot'))['extra_collected'] += _num(w.get('fee'))
 
-    # Collection status per period: a Yes member counts as confirmed only
-    # while their stored confirmed amount equals the CURRENT per-head.
-    confirmed = {}
-    for m in memberships:
-        if m.get('status') == 'Yes' and m.get('payment_confirmed_amount') is not None:
-            key = (str(m.get('month')), int(_num(m.get('year'))), str(m.get('slot')))
-            confirmed.setdefault(key, []).append(_num(m.get('payment_confirmed_amount')))
-
     for key, b in periods.items():
         count = b['player_count']
         # Residual (relief) is redistributed among the NON-forfeiters only:
@@ -739,9 +777,29 @@ def _settlement_rows(group_id=None):
         b['estimated_total'] = round(b['estimated_total'], 2)
         b['actual_total'] = round(b['actual_total'], 2)
         b['extra_collected'] = round(b['extra_collected'], 2)
-        if count and b['cost_per_head'] is not None:
-            b['confirmed_count'] = sum(1 for amt in confirmed.get(key, [])
-                                        if abs(amt - b['cost_per_head']) < 0.01)
+
+    # Settled status (second pass - needs every period's residual finalised
+    # first, because a member's EFFECTIVE amount = cost_per_head - their relief,
+    # and relief comes from the previous month's residual). A Yes member counts
+    # as confirmed only while their stored confirmed amount still equals their
+    # current effective amount.
+    matched = {k: 0 for k in periods}
+    for m in memberships:
+        if m.get('status') != 'Yes' or m.get('payment_confirmed_amount') is None:
+            continue
+        key = (str(m.get('month')), int(_num(m.get('year'))), str(m.get('slot')))
+        b = periods.get(key)
+        if not b or b.get('cost_per_head') is None:
+            continue
+        ident = m.get('player_id') or f"name:{m.get('display_name')}"
+        relief = _member_relief(periods, memberships, ident, b['month'], b['year'])
+        effective = round(max(b['cost_per_head'] - relief, 0), 2)
+        if abs(_num(m.get('payment_confirmed_amount')) - effective) < 0.01:
+            matched[key] += 1
+    for key, b in periods.items():
+        count = b['player_count']
+        if count and b.get('cost_per_head') is not None:
+            b['confirmed_count'] = matched.get(key, 0)
             b['collection_status'] = 'settled' if b['confirmed_count'] >= count else 'collecting'
         else:
             b['confirmed_count'] = 0
@@ -858,16 +916,7 @@ def insights(group_id=None):
                                         'members': srow.get('player_count')})
 
         p_month, p_year = prev_period(month, year)
-        relief = 0.0
-        for mem2 in memberships:
-            if (mem2.get('status') == 'Yes' and str(mem2.get('month')) == p_month
-                    and int(_num(mem2.get('year'))) == p_year
-                    and (mem2.get('player_id') or f"name:{mem2.get('display_name')}") == ident):
-                if mem2.get('forfeit_residual'):
-                    continue  # forfeited last month - no relief this month
-                res = (settlement.get((p_month, p_year, str(mem2.get('slot')))) or {}).get('residual_per_head')
-                if res:
-                    relief += res
+        relief = _member_relief(settlement, memberships, ident, month, year)
 
         attended_briefly = any(
             mem3.get('attended_briefly') for mem3 in memberships
