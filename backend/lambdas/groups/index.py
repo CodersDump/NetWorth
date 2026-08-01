@@ -448,6 +448,7 @@ def get_group(group_id):
         'slots': item.get('slots', []),
         'slot_members': item.get('slot_members', {}),
         'finance_payee': item.get('finance_payee', {}),
+        'finance_roles': item.get('finance_roles', {}),
         'default_tournament_settings': item.get('default_tournament_settings')
     })
 

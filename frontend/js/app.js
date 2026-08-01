@@ -346,6 +346,7 @@ let userPool = null;
         return;
       }
       const sortedMembers = [...data.members].sort((a, b) => a.name.localeCompare(b.name));
+      const financeRoles = data.finance_roles || {};
       membersEl.innerHTML = '<strong>Members:</strong>' + sortedMembers.map(m => {
         const roleTag = m.role && m.role !== 'member'
           ? `<span style="font-size:11px; opacity:0.75; margin-left:6px; border:1px solid var(--border); border-radius:4px; padding:1px 6px;">${m.role}</span>`
@@ -356,7 +357,23 @@ let userPool = null;
         const removeBtn = (!isLoggedIn() || iCanManage)
           ? `<button onclick="removePlayerFromGroup('${groupId}','${m.player_id}')">Remove</button>` : '';
         const displayLabel = formatPlayerLabel(m.name, m.nickname);
-        return `<div class="member-row"><span>${displayLabel} (${m.rating})${roleTag}</span>${removeBtn}</div>`;
+        // Finance access control - owners/admins only. Owners/admins already
+        // have full finance implicitly, so this is only meaningful for plain
+        // members; shown for everyone so the owner sees the full picture.
+        let finCtrl = '';
+        if (iCanManage) {
+          const isOwnerAdmin = (m.role === 'owner' || m.role === 'admin');
+          if (isOwnerAdmin) {
+            finCtrl = `<span style="font-size:11px; color:var(--text-secondary); margin-left:8px;">finance: full (${m.role})</span>`;
+          } else {
+            const cur = financeRoles[m.player_id] || 'none';
+            const opt = (v, label) => `<option value="${v}"${cur === v ? ' selected' : ''}>${label}</option>`;
+            finCtrl = `<select style="font-size:11px; margin-left:8px; padding:1px 4px;" onchange="setGroupFinanceRole('${groupId}','${m.player_id}', this.value).then(()=>loadGroupMembers('${groupId}'))">`
+              + opt('none', 'no finance') + opt('view', 'can view') + opt('write', 'can edit') + opt('delete', 'can delete')
+              + '</select>';
+          }
+        }
+        return `<div class="member-row"><span>${displayLabel} (${m.rating})${roleTag}${finCtrl}</span>${removeBtn}</div>`;
       }).join('');
 
       // Per-group time slots (Stage 4). Owners/admins define the slot list and

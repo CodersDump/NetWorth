@@ -146,6 +146,14 @@
 
 ## Done
 
+- ✅ 2026-08-01 — **Feature + script:** owner-facing member finance-access panel. In the group
+  detail, owners/admins now see each member with a dropdown to set their finance access
+  (no finance / view / edit / delete) inline — wires the Stage 3 `setGroupFinanceRole` endpoint into
+  the UI (get_group now returns `finance_roles`). Non-managers see no controls (empty). Default is
+  "no finance" so members only see their My Dues card, not the expense ledger. `scripts/
+  map_july_walkins_to_group.py` re-homes a month's walk-ins under a named group (default Matchpoint,
+  July 2026), slots untouched (dry-run/idempotent).
+
 - ✅ 2026-08-01 — **Fix + scripts:** wired group slots into the Finance forms (`populateFinanceSlots`
   fills the expense/membership/walk-in slot dropdowns from the selected group's `slots`, fallback to
   the default pair) — Stage 4 defined slots but never connected them to these forms.
