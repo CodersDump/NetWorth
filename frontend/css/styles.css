@@ -356,3 +356,5 @@
     .achievement-name { font-size: 13px; }
     .achievement-desc { font-size: 11px; }
   }
+
+.rating-zoom-hint { font-size: 11px; color: var(--text-secondary); }

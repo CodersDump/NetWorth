@@ -3560,6 +3560,12 @@ let userPool = null;
       }
     }
 
+    function resetRatingZoom() {
+      if (profileRatingChart && typeof profileRatingChart.resetZoom === 'function') {
+        profileRatingChart.resetZoom();
+      }
+    }
+
     async function loadProfileRatingChart(playerId) {
       try {
         const playerIds = [
@@ -3593,6 +3599,14 @@ let userPool = null;
           ? { type: 'linear', title: { display: true, text: 'Match #' }, ticks: { color: '#888', precision: 0 } }
           : { type: 'time', time: { unit: 'day' }, ticks: { color: '#888' } };
 
+        // Register the zoom plugin once (guarded so re-rendering the chart
+        // doesn't double-register). Lets you pinch (touch) / wheel (desktop)
+        // to zoom into the time axis and drag to pan - inside the plot, not
+        // a browser page zoom. Falls back gracefully if the CDN script didn't
+        // load (older cached index.html).
+        if (window.ChartZoom && !Chart.registry.plugins.get('zoom')) {
+          Chart.register(window.ChartZoom);
+        }
         profileRatingChart = new Chart(ctx, {
           type: 'line',
           data: { datasets },
@@ -3601,9 +3615,23 @@ let userPool = null;
               x: xScale,
               y: { ticks: { color: '#888' } }
             },
-            plugins: { legend: { labels: { color: getComputedStyle(document.body).color } } }
+            plugins: {
+              legend: { labels: { color: getComputedStyle(document.body).color } },
+              zoom: {
+                pan: { enabled: true, mode: 'x' },
+                zoom: {
+                  wheel: { enabled: true },
+                  pinch: { enabled: true },
+                  drag: { enabled: false },
+                  mode: 'x'
+                },
+                limits: { x: { minRange: 2 * 24 * 60 * 60 * 1000 } }  // don't zoom past ~2 days
+              }
+            }
           }
         });
+        const resetBtn = document.getElementById('rating-chart-reset');
+        if (resetBtn) resetBtn.style.display = 'inline-block';
       } catch (err) {
         console.error(err);
       }
