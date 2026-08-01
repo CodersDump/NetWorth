@@ -3629,7 +3629,18 @@ let userPool = null;
                   drag: { enabled: true, backgroundColor: 'rgba(47,169,104,0.15)' },  // drag a box to zoom (desktop)
                   mode: 'x'
                 },
-                limits: { x: { minRange: 2 * 24 * 60 * 60 * 1000 } }  // don't zoom past ~2 days
+                // Clamp pan/zoom to the data's own extent so you can never
+                // zoom or pan OUT past the data (which collapsed everything to
+                // a flat line with no way back but a refresh). minRange is the
+                // furthest you can zoom IN, and is unit-correct per axis mode:
+                // match-count in 'sequence' mode, milliseconds in 'time' mode.
+                limits: {
+                  x: {
+                    min: 'original',
+                    max: 'original',
+                    minRange: xAxisMode === 'sequence' ? 5 : 2 * 24 * 60 * 60 * 1000
+                  }
+                }
               }
             }
           }
