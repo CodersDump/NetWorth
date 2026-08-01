@@ -71,11 +71,12 @@
     member) set by any owner/admin. Co-owners: use the existing role control to promote a member to
     owner/admin. `get_group`/`list_groups` return `finance_payee`. Frontend: Transfer ownership + Set
     payee controls in the group detail. Transfer + payee logic unit-tested.
-  - **Stage 6 — member dues + UPI tap-to-pay.** A logged-in member sees their outstanding dues
-    **itemised by group and slot** (not one lumped total), grouped by each group's payee. Extend
-    `_settlement_rows` to a per-member rollup. Because payee is per-group, "pay all" is **one UPI
-    deep-link per payee** (`upi://pay?pa=<payee_upi>&am=<sum>`), with a pay button per payee.
-    (Owner request 2026-07-31.)
+  - **Stage 6 — member dues + UPI tap-to-pay (DONE 2026-07-31).** `my_settlement` now also returns
+    the group's payee (VPA + name, member-gated). The "My dues" card shows a "Pay ₹X via UPI" button
+    that builds a `upi://pay?pa=...&am=...&cu=INR` deep-link the phone hands to the user's UPI app.
+    NetWorth processes nothing and gets no confirmation, so paying does NOT mark you paid (manual,
+    owner-side) and the UI says so. One payee per group today, so it's one button; multi-payee split
+    is only needed if a member spans groups with different payees (Stage 6b if it comes up).
   - **Security guardrails (apply across Stages 5–6).** NetWorth never processes payments — UPI
     tap-to-pay only builds an `upi://pay?pa=...&am=...` deep-link the OS hands to the user's UPI app;
     no money, bank details, or card data flow through the app. Two things to gate carefully: (a) a
@@ -145,6 +146,13 @@
 
 ## Done
 
+- ✅ 2026-07-31 — **Group-scoped finance Stage 6 (UPI tap-to-pay) + UI fixes.** "My dues" card now
+  builds a `upi://pay` deep-link to the group's payee ("Pay ₹X via UPI"); payment stays manually
+  marked (no auto-confirm), stated in the UI. Fixes: (1) finance expense/walk-in tables + the game
+  log render single-line and scroll horizontally instead of wrapping/bleeding; (2) membership status
+  toggles save instantly but the recompute/reload is debounced so bulk-adding doesn't flash the whole
+  section each change; (3) logout now switches off a now-hidden admin tab (Reviews/Store) instead of
+  leaving its panel visible until refresh.
 - ✅ 2026-07-31 — **Group-scoped finance Stage 5 (co-owners, transfer, payee) + deploy cache fix.**
   Ownership transfer (owner-only, old owner → member) and per-group `finance_payee` via
   `PUT /group-slots/{group_id}`; co-owners via existing role promotion; group detail UI. Also added

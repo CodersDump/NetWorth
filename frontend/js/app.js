@@ -4388,6 +4388,22 @@ let userPool = null;
             ? `<strong>You owe \u20b9${Math.abs(net)}</strong>`
             : '<strong>You\u2019re all settled up.</strong>';
         html += `<p style="margin-top:10px;">${netMsg}</p>`;
+
+        // UPI tap-to-pay (Stage 6). Builds a upi://pay deep-link the phone
+        // hands to the user's UPI app. NetWorth never processes the payment
+        // and gets no confirmation, so paying here does NOT mark you paid -
+        // that stays a manual step an owner does. The amount is editable in
+        // the UPI app, as UPI always allows.
+        const owe = data.total_you_owe || 0;
+        const payee = data.payee || {};
+        if (owe > 0 && payee.upi_id) {
+          const note = encodeURIComponent(`${data.group_name || 'NetWorth'} dues`);
+          const link = `upi://pay?pa=${encodeURIComponent(payee.upi_id)}&pn=${encodeURIComponent(payee.upi_name || '')}&am=${owe}&cu=INR&tn=${note}`;
+          html += `<a href="${link}" class="btn" style="display:inline-block; margin-top:6px; padding:8px 16px; background:var(--court,#2fa968); color:#fff; border-radius:8px; text-decoration:none; font-weight:600;">Pay \u20b9${owe} via UPI</a>`;
+          html += `<p style="font-size:11px; color:var(--text-secondary); margin:6px 0 0;">Opens your UPI app. Payment isn\u2019t auto-confirmed here \u2014 an owner marks it paid once received.</p>`;
+        } else if (owe > 0 && !payee.upi_id) {
+          html += '<p style="font-size:12px; color:var(--text-secondary); margin-top:6px;">Ask an owner to set a payment (UPI) account for this group to pay here.</p>';
+        }
         el.innerHTML = html;
       } catch (e) { el.textContent = `Could not load: ${e.message}`; }
     }
@@ -4695,12 +4711,24 @@ let userPool = null;
         loadFinanceWalkins(); loadFinanceSummary(); loadFinanceMembers();
       }));
       el.querySelectorAll('.fin-mem-status').forEach(sel => sel.addEventListener('change', async (e) => {
+        e.target.disabled = true;
         const { ok, data: d } = await finPost(`memberships/${e.target.dataset.id}`, 'PUT', { status: e.target.value });
-        if (!ok) alert('Error: ' + d.error);
-        loadFinanceSummary(); loadFinanceMembers();
+        e.target.disabled = false;
+        if (!ok) { alert('Error: ' + d.error); return; }
+        // Each change is saved immediately, but per-head amounts only need
+        // recomputing once you've stopped toggling - so debounce the reload.
+        // This stops the whole section flashing on every single change when
+        // you're bulk-adding members carried over from a previous month.
+        scheduleMemberReload();
       }));
       renderBulkRosterList();
       applyFinanceRoleVisibility();
+    }
+
+    let _memReloadTimer = null;
+    function scheduleMemberReload() {
+      clearTimeout(_memReloadTimer);
+      _memReloadTimer = setTimeout(() => { loadFinanceSummary(); loadFinanceMembers(); }, 1200);
     }
 
     let lastMemberships = [];
@@ -5195,6 +5223,16 @@ let userPool = null;
       updateReviewTabScope();
       const storeBtn = document.getElementById('store-tab-btn');
       if (storeBtn) storeBtn.style.display = xpVisible() ? '' : 'none';
+      // If the tab you're currently ON just became unavailable (e.g. you were
+      // in Reviews and logged out), don't leave its panel showing - fall back
+      // to Players. Otherwise a logged-out user keeps seeing an admin panel
+      // until they refresh.
+      const activePanel = document.querySelector('.tab-panel.active');
+      const hiddenNow = (id, btn) => activePanel && activePanel.id === id && btn && btn.style.display === 'none';
+      if (hiddenNow('tab-review', reviewBtn) || hiddenNow('tab-store', storeBtn)) {
+        const playersBtn = document.querySelector('.tab-btn[data-tab="players"]');
+        if (playersBtn) playersBtn.click();
+      }
       if (typeof updateHeaderCoins === 'function') updateHeaderCoins();
 
       // Epic 7: guests see a login prompt instead of the match/tournament

@@ -619,12 +619,18 @@ def my_settlement(claims, group_id):
             'collection_status': b.get('collection_status'),
         })
     lines.sort(key=lambda l: (l['year'], l['month'], l['slot']), reverse=True)
+    payee = group.get('finance_payee') or {}
     return _response(200, {
         'group_id': group_id,
+        'group_name': group.get('group_name'),
         'lines': lines,
         'total_you_owe': round(owe_total, 2),
         'total_owed_back_to_you': round(owed_back_total, 2),
         'net': round(owed_back_total - owe_total, 2),  # positive = club owes you
+        # Payee (Stage 5/6): who collects, so the client can build a UPI
+        # deep-link. Only the VPA + display name are exposed - member-gated
+        # (this route requires group membership), never on a public route.
+        'payee': {'upi_id': payee.get('upi_id') or '', 'upi_name': payee.get('upi_name') or ''},
     })
 
 
