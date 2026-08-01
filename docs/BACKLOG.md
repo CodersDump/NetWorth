@@ -146,6 +146,13 @@
 
 ## Done
 
+- ✅ 2026-08-01 — **Feature:** SuperAdmin claim-audit panel (User → profile mapping). Surfaces
+  `claim_audit.py` in-app: Reviews-tab section shows every account's linked player, flags broken
+  links at top (no_profile / dangling / claimed_unlinked / misstamp), with **re-link** (point an
+  account at a player, stamp both directions) and **unlink** (clear the link, optionally strip a
+  mis-stamped email) actions. Players lambda `audit_claims` + `claim_audit_action`, `/claim-audit`
+  GET/POST route (Cognito, SuperAdmin), IAM `AdminDeleteUserAttributes` added. Classify logic
+  unit-tested. Fixes the "logged in, no profile linked" case (e.g. Suren).
 - ✅ 2026-07-31 — **Group-scoped finance Stage 6 (UPI tap-to-pay) + UI fixes.** "My dues" card now
   builds a `upi://pay` deep-link to the group's payee ("Pay ₹X via UPI"); payment stays manually
   marked (no auto-confirm), stated in the UI. Fixes: (1) finance expense/walk-in tables + the game

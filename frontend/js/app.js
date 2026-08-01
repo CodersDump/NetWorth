@@ -2787,6 +2787,104 @@ let userPool = null;
       } catch (_) { bar.style.display = 'none'; }
     }
 
+    let _auditPlayers = [];   // cached player list for the re-link picker
+
+    async function loadClaimAudit() {
+      const el = document.getElementById('claim-audit-result');
+      const countEl = document.getElementById('review-audit-count');
+      if (!el) return;
+      el.textContent = 'Loading...';
+      try {
+        const { res, data } = await authedFetch(`${API_BASE_URL}/claim-audit`);
+        if (!res.ok) { el.textContent = `Error: ${data.error || 'could not load'}`; return; }
+        _auditPlayers = (await (await fetch(`${API_BASE_URL}/players`)).json()).players || [];
+        const problems = data.problems || [];
+        const accounts = data.accounts || [];
+        const brokenAccts = accounts.filter(a => a.issue !== 'healthy');
+        if (countEl) countEl.textContent = (problems.length + brokenAccts.length) || '';
+
+        const pickerOptions = _auditPlayers
+          .slice().sort((a, b) => (a.name || '').localeCompare(b.name || ''))
+          .map(p => `<option value="${p.player_id}">${escapeHtml(p.name)} (${escapeHtml(p.nickname || '')})</option>`).join('');
+
+        let html = '';
+        if (!problems.length && !brokenAccts.length) {
+          html += '<p style="color:var(--court,#2fa968);">All accounts are healthily linked.</p>';
+        }
+
+        // Accounts with no profile / dangling link (Suren's case sits here).
+        if (brokenAccts.length) {
+          html += '<h4 style="font-size:13px;margin:6px 0;">Accounts needing a profile link</h4>';
+          brokenAccts.forEach(a => {
+            const tag = a.issue === 'no_profile' ? 'no profile linked' : 'links to a deleted player';
+            const uname = encodeURIComponent(a.username || '');
+            html += `<div style="padding:8px 0;border-bottom:1px solid var(--border);">
+              <div><strong>${escapeHtml(a.email || a.username || '')}</strong> <span style="color:#c0392b;">${tag}</span> <span style="color:var(--text-secondary);font-size:11px;">(${a.status})</span></div>
+              <div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
+                <select id="audit-pick-${uname}" style="max-width:220px;"><option value="">Link to player...</option>${pickerOptions}</select>
+                <button class="secondary" style="margin:0;padding:4px 10px;font-size:12px;" onclick="relinkAccount('${uname}')">Link</button>
+              </div></div>`;
+          });
+        }
+
+        // Player rows whose email linkage is broken.
+        if (problems.length) {
+          html += '<h4 style="font-size:13px;margin:14px 0 6px;">Profiles with linkage problems</h4>';
+          problems.forEach(pr => {
+            const uname = encodeURIComponent(pr.username || '');
+            let actions = '';
+            if (pr.kind === 'claimed_unlinked' && pr.username) {
+              actions = `<button class="secondary" style="margin:0;padding:4px 10px;font-size:12px;" onclick="relinkAccount('${uname}','${pr.player_id}')">Link account &rarr; this profile</button>`;
+            } else if (pr.kind === 'misstamp' && pr.username) {
+              actions = `<button class="secondary" style="margin:0;padding:4px 10px;font-size:12px;" onclick="unlinkAndStrip('${uname}','${pr.player_id}')">Strip wrong email + unlink</button>`;
+            }
+            html += `<div style="padding:8px 0;border-bottom:1px solid var(--border);">
+              <div><strong>${escapeHtml(pr.player_label)}</strong> &mdash; <span style="color:#c0392b;">${pr.kind.replace('_',' ')}</span></div>
+              <div style="font-size:12px;color:var(--text-secondary);margin:2px 0 6px;">${escapeHtml(pr.detail)}</div>
+              ${actions}</div>`;
+          });
+        }
+
+        // Full healthy list, collapsed.
+        const healthy = accounts.filter(a => a.issue === 'healthy');
+        if (healthy.length) {
+          html += `<details style="margin-top:14px;"><summary style="font-size:12px;color:var(--text-secondary);">All ${healthy.length} healthy links</summary>`;
+          html += healthy.map(a => `<div class="member-row"><span>${escapeHtml(a.email || a.username)} &rarr; ${escapeHtml(a.linked_player || '')}</span><button class="secondary" style="margin:0;padding:2px 8px;font-size:11px;" onclick="unlinkAccount('${encodeURIComponent(a.username)}')">Unlink</button></div>`).join('');
+          html += '</details>';
+        }
+        el.innerHTML = html;
+      } catch (e) { el.textContent = `Could not load: ${e.message}`; }
+    }
+
+    async function relinkAccount(usernameEnc, presetPlayerId) {
+      const username = decodeURIComponent(usernameEnc);
+      const playerId = presetPlayerId || (document.getElementById(`audit-pick-${usernameEnc}`) || {}).value;
+      if (!playerId) { alert('Pick a player to link to first.'); return; }
+      if (!confirm('Link this account to the selected profile? The user must log out and back in afterwards.')) return;
+      await _claimAuditAction({ action: 'link', username, player_id: playerId });
+    }
+
+    async function unlinkAccount(usernameEnc) {
+      if (!confirm('Unlink this account from its profile? They will see no profile until re-linked or they re-claim.')) return;
+      await _claimAuditAction({ action: 'unlink', username: decodeURIComponent(usernameEnc) });
+    }
+
+    async function unlinkAndStrip(usernameEnc, playerId) {
+      if (!confirm('Strip the wrong email off this profile and unlink? This frees the profile to be claimed correctly.')) return;
+      await _claimAuditAction({ action: 'unlink', username: decodeURIComponent(usernameEnc), player_id: playerId, strip_player_email: true });
+    }
+
+    async function _claimAuditAction(bodyObj) {
+      try {
+        const { res, data } = await authedFetch(`${API_BASE_URL}/claim-audit`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(bodyObj)
+        });
+        if (!res.ok) { alert(`Error: ${data.error || 'action failed'}`); return; }
+        if (data.note) alert(data.note);
+        loadClaimAudit();
+      } catch (e) { alert(`Request failed: ${e.message}`); }
+    }
+
     async function loadUnconfirmedUsers() {
       const listEl = document.getElementById('unconfirmed-users-list');
       const countEl = document.getElementById('review-unconfirmed-count');
@@ -7016,6 +7114,7 @@ let userPool = null;
           if (isSuperAdmin()) {
             loadFinanceAccessList();
             loadUnconfirmedUsers();
+            loadClaimAudit();
             loadAppSettings();
             loadEventsAdmin();
             loadStoreAdmin();

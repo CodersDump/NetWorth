@@ -171,6 +171,7 @@ Resources:
               - Effect: Allow
                 Action:
                   - cognito-idp:AdminUpdateUserAttributes
+                  - cognito-idp:AdminDeleteUserAttributes
                   - cognito-idp:AdminGetUser
                   # Deleting a player removes its linked login too, so the
                   # address is free to sign up again rather than being
@@ -2371,6 +2372,63 @@ Resources:
             method.response.header.Access-Control-Allow-Methods: true
             method.response.header.Access-Control-Allow-Origin: true
 
+  ClaimAuditResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref RestApi
+      ParentId: !GetAtt RestApi.RootResourceId
+      PathPart: claim-audit
+
+  ClaimAuditGetMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RestApi
+      ResourceId: !Ref ClaimAuditResource
+      HttpMethod: GET
+      AuthorizationType: COGNITO_USER_POOLS
+      AuthorizerId: !Ref CognitoAuthorizer
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${PlayersFunction.Arn}/invocations'
+
+  ClaimAuditPostMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RestApi
+      ResourceId: !Ref ClaimAuditResource
+      HttpMethod: POST
+      AuthorizationType: COGNITO_USER_POOLS
+      AuthorizerId: !Ref CognitoAuthorizer
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${PlayersFunction.Arn}/invocations'
+
+  ClaimAuditOptionsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RestApi
+      ResourceId: !Ref ClaimAuditResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,Authorization'"
+              method.response.header.Access-Control-Allow-Methods: "'OPTIONS,GET,POST'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+            method.response.header.Access-Control-Allow-Origin: true
+
   UnconfirmedUsersResource:
     Type: AWS::ApiGateway::Resource
     Properties:
@@ -2834,6 +2892,9 @@ Resources:
       - UnconfirmedUsersGetMethod
       - UnconfirmedUsersDeleteMethod
       - UnconfirmedUsersOptionsMethod
+      - ClaimAuditGetMethod
+      - ClaimAuditPostMethod
+      - ClaimAuditOptionsMethod
       - GroupDeleteMethod
       - GroupDeleteOptionsMethod
       - GroupMemberRemoveMethod
