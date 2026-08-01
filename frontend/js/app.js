@@ -4888,20 +4888,30 @@ let userPool = null;
         const { ok, data: d } = await finPost(`memberships/${e.target.dataset.id}`, 'PUT', { status: e.target.value });
         e.target.disabled = false;
         if (!ok) { alert('Error: ' + d.error); return; }
-        // Each change is saved immediately, but per-head amounts only need
-        // recomputing once you've stopped toggling - so debounce the reload.
-        // This stops the whole section flashing on every single change when
-        // you're bulk-adding members carried over from a previous month.
-        scheduleMemberReload();
+        // Saved immediately (data is safe), but per-head amounts only need
+        // recomputing once you're done toggling - so instead of reloading the
+        // whole section on every change (jarring when you set 10 members),
+        // surface a Recalculate button and let the user trigger it once.
+        markMembersDirty();
       }));
       renderBulkRosterList();
       applyFinanceRoleVisibility();
     }
 
-    let _memReloadTimer = null;
-    function scheduleMemberReload() {
-      clearTimeout(_memReloadTimer);
-      _memReloadTimer = setTimeout(() => { loadFinanceSummary(); loadFinanceMembers(); }, 1200);
+    function markMembersDirty() {
+      const btn = document.getElementById('finance-recalc-btn');
+      const hint = document.getElementById('finance-recalc-hint');
+      if (btn) btn.style.display = 'inline-block';
+      if (hint) hint.style.display = 'inline';
+    }
+
+    function recalcMembers() {
+      const btn = document.getElementById('finance-recalc-btn');
+      const hint = document.getElementById('finance-recalc-hint');
+      if (btn) btn.style.display = 'none';
+      if (hint) hint.style.display = 'none';
+      loadFinanceSummary();
+      loadFinanceMembers();
     }
 
     let lastMemberships = [];
@@ -5208,6 +5218,7 @@ let userPool = null;
     document.getElementById('finance-cancel-expense-edit-btn').addEventListener('click', resetExpenseEdit);
     document.getElementById('finance-load-expenses-btn').addEventListener('click', loadFinanceExpenses);
     document.getElementById('finance-load-members-btn').addEventListener('click', loadFinanceMembers);
+    document.getElementById('finance-recalc-btn').addEventListener('click', recalcMembers);
     document.getElementById('finance-add-member-btn').addEventListener('click', addFinanceMember);
     document.getElementById('finance-copy-prev-month-btn').addEventListener('click', copyPreviousMonthMembers);
     document.getElementById('finance-bulk-add-btn').addEventListener('click', bulkAddFromRoster);
