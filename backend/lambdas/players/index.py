@@ -72,6 +72,10 @@ def handler(event, context):
             return list_unconfirmed_users(event)
         if event.get('resource') == '/unconfirmed-users' and method == 'DELETE':
             return delete_unconfirmed_user(event)
+        if event.get('resource') == '/claim-audit' and method == 'GET':
+            return audit_claims(event)
+        if event.get('resource') == '/claim-audit' and method == 'POST':
+            return claim_audit_action(event)
         if event.get('resource') == '/claim-request-decide' and method == 'POST':
             return decide_claim_request(event)
         if event.get('resource') == '/app-settings' and method == 'GET':
@@ -378,6 +382,145 @@ def _owner_may_decide(req, owned_group_ids):
     if not target_pid:
         return False
     return bool(_player_group_ids(target_pid) & owned_group_ids)
+
+
+def _audit_attr(user, name):
+    return next((a['Value'] for a in user.get('Attributes', []) if a['Name'] == name), None)
+
+
+def _cognito_users_all(cognito):
+    users, kw = [], {'UserPoolId': USER_POOL_ID}
+    while True:
+        r = cognito.list_users(**kw)
+        users += r.get('Users', [])
+        if 'PaginationToken' not in r:
+            return users
+        kw['PaginationToken'] = r['PaginationToken']
+
+
+def audit_claims(event):
+    """SuperAdmin: audit Cognito account <-> player linkage (the claim_audit.py
+    script, surfaced in-app). A healthy claim has the player row's `email` and
+    the account's custom:player_id pointing at each other. Buckets the breaks so
+    you can re-link/unlink from the panel."""
+    claims = _caller_claims(event)
+    if not _is_super_admin(claims):
+        return _response(403, {'error': 'only a SuperAdmin can audit claims'})
+    if not USER_POOL_ID:
+        return _response(500, {'error': 'user pool is not configured on this stack'})
+    cognito = boto3.client('cognito-idp')
+
+    players = [p for p in table.scan().get('Items', [])
+               if not str(p.get('player_id', '')).startswith('__')]
+    players_by_id = {p['player_id']: p for p in players}
+    users = _cognito_users_all(cognito)
+
+    user_by_email, pid_by_email = {}, {}
+    for u in users:
+        e = (_audit_attr(u, 'email') or '').lower()
+        if e:
+            user_by_email[e] = u
+            pid_by_email[e] = _audit_attr(u, 'custom:player_id')
+
+    def plabel(pid):
+        p = players_by_id.get(pid)
+        return f"{p.get('name')} ({p.get('nickname')})" if p else '(missing player)'
+
+    problems = []
+    for p in players:
+        email = (p.get('email') or '').lower()
+        if not email:
+            continue  # unclaimed - fine
+        owner_pid = pid_by_email.get(email)
+        if email not in user_by_email:
+            problems.append({'kind': 'orphan_email', 'player_id': p['player_id'],
+                             'player_label': f"{p.get('name')} ({p.get('nickname')})", 'email': email,
+                             'detail': 'email on the profile, but no account has it now (login likely deleted)'})
+        elif owner_pid == p['player_id']:
+            pass  # healthy
+        elif owner_pid is None:
+            problems.append({'kind': 'claimed_unlinked', 'player_id': p['player_id'],
+                             'player_label': f"{p.get('name')} ({p.get('nickname')})", 'email': email,
+                             'username': user_by_email[email].get('Username'),
+                             'detail': "profile is claimed by this email, but that account isn't linked to it"})
+        else:
+            problems.append({'kind': 'misstamp', 'player_id': p['player_id'],
+                             'player_label': f"{p.get('name')} ({p.get('nickname')})", 'email': email,
+                             'username': user_by_email[email].get('Username'),
+                             'detail': f"wrong email on the profile - that account actually owns {plabel(owner_pid)}"})
+
+    accounts = []
+    for u in users:
+        pid = _audit_attr(u, 'custom:player_id')
+        linked = players_by_id.get(pid) if pid else None
+        issue = 'healthy'
+        if not pid:
+            issue = 'no_profile'          # unlinked_account (Suren's case)
+        elif not linked:
+            issue = 'dangling'            # points at a player that no longer exists
+        accounts.append({
+            'username': u.get('Username'),
+            'email': _audit_attr(u, 'email'),
+            'status': u.get('UserStatus'),
+            'player_id': pid,
+            'linked_player': f"{linked.get('name')} ({linked.get('nickname')})" if linked else None,
+            'issue': issue,
+        })
+    accounts.sort(key=lambda a: (a['issue'] == 'healthy', (a.get('email') or '').lower()))
+    return _response(200, {'problems': problems, 'accounts': accounts})
+
+
+def claim_audit_action(event):
+    """SuperAdmin link/unlink. link: point an account at a player AND stamp the
+    player's email (both directions -> healthy). unlink: clear the account's
+    custom:player_id, and optionally strip the player's email."""
+    claims = _caller_claims(event)
+    if not _is_super_admin(claims):
+        return _response(403, {'error': 'only a SuperAdmin can change claim links'})
+    if not USER_POOL_ID:
+        return _response(500, {'error': 'user pool is not configured on this stack'})
+    cognito = boto3.client('cognito-idp')
+    body = json.loads(event.get('body') or '{}')
+    action = body.get('action')
+    username = body.get('username') or body.get('email')
+
+    if action == 'link':
+        player_id = body.get('player_id')
+        if not username or not player_id:
+            return _response(400, {'error': 'username and player_id are required'})
+        try:
+            user = cognito.admin_get_user(UserPoolId=USER_POOL_ID, Username=username)
+        except cognito.exceptions.UserNotFoundException:
+            return _response(404, {'error': 'no such account'})
+        player = table.get_item(Key={'player_id': player_id}).get('Item')
+        if not player:
+            return _response(404, {'error': 'no such player'})
+        email = next((a['Value'] for a in user.get('UserAttributes', []) if a['Name'] == 'email'), None)
+        cognito.admin_update_user_attributes(
+            UserPoolId=USER_POOL_ID, Username=username,
+            UserAttributes=[{'Name': 'custom:player_id', 'Value': player_id}])
+        if email:
+            table.update_item(Key={'player_id': player_id},
+                              UpdateExpression='SET email = :e',
+                              ExpressionAttributeValues={':e': email})
+        return _response(200, {'linked': player_id, 'username': username,
+                               'note': 'the user must log out and back in for the change to take effect'})
+
+    if action == 'unlink':
+        if not username:
+            return _response(400, {'error': 'username is required'})
+        try:
+            cognito.admin_delete_user_attributes(
+                UserPoolId=USER_POOL_ID, Username=username,
+                UserAttributeNames=['custom:player_id'])
+        except cognito.exceptions.UserNotFoundException:
+            return _response(404, {'error': 'no such account'})
+        if body.get('strip_player_email') and body.get('player_id'):
+            table.update_item(Key={'player_id': body['player_id']},
+                              UpdateExpression='REMOVE email')
+        return _response(200, {'unlinked': username})
+
+    return _response(400, {'error': "action must be 'link' or 'unlink'"})
 
 
 def list_unconfirmed_users(event):
