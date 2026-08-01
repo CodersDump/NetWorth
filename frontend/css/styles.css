@@ -314,14 +314,15 @@
   table { width: 100%; border-collapse: collapse; margin-top: 12px; font-size: 13px; }
   /* Wide tables (settlement, expenses, walk-ins, HoF) scroll sideways inside
      their card on narrow screens instead of bleeding past the edge. */
-  [id$="-result"] { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  [id$="-result"], #game-log { overflow-x: auto; -webkit-overflow-scrolling: touch; }
   /* Native date pickers bring their own intrinsic width/centering (iOS
      especially) and break the form grid - pin them to the same box model
      and alignment as every other input. */
   input[type="date"] { width: 100%; max-width: 100%; box-sizing: border-box;
     -webkit-appearance: none; appearance: none; text-align: left; display: block; }
   input[type="date"]::-webkit-date-and-time-value { text-align: left; }
-  [id$="-result"] table th { white-space: nowrap; }
+  [id$="-result"] table th, [id$="-result"] table td,
+  #game-log table th, #game-log table td { white-space: nowrap; }
   th, td { text-align: left; padding: 8px; border-bottom: 1px solid var(--border); }
   th { font-family: 'Rajdhani', sans-serif; font-weight: 700; color: var(--text-secondary); font-size: 12px; text-transform: uppercase; letter-spacing: 0.4px; }
   td { font-variant-numeric: tabular-nums; }
