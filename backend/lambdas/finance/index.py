@@ -362,7 +362,7 @@ ALLOWED_FIELDS = {
     'expense': ['month', 'year', 'slot', 'item', 'estimated_cost', 'actual_cost',
                 'estimated_qty', 'actual_qty'],
     'membership': ['month', 'year', 'slot', 'display_name', 'player_id', 'status', 'remark',
-                    'attended_briefly', 'attendance_note'],
+                    'attended_briefly', 'attendance_note', 'forfeit_residual'],
     'walkin': ['date', 'slot', 'display_name', 'player_id', 'fee', 'skill',
                'recruit_verdict', 'note'],
 }
@@ -493,10 +493,19 @@ def update_record(record_type, record_id, body, group_id=None):
         else:
             existing.pop('attended_briefly', None)
             existing.pop('attendance_note', None)
+    # Forfeit last month's residual (leaver whose relief is redistributed to
+    # the others). Stored only when true, so it never affects normal members.
+    if record_type == 'membership' and 'forfeit_residual' in body:
+        updates.pop('forfeit_residual', None)
+        if body['forfeit_residual']:
+            existing['forfeit_residual'] = True
+        else:
+            existing.pop('forfeit_residual', None)
     # Explicit unlink: player_id: null in the body clears the link.
     if 'player_id' in body and body['player_id'] in (None, ''):
         existing.pop('player_id', None)
-    if not updates and 'player_id' not in body:
+    flag_only = ('forfeit_residual' in body) or ('attended_briefly' in body)
+    if not updates and 'player_id' not in body and not flag_only:
         return _response(400, {'error': 'no updatable fields supplied'})
     existing.update(updates)
     finance_table.put_item(Item=existing)
@@ -607,7 +616,9 @@ def my_settlement(claims, group_id):
         # Unpaid if we have no confirmed amount matching the current per-head.
         paid = confirmed_amt is not None and cph is not None and abs(_num(confirmed_amt) - cph) < 0.01
         owe = 0.0 if (paid or cph is None) else cph
-        owed_back = rph or 0.0
+        # A member who forfeited this period's refund gets nothing back; their
+        # share was redistributed to the others (reflected in rph for them).
+        owed_back = 0.0 if m.get('forfeit_residual') else (rph or 0.0)
         owe_total += owe
         owed_back_total += owed_back
         lines.append({
@@ -675,7 +686,7 @@ def _settlement_rows(group_id=None):
         return periods.setdefault(key, {
             'month': key[0], 'year': key[1], 'slot': key[2],
             'estimated_total': 0.0, 'actual_total': 0.0,
-            'extra_collected': 0.0, 'player_count': 0, 'items': []
+            'extra_collected': 0.0, 'player_count': 0, 'forfeit_count': 0, 'items': []
         })
 
     for e in expenses:
@@ -690,7 +701,10 @@ def _settlement_rows(group_id=None):
 
     for m in memberships:
         if m.get('status') == 'Yes':
-            bucket(m.get('month'), m.get('year'), m.get('slot'))['player_count'] += 1
+            b = bucket(m.get('month'), m.get('year'), m.get('slot'))
+            b['player_count'] += 1
+            if m.get('forfeit_residual'):
+                b['forfeit_count'] += 1
 
     for w in walkins:
         date = w.get('date') or ''
@@ -712,10 +726,16 @@ def _settlement_rows(group_id=None):
 
     for key, b in periods.items():
         count = b['player_count']
+        # Residual (relief) is redistributed among the NON-forfeiters only:
+        # a member who forfeits their refund gets 0, and the whole residual
+        # pool is split across the remaining Yes members (so each gets more).
+        # With no forfeiters this is identical to residual/player_count.
+        active = count - b.get('forfeit_count', 0)
+        b['active_count'] = active
         b['difference'] = round(b['estimated_total'] - b['actual_total'], 2)
         b['cost_per_head'] = round(b['estimated_total'] / count, 2) if count else None
         b['residual_per_head'] = round(
-            (b['estimated_total'] - b['actual_total'] + b['extra_collected']) / count, 2) if count else None
+            (b['estimated_total'] - b['actual_total'] + b['extra_collected']) / active, 2) if active else None
         b['estimated_total'] = round(b['estimated_total'], 2)
         b['actual_total'] = round(b['actual_total'], 2)
         b['extra_collected'] = round(b['extra_collected'], 2)
@@ -843,6 +863,8 @@ def insights(group_id=None):
             if (mem2.get('status') == 'Yes' and str(mem2.get('month')) == p_month
                     and int(_num(mem2.get('year'))) == p_year
                     and (mem2.get('player_id') or f"name:{mem2.get('display_name')}") == ident):
+                if mem2.get('forfeit_residual'):
+                    continue  # forfeited last month - no relief this month
                 res = (settlement.get((p_month, p_year, str(mem2.get('slot')))) or {}).get('residual_per_head')
                 if res:
                     relief += res

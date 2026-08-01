@@ -4848,11 +4848,22 @@ let userPool = null;
           ${pay}
           <div class="fin-mem-card-actions">
             <button type="button" class="secondary fin-refund" data-name="${m.display_name}" data-pid="${m.player_id || ''}">Refund…</button>
+            <button type="button" class="secondary fin-forfeit" data-id="${m.record_id}" data-on="${m.forfeit_residual ? '1' : ''}" title="Forfeit this month's refund and redistribute it to the other members">${m.forfeit_residual ? '\u2713 Refund forfeited' : 'Forfeit refund'}</button>
             <button type="button" class="secondary fin-del" data-kind="memberships" data-id="${m.record_id}">Delete</button>
           </div>
         </div>`;
       });
       el.innerHTML = html;
+      el.querySelectorAll('.fin-forfeit').forEach(btn => btn.addEventListener('click', async () => {
+        const turningOn = !btn.dataset.on;
+        const msg = turningOn
+          ? 'Forfeit this member\u2019s refund for this month? Their share is redistributed to the other members (they get \u20b90 back). This does not change what they paid.'
+          : 'Restore this member\u2019s refund (undo forfeit)?';
+        if (!confirm(msg)) return;
+        const { ok, data: d } = await finPost(`memberships/${btn.dataset.id}`, 'PUT', { forfeit_residual: turningOn });
+        if (!ok) { alert('Error: ' + d.error); return; }
+        loadFinanceMembers(); loadFinanceSummary();
+      }));
       el.querySelectorAll('.fin-confirm').forEach(btn => btn.addEventListener('click', async () => {
         if (!confirm(`Confirm that ${btn.dataset.name} paid ${cph} for ${document.getElementById('fmem_month').value} ${document.getElementById('fmem_slot').value}?`)) return;
         const { ok, data: d } = await finPost(`memberships/${btn.dataset.id}`, 'PUT', { confirm_payment: true });

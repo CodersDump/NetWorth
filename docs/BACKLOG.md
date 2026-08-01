@@ -146,6 +146,20 @@
 
 ## Done
 
+- ✅ 2026-08-01 — **Feature (money):** residual forfeit + redistribute. A membership can be marked
+  `forfeit_residual` (owner-only "Forfeit refund" toggle on the card); that member's relief becomes ₹0
+  and the residual pool is split among the remaining Yes members of that (month, slot) - each gets
+  more. Cost-per-head is unchanged (only the refund is affected). `_settlement_rows` computes
+  `active_count = player_count - forfeit_count` and divides residual by active_count; `my_settlement`
+  and `insights` give forfeiters 0 relief. Redistribution math unit-tested (225 forfeited -> others
+  225->300, forfeiter 0, cost 825 unchanged).
+
+- ✅ 2026-08-01 — **Script:** `link_finance_to_profiles.py` links membership/walk-in finance records
+  to player PROFILES (by player_id) and normalizes display names (e.g. "prasanna" -> "Prasanna
+  Varade"). Matters because my_settlement matches dues by player_id, so unlinked records never show in
+  a member's My Dues. Conservative: auto-links only confident single matches, flags the rest for a
+  `--map` override. Dry-run/idempotent.
+
 - ✅ 2026-08-01 — **UX:** membership status changes no longer reload the whole section on every
   toggle. Each change still saves instantly; a **Recalculate amounts** button (with a "saved — click
   Recalculate" hint) appears and recomputes per-head figures once, when you're done. Removed the
