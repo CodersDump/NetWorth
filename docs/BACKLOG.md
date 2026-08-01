@@ -146,6 +146,11 @@
 
 ## Done
 
+- ✅ 2026-08-01 — **UX:** membership status changes no longer reload the whole section on every
+  toggle. Each change still saves instantly; a **Recalculate amounts** button (with a "saved — click
+  Recalculate" hint) appears and recomputes per-head figures once, when you're done. Removed the
+  auto/debounced reload.
+
 - ✅ 2026-08-01 — **Feature + script:** owner-facing member finance-access panel. In the group
   detail, owners/admins now see each member with a dropdown to set their finance access
   (no finance / view / edit / delete) inline — wires the Stage 3 `setGroupFinanceRole` endpoint into
