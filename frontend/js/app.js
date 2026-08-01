@@ -4830,13 +4830,18 @@ let userPool = null;
       data.memberships.forEach(m => {
         let pay = '';
         if (m.status === 'Yes' && cph != null) {
+          // What they actually pay = per-head minus their relief (from the
+          // backend). Shown right on the card so there's no trip to Insights.
+          const eff = (m.effective != null) ? m.effective : cph;
+          const reliefNote = (m.relief && m.relief > 0)
+            ? ` <span style="font-size:11px;opacity:0.7;">(₹${cph} − ₹${m.relief} relief)</span>` : '';
           const conf = m.payment_confirmed_amount != null ? parseFloat(m.payment_confirmed_amount) : null;
-          if (conf !== null && Math.abs(conf - cph) < 0.01) {
-            pay = `<div class="fin-mem-card-pay">Paid ✓ ${conf} <button type="button" class="secondary fin-unconfirm" data-id="${m.record_id}">undo</button></div>`;
+          if (conf !== null && Math.abs(conf - eff) < 0.01) {
+            pay = `<div class="fin-mem-card-pay">Pay <strong>₹${eff}</strong>${reliefNote} · Paid ✓ <button type="button" class="secondary fin-unconfirm" data-id="${m.record_id}">undo</button></div>`;
           } else if (conf !== null) {
-            pay = `<div class="fin-mem-card-pay"><button type="button" class="fin-confirm" data-id="${m.record_id}" data-name="${m.display_name}">Reconfirm ${cph}</button> <span style="font-size:11px;opacity:0.65;">amount changed (was ${conf})</span></div>`;
+            pay = `<div class="fin-mem-card-pay">Pay <strong>₹${eff}</strong>${reliefNote} <button type="button" class="fin-confirm" data-id="${m.record_id}" data-name="${m.display_name}" data-eff="${eff}">Reconfirm</button> <span style="font-size:11px;opacity:0.65;">amount changed (was ₹${conf})</span></div>`;
           } else {
-            pay = `<div class="fin-mem-card-pay"><button type="button" class="fin-confirm" data-id="${m.record_id}" data-name="${m.display_name}">Confirm payment</button></div>`;
+            pay = `<div class="fin-mem-card-pay">Pay <strong>₹${eff}</strong>${reliefNote} <button type="button" class="fin-confirm" data-id="${m.record_id}" data-name="${m.display_name}" data-eff="${eff}">Confirm payment</button></div>`;
           }
         }
         html += `<div class="fin-mem-card">
@@ -4865,7 +4870,7 @@ let userPool = null;
         loadFinanceMembers(); loadFinanceSummary();
       }));
       el.querySelectorAll('.fin-confirm').forEach(btn => btn.addEventListener('click', async () => {
-        if (!confirm(`Confirm that ${btn.dataset.name} paid ${cph} for ${document.getElementById('fmem_month').value} ${document.getElementById('fmem_slot').value}?`)) return;
+        if (!confirm(`Confirm that ${btn.dataset.name} paid ₹${btn.dataset.eff} for ${document.getElementById('fmem_month').value} ${document.getElementById('fmem_slot').value}?`)) return;
         const { ok, data: d } = await finPost(`memberships/${btn.dataset.id}`, 'PUT', { confirm_payment: true });
         if (!ok) alert('Error: ' + d.error);
         loadFinanceMembers(); loadFinanceSummary();
