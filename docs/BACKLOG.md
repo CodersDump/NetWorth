@@ -146,6 +146,13 @@
 
 ## Done
 
+- ✅ 2026-08-01 — **Fix + scripts:** wired group slots into the Finance forms (`populateFinanceSlots`
+  fills the expense/membership/walk-in slot dropdowns from the selected group's `slots`, fallback to
+  the default pair) — Stage 4 defined slots but never connected them to these forms.
+  `scripts/backfill_group_slots.py` sets default slots `["7AM-8AM","8AM-9AM"]` on any group without
+  them (dry-run/idempotent). `scripts/reset_august_unpaid.py` removes `payment_confirmed_amount` from
+  a month's memberships (default August 2026) to reset them to unpaid mid-collection (dry-run/idempotent).
+
 - ✅ 2026-08-01 — **Feature + fix:** interactive zoom/pan on the rating-history chart
   (`chartjs-plugin-zoom`, Chart.js 4.4.1). Gestures reworked so they don't fight page scroll:
   **drag a box** to zoom, **Shift+drag** to pan, **Ctrl+scroll** to zoom (desktop), **pinch** on
