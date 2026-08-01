@@ -5082,6 +5082,34 @@ let userPool = null;
       renderInsights();
     }
 
+    function copyDuesForWhatsApp() {
+      const data = lastInsights;
+      if (!data || !data.cost_rows || !data.cost_rows.length) { alert('Load insights first.'); return; }
+      const month = data.cost_rows[0].month, year = data.cost_rows[0].year;
+      const lines = [`*${month} ${year} dues*`, ''];
+      data.cost_rows.forEach(r => {
+        // Plain, no per-slot breakdown: name, owed (paid), relief, final (effective).
+        const owed = r.paid === null ? '-' : `\u20b9${r.paid}`;
+        const relief = (r.relief && r.relief != 0) ? ` (relief \u20b9${r.relief})` : '';
+        const pay = r.effective_cost === null ? 'pending' : `\u20b9${r.effective_cost}`;
+        lines.push(`${r.display_name}: owed ${owed}${relief} \u2192 pay *${pay}*`);
+      });
+      const text = lines.join('\n');
+      const done = () => alert('Copied - paste into your WhatsApp group.');
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(done).catch(() => fallbackCopy(text, done));
+      } else { fallbackCopy(text, done); }
+    }
+
+    function fallbackCopy(text, cb) {
+      const ta = document.createElement('textarea');
+      ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+      document.body.appendChild(ta); ta.select();
+      try { document.execCommand('copy'); cb && cb(); }
+      catch (e) { prompt('Copy this:', text); }
+      document.body.removeChild(ta);
+    }
+
     function renderInsights() {
       const el = document.getElementById('finance-insights-result');
       const data = lastInsights;
@@ -5124,6 +5152,7 @@ let userPool = null;
             `<td>${cpm === null ? (r.effective_cost === null ? 'pending' : '∞ (no matches)') : (est ? '~' + cpm : cpm)}</td></tr>`;
         });
         html += '</table>';
+        html += '<button type="button" class="secondary" style="margin-top:10px;" onclick="copyDuesForWhatsApp()">Copy for WhatsApp</button>';
         if (data.cost_rows.some(r => r.estimated_applied)) {
           html += `<p style="font-size:12px; opacity:0.7;">~ = estimated: match tracking began ${data.tracking_start || 'mid-month'}; counts for players with under 10 recorded play days include an estimate of ~4.5 games x sessions held before tracking. Untick the box above for captured counts only.</p>`;
         }
