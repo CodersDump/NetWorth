@@ -151,7 +151,8 @@
   **drag a box** to zoom, **Shift+drag** to pan, **Ctrl+scroll** to zoom (desktop), **pinch** on
   mobile. Added `touch-action: pan-y` on the canvas so the browser stops eating the pinch as a page
   zoom while one-finger vertical scroll still works. "Reset zoom" button (`resetRatingZoom`).
-  Frontend-only; min zoom ~2 days.
+  Frontend-only; min zoom ~2 days. Mobile fix: added **Hammer.js** (required by the zoom plugin for
+  touch pinch/pan - without it desktop worked but mobile pinch was dead) and `touch-action: none`.
 - ✅ 2026-08-01 — **Feature:** SuperAdmin claim-audit panel (User → profile mapping). Surfaces
   `claim_audit.py` in-app: Reviews-tab section shows every account's linked player, flags broken
   links at top (no_profile / dangling / claimed_unlinked / misstamp), with **re-link** (point an
