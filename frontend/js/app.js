@@ -3560,6 +3560,12 @@ let userPool = null;
       }
     }
 
+    function resetRatingZoom() {
+      if (profileRatingChart && typeof profileRatingChart.resetZoom === 'function') {
+        profileRatingChart.resetZoom();
+      }
+    }
+
     async function loadProfileRatingChart(playerId) {
       try {
         const playerIds = [
@@ -3593,6 +3599,14 @@ let userPool = null;
           ? { type: 'linear', title: { display: true, text: 'Match #' }, ticks: { color: '#888', precision: 0 } }
           : { type: 'time', time: { unit: 'day' }, ticks: { color: '#888' } };
 
+        // Register the zoom plugin once (guarded so re-rendering the chart
+        // doesn't double-register). Lets you pinch (touch) / wheel (desktop)
+        // to zoom into the time axis and drag to pan - inside the plot, not
+        // a browser page zoom. Falls back gracefully if the CDN script didn't
+        // load (older cached index.html).
+        if (window.ChartZoom && !Chart.registry.plugins.get('zoom')) {
+          Chart.register(window.ChartZoom);
+        }
         profileRatingChart = new Chart(ctx, {
           type: 'line',
           data: { datasets },
@@ -3601,9 +3615,38 @@ let userPool = null;
               x: xScale,
               y: { ticks: { color: '#888' } }
             },
-            plugins: { legend: { labels: { color: getComputedStyle(document.body).color } } }
+            plugins: {
+              legend: { labels: { color: getComputedStyle(document.body).color } },
+              zoom: {
+                // Pan with SHIFT+drag (desktop) so plain drag is free for
+                // box-zoom; one/two-finger drag pans on touch.
+                pan: { enabled: true, mode: 'x', modifierKey: 'shift' },
+                zoom: {
+                  // CTRL+wheel zooms so a plain scroll still scrolls the page
+                  // (plain wheel-zoom was hijacking normal scrolling).
+                  wheel: { enabled: true, modifierKey: 'ctrl' },
+                  pinch: { enabled: true },                       // mobile
+                  drag: { enabled: true, backgroundColor: 'rgba(47,169,104,0.15)' },  // drag a box to zoom (desktop)
+                  mode: 'x'
+                },
+                // Clamp pan/zoom to the data's own extent so you can never
+                // zoom or pan OUT past the data (which collapsed everything to
+                // a flat line with no way back but a refresh). minRange is the
+                // furthest you can zoom IN, and is unit-correct per axis mode:
+                // match-count in 'sequence' mode, milliseconds in 'time' mode.
+                limits: {
+                  x: {
+                    min: 'original',
+                    max: 'original',
+                    minRange: xAxisMode === 'sequence' ? 5 : 2 * 24 * 60 * 60 * 1000
+                  }
+                }
+              }
+            }
           }
         });
+        const resetBtn = document.getElementById('rating-chart-reset');
+        if (resetBtn) resetBtn.style.display = 'inline-block';
       } catch (err) {
         console.error(err);
       }

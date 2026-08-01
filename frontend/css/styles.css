@@ -356,3 +356,11 @@
     .achievement-name { font-size: 13px; }
     .achievement-desc { font-size: 11px; }
   }
+
+.rating-zoom-hint { font-size: 11px; color: var(--text-secondary); }
+
+/* Chart zoom: pinch to zoom needs the canvas to own ALL touch gestures -
+   `pan-y` still let mobile browsers treat the pinch as a page zoom, so it must
+   be `none`. Trade-off: a one-finger swipe that starts ON the chart won't
+   scroll the page (scroll using the area outside the chart instead). */
+#profile-rating-canvas { touch-action: none; }

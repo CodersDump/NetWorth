@@ -9,6 +9,8 @@
 <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/hammer.js/2.0.8/hammer.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js"></script>
 <link rel="stylesheet" href="/css/styles.css">
 </head>
 <body>
@@ -863,7 +865,7 @@
 
       <div class="card">
         <h2>Rating history</h2>
-        <p class="card-sub">Compare up to 4 players.</p>
+        <p class="card-sub">Compare up to 4 players. <span class="rating-zoom-hint">Drag a box on the chart to zoom \u00b7 Shift+drag to pan \u00b7 Ctrl+scroll to zoom \u00b7 pinch on mobile.</span> <button type="button" id="rating-chart-reset" class="secondary" style="display:none; margin:0 0 0 6px; padding:2px 10px; font-size:12px;" onclick="resetRatingZoom()">Reset zoom</button></p>
         <div class="row">
           <div>
             <label>Compare with (optional)
