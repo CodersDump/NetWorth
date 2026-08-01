@@ -4425,6 +4425,20 @@ let userPool = null;
     // groups they own/admin, plus any group where they hold a per-group
     // finance role. Defaults the selector to "Club (default)" (the migrated
     // club-wide ledger) when present.
+    // Fill the Add-expense / membership / walk-in slot dropdowns from the
+    // SELECTED group's slot list (Stage 4 wired slots into the group but not
+    // these forms). Falls back to the historical default if a group has none.
+    function populateFinanceSlots(group) {
+      const slots = (group && group.slots && group.slots.length) ? group.slots : ['7AM-8AM', '8AM-9AM'];
+      ['fexp_slot', 'fmem_slot', 'fwalk_slot'].forEach(id => {
+        const sel = document.getElementById(id);
+        if (!sel) return;
+        const prev = sel.value;
+        sel.innerHTML = slots.map(s => `<option>${escapeHtml(s)}</option>`).join('');
+        if (slots.includes(prev)) sel.value = prev;  // keep selection if still valid
+      });
+    }
+
     function populateFinanceGroups() {
       const sel = document.getElementById('finance_group_select');
       if (!sel) return;
@@ -4445,6 +4459,7 @@ let userPool = null;
       const def = visible.find(g => (g.group_name || g.name) === 'Club (default)');
       currentFinanceGroupId = (def && def.group_id) || (visible[0] && visible[0].group_id) || null;
       if (currentFinanceGroupId) sel.value = currentFinanceGroupId;
+      populateFinanceSlots(visible.find(g => g.group_id === currentFinanceGroupId));
       const hint = document.getElementById('finance-group-hint');
       if (hint) hint.textContent = visible.length > 1
         ? 'Switch which group\u2019s finances you\u2019re viewing.'
@@ -5168,6 +5183,7 @@ let userPool = null;
     document.getElementById('finance-unlock-btn').addEventListener('click', financeUnlock);
     document.getElementById('finance_group_select').addEventListener('change', (e) => {
       currentFinanceGroupId = e.target.value || null;
+      populateFinanceSlots((allGroups || []).find(g => g.group_id === currentFinanceGroupId));
       reloadFinanceForGroup();
     });
     document.getElementById('finance-load-summary-btn').addEventListener('click', loadFinanceSummary);
