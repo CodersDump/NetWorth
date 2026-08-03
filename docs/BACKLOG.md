@@ -126,9 +126,21 @@
   resolution + BWF score validity via the same rules as `_is_valid_completed_game`) before writing;
   show a review/confirm step before any match is recorded. Owner is still deciding the hosting shape.
   (Owner idea 2026-07-31.)
-- `[feat] M` Per-group leaderboards & season resets.
-- `[feat] S` Export tournament recap as image already exists (`downloadTournamentImage`); extend to
-  a shareable per-player season card.
+- `[feat] S` ~~Export tournament recap as image already exists (`downloadTournamentImage`); extend to
+  a shareable per-player season card.~~ **DONE in v1.8** — `frontend/js/card-share.js` adds a
+  spotlight-carousel customizer (Share card button on the Player Card) that renders the player's
+  stats card to a canvas and shares via the Web Share API (`navigator.share({files})`), falling back
+  to PNG download. Two customizable axes: **background** (free presets + store `background_image`
+  cosmetics) and **frame** (free Minimal + store `card_frame` cosmetics, drawn as PNG overlays on the
+  export). Both owned/locked through the existing store (`owned_items` + `/store-purchase`); locked
+  picks render dulled with a baked watermark and the export refuses to bake a locked frame. Equip
+  persists via `/update-my-card` (new `card_frame_url` field; `background_url`/`background_id` reused).
+  Backend: `card_frame` added to `_owns_store_cosmetic`, new `card_layout` value-cosmetic +
+  `_owns_card_layout`/`FREE_CARD_LAYOUTS`, both new fields serialized. Follow-ups:
+    - `[feat] M` Premium **stats layouts** (curve / donut graphs) as `card_layout` cosmetics — backend
+      field already accepts them; needs the per-layout canvas draw code + a third customizer axis.
+    - `[feat] S` Use the player's avatar image (not just initials) on the exported card.
+- `[feat] M` Per-group leaderboards & season resets (would let the card say "season" instead of all-time).
 - `[feat] L` Move config out of inline `index.html` script into a generated `config.js`
   (update deploy injection accordingly — KNOWN_ISSUES #10).
 - `[cost] S` Evaluate provisioned-capacity DynamoDB vs on-demand once traffic is steady.

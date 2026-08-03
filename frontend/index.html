@@ -808,6 +808,8 @@
           </label>
           <button type="button" class="secondary" id="profile-refresh-btn" title="Reload this player's stats"
                   style="margin:0; padding:8px 12px; font-size:16px; line-height:1;" onclick="refreshProfile()">&#8635;</button>
+          <button type="button" id="profile-share-btn" title="Customize &amp; share your card"
+                  style="margin:0; padding:8px 14px; font-size:13px; line-height:1;" onclick="openCardShare()">Share card</button>
         </div>
         <div id="profile-stale-notice" style="display:none; font-size:12px; margin-top:6px; color:var(--shuttle);">
           New matches have been recorded - tap &#8635; to refresh.
@@ -1060,6 +1062,8 @@
                     <option value="name_color">Name colour</option>
                     <option value="banner_image">Premium banner (image)</option>
                     <option value="background_image">Premium background (image)</option>
+                    <option value="card_frame">Card frame (image)</option>
+                    <option value="card_layout">Card stats layout (text)</option>
                     <option value="title">Title / flair (text)</option>
                     <option value="profile_effect">Profile effect</option>
                   </optgroup>
@@ -1317,6 +1321,7 @@
     // "Cannot access authSession before initialization" in production).
   </script>
   <script src="/js/app.js"></script>
+  <script src="/js/card-share.js"></script>
 
 </body>
 </html>

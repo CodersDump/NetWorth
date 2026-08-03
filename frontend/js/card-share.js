@@ -1,0 +1,596 @@
+/* ============================================================================
+ * NetWorth — Shareable Player Card (customizer + export + share)
+ *
+ * Loaded AFTER app.js, so it reuses app.js's global helpers directly
+ * (API_BASE_URL, allPlayers, myPlayerId, getAuthHeaders, authedFetch,
+ * loadPlayers, loadStoreCatalogOnce, imageSrc, BACKGROUND_PRESETS). Classic
+ * scripts share one global lexical scope, so those bare names resolve here.
+ *
+ * Two customizable axes in this version: BACKGROUND and FRAME. Both are
+ * owned/locked through the existing store (owned_items + /store-purchase);
+ * equipping persists via /update-my-card (background_url/background_id,
+ * card_frame_url). Locked picks render dulled with a baked watermark, and the
+ * export refuses to bake a locked frame - so the only clean shareable asset
+ * comes into existence after purchase.
+ *
+ * The stats layout is fixed to the "full" card here; premium layouts
+ * (card_layout cosmetics) are a planned follow-up - the backend field already
+ * accepts them.
+ * ========================================================================== */
+(function () {
+  'use strict';
+
+  // ---- small local helpers (kept independent of app.js internals) ----------
+  function api() { return (typeof API_BASE_URL !== 'undefined') ? API_BASE_URL : ''; }
+  function authHeaders() { return (typeof getAuthHeaders === 'function') ? getAuthHeaders() : {}; }
+  function meId() { return (typeof myPlayerId === 'function') ? myPlayerId() : null; }
+  function players() { return (typeof allPlayers !== 'undefined' && Array.isArray(allPlayers)) ? allPlayers : []; }
+  function srcOf(key) { return (typeof imageSrc === 'function') ? imageSrc(key) : (key ? '/' + key : null); }
+  function myPlayer() { const id = meId(); return players().find(p => p.player_id === id) || null; }
+  function levelFromXp(xp) { return Math.max(1, Math.floor(Math.sqrt(Math.floor((Number(xp) || 0) / 5)))); }
+  function rankOf(p) {
+    if (!p) return null;
+    const sorted = players().filter(x => x.claimed).sort((a, b) => Number(b.rating) - Number(a.rating));
+    const i = sorted.findIndex(x => x.player_id === p.player_id);
+    return i >= 0 ? i + 1 : null;
+  }
+  function initials(name) {
+    return (name || '?').trim().split(/\s+/).slice(0, 2).map(w => w[0] || '').join('').toUpperCase() || '?';
+  }
+
+  // Canvas-drawable equivalents of the free preset backgrounds (the real
+  // BACKGROUND_PRESETS are multi-layer CSS the canvas can't parse). Each is a
+  // [top, mid, bottom] gradient plus a light accent used for the strip lines.
+  const FREE_BG = [
+    { id: 'court',     name: 'Court',     css: bgCss('#0b3018', '#12452a', '#1F7A4D') },
+    { id: 'nebula',    name: 'Nebula',    css: bgCss('#0a0a1f', '#141433', '#2a1a4d') },
+    { id: 'ember',     name: 'Ember',     css: bgCss('#14090a', '#2b1008', '#7a2410') },
+    { id: 'blueprint', name: 'Blueprint', css: bgCss('#041d2e', '#053046', '#063b5c') }
+  ];
+  function bgCss(a, b, c) {
+    return `linear-gradient(rgba(7,12,10,.55),rgba(7,12,10,.72)),linear-gradient(160deg,${a} 0%,${b} 55%,${c} 100%)`;
+  }
+  const CANVAS_BG = {
+    court:     ['#0b3018', '#12452a', '#1F7A4D'],
+    nebula:    ['#0a0a1f', '#141433', '#2a1a4d'],
+    ember:     ['#14090a', '#2b1008', '#7a2410'],
+    blueprint: ['#041d2e', '#053046', '#063b5c']
+  };
+
+  // ---- state ---------------------------------------------------------------
+  let modal = null;
+  let stats = null;            // derived from the profile bundle
+  let bgOpts = [], frameOpts = [];
+  let cat = 0;                 // 0 = background, 1 = frame
+  const idx = [0, 0];
+  const catNames = ['Background', 'Frame'];
+
+  const wrap = (n, l) => l ? ((n % l) + l) % l : 0;
+
+  // ---- one-time style injection -------------------------------------------
+  function injectStyles() {
+    if (document.getElementById('nw-cardshare-styles')) return;
+    const s = document.createElement('style');
+    s.id = 'nw-cardshare-styles';
+    s.textContent = `
+    #nw-cs-modal{position:fixed; inset:0; z-index:1200; background:rgba(4,7,6,.82); display:none; overflow-y:auto;}
+    #nw-cs-modal.open{display:block;}
+    .nw-cs-wrap{max-width:520px; margin:0 auto; padding:18px 12px 40px; font-family:Inter,system-ui,sans-serif; color:#e8efe9;}
+    .nw-cs-top{display:flex; align-items:center; justify-content:space-between; margin-bottom:6px;}
+    .nw-cs-top h2{font:700 17px Inter; margin:0;}
+    .nw-cs-coin{font:700 13px Inter; background:#141a17; border:1px solid #26332b; color:#f7d774; padding:6px 12px; border-radius:999px;}
+    .nw-cs-x{background:none; border:none; color:#cfe1d8; font-size:22px; cursor:pointer; margin-left:8px; line-height:1;}
+    .nw-cs-sub{color:#8fa39a; font-size:12px; line-height:1.5; margin:4px 0 12px;}
+    .nw-cs-cats{display:flex; justify-content:center; gap:8px; margin:4px 0;}
+    .nw-cs-cat{font:600 11px Inter; color:#7c8f87; background:#121815; border:1px solid #202b25; padding:7px 15px; border-radius:999px; cursor:pointer;}
+    .nw-cs-cat.on{color:#eafff3; border-color:#2f7a52; background:#173a29;}
+    .nw-cs-stage{position:relative; height:462px; margin-top:6px; touch-action:pan-y;}
+    .nw-cs-slot{position:absolute; top:50%; left:50%; transition:transform .32s cubic-bezier(.25,.8,.32,1), opacity .28s ease;}
+    .nw-cs-noanim .nw-cs-slot{transition:none !important;}
+    #nw-cs-cur{z-index:5; transform:translate(-50%,-50%) scale(1.04);}
+    #nw-cs-prev{z-index:2; transform:translate(calc(-50% - 250px),-50%) scale(.58); opacity:.12;}
+    #nw-cs-next{z-index:2; transform:translate(calc(-50% + 250px),-50%) scale(.58); opacity:.12;}
+    .nw-cs-chev{position:absolute; top:50%; transform:translateY(-50%); z-index:8; font:300 42px Inter; color:#cfe8db; cursor:pointer; width:42px; text-align:center; opacity:.4; user-select:none;}
+    .nw-cs-chev:hover{opacity:.9;} .nw-cs-chev.l{left:0;} .nw-cs-chev.r{right:0;}
+    .nw-cs-ud{position:absolute; left:50%; transform:translateX(-50%); z-index:9; background:#141a17cc; border:1px solid #253128; color:#cfe1d8; width:36px; height:26px; border-radius:8px; cursor:pointer; font-size:13px;}
+    .nw-cs-ud.up{top:-2px;} .nw-cs-ud.down{bottom:-2px;}
+    .nw-cs-frame{width:296px; border-radius:26px; padding:3px; position:relative;}
+    .nw-cs-card{border-radius:23px; position:relative; overflow:hidden; padding:20px 20px 16px; min-height:406px; display:flex; flex-direction:column;}
+    .nw-cs-card::after{content:''; position:absolute; inset:0; border-radius:23px; box-shadow:inset 0 0 60px rgba(0,0,0,.28); pointer-events:none;}
+    .nw-cs-content{position:relative; z-index:1; display:flex; flex-direction:column; flex:1;}
+    .nw-cs-content.dim{filter:grayscale(.85) brightness(.62);}
+    .nw-cs-frimg{position:absolute; inset:0; z-index:3; background-size:100% 100%; background-repeat:no-repeat; pointer-events:none; border-radius:23px;}
+    .nw-cs-min{padding:1.5px; background:rgba(127,216,168,.4);}
+    .nw-cs-veil{position:absolute; inset:0; z-index:7; border-radius:23px; display:flex; flex-direction:column; align-items:center; justify-content:center; background:rgba(6,10,8,.5);}
+    .nw-cs-veil .wm{position:absolute; font:800 30px Rajdhani,Inter; letter-spacing:6px; color:rgba(255,255,255,.06); transform:rotate(-24deg);}
+    .nw-cs-veil .lk{font:800 15px Rajdhani,Inter; letter-spacing:3px; color:#e9f3ee;}
+    .nw-cs-veil .pc{font:700 13px Inter; color:#f7d774; margin-top:3px;}
+    .nw-cs-unlock{margin-top:11px; font:600 12px Inter; background:#1f7a4d; color:#eafff3; border:none; padding:9px 16px; border-radius:9px; cursor:pointer;}
+    .nw-cs-cap{font:600 9.5px Inter; letter-spacing:1.4px; color:#93a89e;}
+    .nw-cs-rating{font:800 52px Rajdhani,Inter; color:#7fd8a8; line-height:.82; letter-spacing:-1px;}
+    .nw-cs-av{width:78px; height:78px; border-radius:50%; border:2px solid rgba(127,216,168,.55); background:#0e1a14 center/cover no-repeat; display:flex; align-items:center; justify-content:center; font:800 26px Rajdhani,Inter; color:#7fd8a8; flex:none;}
+    .nw-cs-rt{display:flex; justify-content:space-between; align-items:flex-start;}
+    .nw-cs-lr{font:400 12.5px Inter; color:#c9d6cf; margin-top:5px;} .nw-cs-lr b{font-weight:700; color:#fff;} .nw-cs-lr .m{color:#8fa39a;}
+    .nw-cs-name{font:700 22px Inter; text-align:center; margin-top:14px;}
+    .nw-cs-handle{font:500 13px Inter; text-align:center; color:#8fa39a; margin-top:1px;}
+    .nw-cs-div{height:1px; background:rgba(127,216,168,.22); margin:13px 0;}
+    .nw-cs-grid{display:grid; grid-template-columns:1fr 1fr; gap:13px 10px;}
+    .nw-cs-grid .v{font:700 20px Rajdhani,Inter; color:#fff;}
+    .nw-cs-trend{display:flex; align-items:flex-end; gap:6px; height:52px; margin-bottom:6px;}
+    .nw-cs-trend i{flex:1; border-radius:4px 4px 2px 2px; display:block;}
+    .nw-cs-foot{margin-top:auto; padding-top:12px; text-align:center; font:700 11px Rajdhani,Inter; letter-spacing:3px; color:#5bbf8a;}
+    .nw-cs-foot .d{color:#f7d774; margin:0 6px;}
+    .nw-cs-optname{text-align:center; font:600 13px Inter; color:#cfe1d8; margin-top:8px; min-height:18px;}
+    .nw-cs-dots{display:flex; justify-content:center; gap:6px; margin-top:6px;}
+    .nw-cs-dots span{width:6px; height:6px; border-radius:50%; background:#2b3831;}
+    .nw-cs-dots span.on{background:#7fd8a8; width:16px; border-radius:3px;}
+    .nw-cs-dots span.lock{background:#5a4a22;}
+    .nw-cs-hint{text-align:center; color:#5f726a; font-size:11px; margin-top:8px; min-height:15px;}
+    .nw-cs-hint b{color:#c98;}
+    .nw-cs-actions{display:flex; gap:10px; margin-top:16px;}
+    .nw-cs-actions button{flex:1; font:600 14px Inter; padding:13px; border-radius:12px; border:none; cursor:pointer;}
+    .nw-cs-save{background:#141a17; color:#cfe1d8; border:1px solid #253128 !important;}
+    .nw-cs-share{background:#1f7a4d; color:#eafff3;}
+    .nw-cs-share.off{background:#1a211d; color:#5f726a; cursor:not-allowed;}
+    `;
+    document.head.appendChild(s);
+  }
+
+  // ---- modal construction --------------------------------------------------
+  function buildModal() {
+    injectStyles();
+    modal = document.createElement('div');
+    modal.id = 'nw-cs-modal';
+    modal.innerHTML = `
+      <div class="nw-cs-wrap">
+        <div class="nw-cs-top">
+          <h2>Share card</h2>
+          <span style="display:flex; align-items:center;">
+            <span class="nw-cs-coin" id="nw-cs-coin">🪙 0</span>
+            <button class="nw-cs-x" id="nw-cs-close" title="Close">&#10005;</button>
+          </span>
+        </div>
+        <p class="nw-cs-sub">Swipe left/right to cycle, up/down to switch category. Locked picks are dulled with a watermark; unlock spends coins and it's yours for good.</p>
+        <div class="nw-cs-cats" id="nw-cs-cats">
+          <div class="nw-cs-cat on" data-cat="0">Background</div>
+          <div class="nw-cs-cat" data-cat="1">Frame</div>
+        </div>
+        <div class="nw-cs-stage" id="nw-cs-stage">
+          <div class="nw-cs-chev l" id="nw-cs-chevL">‹</div>
+          <div class="nw-cs-chev r" id="nw-cs-chevR">›</div>
+          <button class="nw-cs-ud up" id="nw-cs-up">▲</button>
+          <button class="nw-cs-ud down" id="nw-cs-down">▼</button>
+          <div class="nw-cs-slot" id="nw-cs-prev"></div>
+          <div class="nw-cs-slot" id="nw-cs-next"></div>
+          <div class="nw-cs-slot" id="nw-cs-cur"></div>
+        </div>
+        <div class="nw-cs-optname" id="nw-cs-optname"></div>
+        <div class="nw-cs-dots" id="nw-cs-dots"></div>
+        <div class="nw-cs-hint" id="nw-cs-hint"></div>
+        <div class="nw-cs-actions">
+          <button class="nw-cs-save" id="nw-cs-save">Save to my card</button>
+          <button class="nw-cs-share" id="nw-cs-share">Share to…</button>
+        </div>
+      </div>`;
+    document.body.appendChild(modal);
+
+    modal.querySelector('#nw-cs-close').onclick = close;
+    modal.querySelector('#nw-cs-cats').addEventListener('click', e => {
+      const c = e.target.closest('.nw-cs-cat'); if (c) setCat(+c.dataset.cat);
+    });
+    modal.querySelector('#nw-cs-chevL').onclick = () => cycle(-1);
+    modal.querySelector('#nw-cs-chevR').onclick = () => cycle(1);
+    modal.querySelector('#nw-cs-up').onclick = () => setCat(cat - 1);
+    modal.querySelector('#nw-cs-down').onclick = () => setCat(cat + 1);
+    modal.querySelector('#nw-cs-save').onclick = saveToCard;
+    modal.querySelector('#nw-cs-share').onclick = share;
+
+    const stage = modal.querySelector('#nw-cs-stage');
+    let sx = 0, sy = 0, tr = false;
+    stage.addEventListener('touchstart', e => { sx = e.touches[0].clientX; sy = e.touches[0].clientY; tr = true; }, { passive: true });
+    stage.addEventListener('touchend', e => {
+      if (!tr) return; tr = false;
+      const dx = e.changedTouches[0].clientX - sx, dy = e.changedTouches[0].clientY - sy;
+      if (Math.abs(dx) > Math.abs(dy)) { if (Math.abs(dx) > 36) cycle(dx < 0 ? 1 : -1); }
+      else { if (Math.abs(dy) > 36) setCat(cat + (dy < 0 ? 1 : -1)); }
+    }, { passive: true });
+  }
+
+  // ---- data assembly -------------------------------------------------------
+  function ownedMap() { const p = myPlayer(); return (p && p.owned_items) || {}; }
+
+  async function assembleOptions() {
+    const owned = ownedMap();
+    let catalog = [];
+    try { catalog = (typeof loadStoreCatalogOnce === 'function') ? (await loadStoreCatalogOnce()) : []; }
+    catch (e) { catalog = []; }
+
+    const storeOf = (kind) => catalog
+      .filter(i => (i.effect || {}).kind === kind && i.image_url && i.active !== false)
+      .map(i => ({ type: 'image', key: i.image_url, name: i.name, cost: Number(i.cost) || 0,
+                   item_id: i.item_id, owned: !!owned[i.item_id] }));
+
+    bgOpts = FREE_BG.map(b => ({ type: 'preset', id: b.id, name: b.name, css: b.css, owned: true, cost: 0 }))
+      .concat(storeOf('background_image'));
+    frameOpts = [{ type: 'none', name: 'Minimal', owned: true, cost: 0 }]
+      .concat(storeOf('card_frame'));
+
+    // Start on whatever the player currently has equipped, if present.
+    const me = myPlayer() || {};
+    if (me.background_url) { const j = bgOpts.findIndex(o => o.type === 'image' && o.key === me.background_url); if (j >= 0) idx[0] = j; }
+    else if (me.background_id) { const j = bgOpts.findIndex(o => o.type === 'preset' && o.id === me.background_id); if (j >= 0) idx[0] = j; }
+    if (me.card_frame_url) { const j = frameOpts.findIndex(o => o.type === 'image' && o.key === me.card_frame_url); if (j >= 0) idx[1] = j; }
+  }
+
+  async function loadStats() {
+    const p = myPlayer();
+    stats = {
+      name: (p && p.name) || 'Player',
+      nickname: (p && p.nickname) || '',
+      rating: p ? Math.round(Number(p.rating) || 1000) : 1000,
+      level: levelFromXp(p && p.xp),
+      rank: rankOf(p),
+      games: p ? (Number(p.games_played) || 0) : 0,
+      avatarUrl: (p && p.avatar_url) ? srcOf(p.avatar_url) : null,
+      wins: null, losses: null, pct: null, streak: null, trend: null
+    };
+    const id = meId();
+    if (!id) return;
+    try {
+      const res = await fetch(`${api()}/profile-secure/matches?profile_bundle_for=${id}`, { headers: authHeaders() });
+      const b = await res.json();
+      const rec = b.overall_record || {};
+      if (typeof rec.total_wins === 'number') {
+        stats.wins = rec.total_wins; stats.losses = rec.total_losses;
+        const g = rec.total_wins + rec.total_losses;
+        stats.pct = g ? Math.round(rec.total_wins / g * 100) : 0;
+      }
+      const form = (b.recent_form && b.recent_form.form) || [];
+      if (form.length) {
+        // trailing win streak (form is oldest->newest, most recent last)
+        let s = 0; for (let i = form.length - 1; i >= 0; i--) { if (form[i].result === 'W') s++; else break; }
+        stats.streak = s;
+        // reconstruct last-7 post-match ratings from deltas for the trend bars
+        const last = form.slice(-7);
+        let r = stats.rating, pts = [];
+        for (let i = last.length - 1; i >= 0; i--) { pts.unshift(r); r -= Math.round(Number(last[i].delta) || 0); }
+        stats.trend = pts;
+      }
+    } catch (e) { /* stats stay rating/level/games only */ }
+  }
+
+  // ---- live preview --------------------------------------------------------
+  function cardHTML() {
+    const s = stats;
+    const rankTxt = s.rank ? `#${s.rank}` : '—';
+    const av = s.avatarUrl
+      ? `<span class="nw-cs-av" style="background-image:url('${s.avatarUrl}');"></span>`
+      : `<span class="nw-cs-av">${initials(s.name)}</span>`;
+    const record = (s.wins != null)
+      ? `<div class="nw-cs-grid">
+           <div><div class="v">${s.wins}-${s.losses}</div><div class="nw-cs-cap">W – L (${s.pct}%)</div></div>
+           <div><div class="v">${s.games}</div><div class="nw-cs-cap">GAMES</div></div>
+           <div><div class="v">🔥 ${s.streak || 0}</div><div class="nw-cs-cap">WIN STREAK</div></div>
+           <div><div class="v">${s.pct}%</div><div class="nw-cs-cap">WIN RATE</div></div>
+         </div><div class="nw-cs-div"></div>`
+      : `<div class="nw-cs-grid"><div><div class="v">${s.games}</div><div class="nw-cs-cap">GAMES</div></div>
+           <div><div class="v">LVL ${s.level}</div><div class="nw-cs-cap">LEVEL</div></div></div><div class="nw-cs-div"></div>`;
+    let trend = '';
+    if (s.trend && s.trend.length) {
+      const mn = Math.min(...s.trend) - 4, mx = Math.max(...s.trend) + 4, span = Math.max(1, mx - mn);
+      trend = `<div class="nw-cs-trend">` + s.trend.map(v => {
+        const h = 30 + Math.round((v - mn) / span * 62);
+        return `<i style="height:${h}%;background:linear-gradient(180deg,#7fd8a8,#1f5c3d)"></i>`;
+      }).join('') + `</div><div class="nw-cs-cap" style="text-align:center">RATING TREND · LAST ${s.trend.length}</div>`;
+    }
+    return `
+      <div class="nw-cs-rt"><div>
+        <div class="nw-cs-rating">${s.rating}</div><div class="nw-cs-cap">RATING</div>
+        <div class="nw-cs-lr"><span class="m">LVL</span> <b>${s.level}</b></div>
+        <div class="nw-cs-lr"><span class="m">RANK</span> <b>${rankTxt}</b></div>
+      </div>${av}</div>
+      <div class="nw-cs-name">${escapeHtmlLocal(s.name)}</div>
+      <div class="nw-cs-handle">${s.nickname ? '@' + escapeHtmlLocal(s.nickname) : ''}</div>
+      <div class="nw-cs-div"></div>${record}${trend}
+      <div class="nw-cs-foot">◆ MATCHPOINT <span class="d">·</span> NETWORTH ◆</div>`;
+  }
+  function escapeHtmlLocal(t) { return String(t == null ? '' : t).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
+
+  function buildSlot(slotEl, bgSel, frameSel) {
+    const frMin = frameSel.type === 'none';
+    slotEl.innerHTML = `<div class="nw-cs-frame ${frMin ? 'nw-cs-min' : ''}">
+        <div class="nw-cs-card"><div class="nw-cs-content"></div>
+        ${frMin ? '' : `<div class="nw-cs-frimg" style="background-image:url('${srcOf(frameSel.key)}');"></div>`}
+        </div></div>`;
+    const card = slotEl.querySelector('.nw-cs-card');
+    card.style.background = bgSel.type === 'preset'
+      ? bgSel.css
+      : `linear-gradient(rgba(7,12,10,.55),rgba(7,12,10,.72)), center/cover no-repeat url('${srcOf(bgSel.key)}')`;
+    slotEl.querySelector('.nw-cs-content').innerHTML = cardHTML();
+    return card;
+  }
+
+  function sel(off) {
+    const b = [...idx];
+    if (off) b[cat] = wrap(b[cat] + off, (cat === 0 ? bgOpts : frameOpts).length);
+    return { bg: bgOpts[b[0]], frame: frameOpts[b[1]] };
+  }
+
+  function render() {
+    if (!modal) return;
+    const cur = sel(0);
+    const curSlot = modal.querySelector('#nw-cs-cur');
+    buildSlot(curSlot, cur.bg, cur.frame);
+    buildSlot(modal.querySelector('#nw-cs-prev'), sel(-1).bg, sel(-1).frame);
+    buildSlot(modal.querySelector('#nw-cs-next'), sel(1).bg, sel(1).frame);
+
+    modal.querySelectorAll('.nw-cs-cat').forEach(c => c.classList.toggle('on', +c.dataset.cat === cat));
+
+    const anyLocked = !cur.bg.owned || !cur.frame.owned;
+    const list = cat === 0 ? bgOpts : frameOpts;
+    const active = list[idx[cat]];
+    if (anyLocked) curSlot.querySelector('.nw-cs-content').classList.add('dim');
+    if (!active.owned) {
+      const veil = document.createElement('div');
+      veil.className = 'nw-cs-veil';
+      veil.innerHTML = `<div class="wm">NETWORTH</div><div class="lk">🔒 LOCKED</div>
+        <div class="pc">${escapeHtmlLocal(active.name)} · ${active.cost.toLocaleString()} 🪙</div>
+        <button class="nw-cs-unlock">Unlock now</button>`;
+      curSlot.querySelector('.nw-cs-card').appendChild(veil);
+      veil.querySelector('.nw-cs-unlock').onclick = (e) => { e.stopPropagation(); unlock(active); };
+    }
+
+    const dots = modal.querySelector('#nw-cs-dots'); dots.innerHTML = '';
+    list.forEach((o, k) => { const sp = document.createElement('span'); if (k === idx[cat]) sp.className = 'on'; else if (!o.owned) sp.className = 'lock'; dots.appendChild(sp); });
+    modal.querySelector('#nw-cs-optname').textContent = active.name + (active.owned ? '' : ` · ${active.cost.toLocaleString()} 🪙`);
+
+    const shareBtn = modal.querySelector('#nw-cs-share');
+    const hint = modal.querySelector('#nw-cs-hint');
+    if (anyLocked) {
+      shareBtn.classList.add('off'); shareBtn.textContent = 'Unlock to share';
+      const locks = []; if (!cur.bg.owned) locks.push('background'); if (!cur.frame.owned) locks.push('frame');
+      hint.innerHTML = `Can’t share while <b>${locks.join(' + ')}</b> ${locks.length > 1 ? 'are' : 'is'} locked`;
+    } else { shareBtn.classList.remove('off'); shareBtn.textContent = 'Share to…'; hint.innerHTML = 'Ready to share'; }
+
+    const p = myPlayer();
+    modal.querySelector('#nw-cs-coin').textContent = '🪙 ' + ((p && Number(p.coins)) || 0).toLocaleString();
+  }
+
+  let animating = false;
+  const SLOT_SP = 250;   // must match the prev/next offset in CSS
+
+  function cycle(d) {
+    const list = cat === 0 ? bgOpts : frameOpts;
+    if (animating || list.length < 2) return;
+    animating = true;
+    const stage = modal.querySelector('#nw-cs-stage');
+    const cur = modal.querySelector('#nw-cs-cur');
+    const incoming = modal.querySelector(d > 0 ? '#nw-cs-next' : '#nw-cs-prev');
+    // current card glides to the neighbour position it's heading toward;
+    // the incoming neighbour (already showing the adjacent selection) glides
+    // into the centre and lifts above.
+    cur.style.transform = `translate(calc(-50% ${d > 0 ? '-' : '+'} ${SLOT_SP}px),-50%) scale(.58)`;
+    cur.style.opacity = '.12';
+    incoming.style.transform = 'translate(-50%,-50%) scale(1.04)';
+    incoming.style.opacity = '1';
+    incoming.style.zIndex = '6';
+
+    setTimeout(() => {
+      // Snap back to canonical layout with the new content, transitions off
+      // for one frame so the reset doesn't visibly re-slide.
+      stage.classList.add('nw-cs-noanim');
+      [cur, incoming, modal.querySelector('#nw-cs-prev'), modal.querySelector('#nw-cs-next')]
+        .forEach(s => { s.style.transform = ''; s.style.opacity = ''; s.style.zIndex = ''; });
+      idx[cat] = wrap(idx[cat] + d, list.length);
+      render();
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        stage.classList.remove('nw-cs-noanim');
+        animating = false;
+      }));
+    }, 320);
+  }
+  function setCat(c) { if (animating) return; cat = wrap(c, 2); render(); }
+
+  // ---- purchase (reuses /store-purchase) -----------------------------------
+  async function unlock(opt) {
+    if (opt.owned || !opt.item_id) return;
+    const p = myPlayer();
+    if (p && Number(p.coins || 0) < opt.cost) { nwAlertLocal(`Not enough coins — you need ${(opt.cost - Number(p.coins || 0)).toLocaleString()} more.`); return; }
+    try {
+      const r = await doAuthedFetch(`${api()}/store-purchase`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ item_id: opt.item_id }) });
+      if (!r.ok) { nwAlertLocal('Purchase failed: ' + (r.error || 'try again')); return; }
+      if (typeof loadPlayers === 'function') await loadPlayers();
+      if (typeof updateHeaderCoins === 'function') updateHeaderCoins();
+      opt.owned = true;
+      render();
+    } catch (e) { nwAlertLocal('Purchase failed: ' + e.message); }
+  }
+
+  // ---- equip (reuses /update-my-card) --------------------------------------
+  async function saveToCard() {
+    const cur = sel(0);
+    if (!cur.bg.owned || !cur.frame.owned) { nwAlertLocal('Unlock the locked pick before saving.'); return; }
+    const payload = {};
+    if (cur.bg.type === 'preset') payload.background_id = cur.bg.id;
+    else payload.background_url = cur.bg.key;
+    payload.card_frame_url = cur.frame.type === 'none' ? '' : cur.frame.key;
+    const btn = modal.querySelector('#nw-cs-save'); btn.disabled = true; btn.textContent = 'Saving…';
+    try {
+      const r = await doAuthedFetch(`${api()}/update-my-card`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      if (!r.ok) { nwAlertLocal('Could not save: ' + (r.error || 'try again')); }
+      else { if (typeof loadPlayers === 'function') await loadPlayers(); nwAlertLocal('Saved to your card.'); }
+    } catch (e) { nwAlertLocal('Could not save: ' + e.message); }
+    finally { btn.disabled = false; btn.textContent = 'Save to my card'; }
+  }
+
+  // doAuthedFetch: use app.js authedFetch when present (normalizes {res,error}),
+  // else a plain fetch with a compatible shape.
+  async function doAuthedFetch(url, opts) {
+    if (typeof authedFetch === 'function') {
+      const { res, data } = await authedFetch(url, opts);
+      return { ok: res.ok, error: data && data.error };
+    }
+    const res = await fetch(url, Object.assign({ headers: {} }, opts, { headers: Object.assign({}, authHeaders(), (opts && opts.headers) || {}) }));
+    let error = ''; if (!res.ok) { try { error = (await res.json()).error; } catch (e) {} }
+    return { ok: res.ok, error };
+  }
+  function nwAlertLocal(m) { if (typeof nwAlert === 'function') nwAlert(m); else alert(m); }
+
+  // ---- canvas export + Web Share -------------------------------------------
+  function loadImg(src) {
+    return new Promise((resolve) => {
+      if (!src) { resolve(null); return; }
+      const img = new Image(); img.crossOrigin = 'anonymous';
+      img.onload = () => resolve(img); img.onerror = () => resolve(null); img.src = src;
+    });
+  }
+  function rr(ctx, x, y, w, h, r) {
+    ctx.beginPath(); ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath();
+  }
+
+  async function renderExport() {
+    const cur = sel(0);
+    const W = 1080, H = 1350, pad = 72;
+    const canvas = document.createElement('canvas'); canvas.width = W; canvas.height = H;
+    const ctx = canvas.getContext('2d');
+    if (document.fonts && document.fonts.ready) { try { await document.fonts.ready; } catch (e) {} }
+
+    // background
+    if (cur.bg.type === 'preset') {
+      const c = CANVAS_BG[cur.bg.id] || CANVAS_BG.court;
+      const g = ctx.createLinearGradient(0, 0, W, H);
+      g.addColorStop(0, c[0]); g.addColorStop(0.55, c[1]); g.addColorStop(1, c[2]);
+      ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+    } else {
+      const bgImg = await loadImg(srcOf(cur.bg.key));
+      if (bgImg) drawCover(ctx, bgImg, 0, 0, W, H); else { ctx.fillStyle = '#0b1712'; ctx.fillRect(0, 0, W, H); }
+    }
+    // legibility scrim
+    const sc = ctx.createLinearGradient(0, 0, 0, H);
+    sc.addColorStop(0, 'rgba(7,12,10,.55)'); sc.addColorStop(1, 'rgba(7,12,10,.78)');
+    ctx.fillStyle = sc; ctx.fillRect(0, 0, W, H);
+
+    const s = stats;
+    ctx.textBaseline = 'alphabetic';
+    // rating hero
+    ctx.fillStyle = '#7fd8a8'; ctx.font = "800 150px 'Rajdhani', system-ui, sans-serif";
+    ctx.fillText(String(s.rating), pad, pad + 128);
+    ctx.fillStyle = '#93a89e'; ctx.font = "600 26px system-ui, sans-serif";
+    ctx.fillText('RATING', pad + 4, pad + 170);
+    ctx.fillStyle = '#c9d6cf'; ctx.font = "400 30px system-ui, sans-serif";
+    ctx.fillText('LVL ', pad + 4, pad + 220); ctx.fillStyle = '#fff'; ctx.font = "700 30px system-ui";
+    ctx.fillText(String(s.level), pad + 66, pad + 220);
+    ctx.fillStyle = '#c9d6cf'; ctx.font = "400 30px system-ui"; ctx.fillText('RANK ', pad + 4, pad + 262);
+    ctx.fillStyle = '#fff'; ctx.font = "700 30px system-ui"; ctx.fillText(s.rank ? '#' + s.rank : '—', pad + 96, pad + 262);
+
+    // avatar top-right
+    const acx = W - pad - 92, acy = pad + 92, ar = 92;
+    ctx.save(); ctx.beginPath(); ctx.arc(acx, acy, ar, 0, Math.PI * 2);
+    ctx.lineWidth = 5; ctx.strokeStyle = 'rgba(127,216,168,.6)'; ctx.stroke(); ctx.clip();
+    const avImg = s.avatarUrl ? await loadImg(s.avatarUrl) : null;
+    if (avImg) { ctx.drawImage(avImg, acx - ar, acy - ar, ar * 2, ar * 2); }
+    else { ctx.fillStyle = '#0e1a14'; ctx.fillRect(acx - ar, acy - ar, ar * 2, ar * 2);
+           ctx.fillStyle = '#7fd8a8'; ctx.font = "800 62px 'Rajdhani', system-ui"; ctx.textAlign = 'center';
+           ctx.fillText(initials(s.name), acx, acy + 22); ctx.textAlign = 'left'; }
+    ctx.restore();
+
+    // name + handle centered
+    ctx.textAlign = 'center'; ctx.fillStyle = '#fff'; ctx.font = "700 58px system-ui, sans-serif";
+    ctx.fillText(s.name, W / 2, pad + 360);
+    if (s.nickname) { ctx.fillStyle = '#8fa39a'; ctx.font = "500 34px system-ui"; ctx.fillText('@' + s.nickname, W / 2, pad + 404); }
+    ctx.textAlign = 'left';
+
+    // divider
+    let y = pad + 452;
+    ctx.strokeStyle = 'rgba(127,216,168,.22)'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(pad, y); ctx.lineTo(W - pad, y); ctx.stroke();
+
+    // stat grid (2x2)
+    y += 60;
+    const cells = (s.wins != null)
+      ? [[`${s.wins}-${s.losses}`, `W – L (${s.pct}%)`], [String(s.games), 'GAMES'], [`🔥 ${s.streak || 0}`, 'WIN STREAK'], [`${s.pct}%`, 'WIN RATE']]
+      : [[String(s.games), 'GAMES'], [`LVL ${s.level}`, 'LEVEL']];
+    const colX = [pad, W / 2 + 10];
+    cells.forEach((c, i) => {
+      const cx = colX[i % 2], cy = y + Math.floor(i / 2) * 118;
+      ctx.fillStyle = '#fff'; ctx.font = "700 52px 'Rajdhani', system-ui"; ctx.fillText(c[0], cx, cy + 44);
+      ctx.fillStyle = '#93a89e'; ctx.font = "600 24px system-ui"; ctx.fillText(c[1].toUpperCase(), cx, cy + 80);
+    });
+    y += Math.ceil(cells.length / 2) * 118 + 30;
+
+    // trend bars
+    if (s.trend && s.trend.length) {
+      ctx.strokeStyle = 'rgba(127,216,168,.22)'; ctx.beginPath(); ctx.moveTo(pad, y); ctx.lineTo(W - pad, y); ctx.stroke();
+      y += 40;
+      const mn = Math.min(...s.trend) - 4, mx = Math.max(...s.trend) + 4, span = Math.max(1, mx - mn);
+      const bw = (W - pad * 2 - (s.trend.length - 1) * 14) / s.trend.length, bh = 150;
+      s.trend.forEach((v, i) => {
+        const h = 40 + (v - mn) / span * bh, bx = pad + i * (bw + 14);
+        const g = ctx.createLinearGradient(0, y + bh - h, 0, y + bh);
+        g.addColorStop(0, '#7fd8a8'); g.addColorStop(1, '#1f5c3d');
+        ctx.fillStyle = g; rr(ctx, bx, y + (bh - h), bw, h, 8); ctx.fill();
+      });
+      y += bh + 34;
+      ctx.fillStyle = '#93a89e'; ctx.font = "600 24px system-ui"; ctx.textAlign = 'center';
+      ctx.fillText('RATING TREND · LAST ' + s.trend.length, W / 2, y); ctx.textAlign = 'left';
+    }
+
+    // footer
+    ctx.fillStyle = '#5bbf8a'; ctx.font = "700 30px 'Rajdhani', system-ui"; ctx.textAlign = 'center';
+    ctx.fillText('◆  MATCHPOINT · NETWORTH  ◆', W / 2, H - pad + 8); ctx.textAlign = 'left';
+
+    // frame overlay (owned store PNG) or minimal border
+    if (cur.frame.type === 'none') {
+      ctx.strokeStyle = 'rgba(127,216,168,.5)'; ctx.lineWidth = 6;
+      rr(ctx, 14, 14, W - 28, H - 28, 46); ctx.stroke();
+    } else {
+      const fr = await loadImg(srcOf(cur.frame.key));
+      if (fr) ctx.drawImage(fr, 0, 0, W, H);
+    }
+
+    return await new Promise(res => canvas.toBlob(b => res(b), 'image/png'));
+  }
+  function drawCover(ctx, img, x, y, w, h) {
+    const ir = img.width / img.height, r = w / h; let dw, dh;
+    if (ir > r) { dh = h; dw = h * ir; } else { dw = w; dh = w / ir; }
+    ctx.drawImage(img, x + (w - dw) / 2, y + (h - dh) / 2, dw, dh);
+  }
+
+  async function share() {
+    const btn = modal.querySelector('#nw-cs-share');
+    if (btn.classList.contains('off')) { nwAlertLocal('Unlock the locked pick first — a locked frame can’t be shared.'); return; }
+    btn.disabled = true; const label = btn.textContent; btn.textContent = 'Rendering…';
+    try {
+      const blob = await renderExport();
+      if (!blob) { nwAlertLocal('Could not generate the image.'); return; }
+      const fname = `${(stats.nickname || stats.name || 'player').replace(/[^a-z0-9]+/gi, '_')}_networth.png`;
+      const file = new File([blob], fname, { type: 'image/png' });
+      if (navigator.canShare && navigator.canShare({ files: [file] })) {
+        await navigator.share({ files: [file], title: 'My NetWorth card', text: 'My badminton stats card' });
+      } else {
+        const url = URL.createObjectURL(blob); const a = document.createElement('a');
+        a.href = url; a.download = fname; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1500);
+      }
+    } catch (e) {
+      if (e && e.name === 'AbortError') { /* user cancelled the share sheet */ }
+      else nwAlertLocal('Share failed: ' + (e && e.message ? e.message : e));
+    } finally { btn.disabled = false; btn.textContent = label; }
+  }
+
+  // ---- open / close --------------------------------------------------------
+  async function openCardShare() {
+    if (!meId()) { nwAlertLocal('Log in and link a player to build your card.'); return; }
+    if (!modal) buildModal();
+    cat = 0; idx[0] = 0; idx[1] = 0;
+    modal.classList.add('open'); document.body.style.overflow = 'hidden';
+    modal.querySelector('#nw-cs-optname').textContent = 'Loading…';
+    await Promise.all([assembleOptions(), loadStats()]);
+    render();
+  }
+  function close() { if (modal) modal.classList.remove('open'); document.body.style.overflow = ''; }
+
+  // expose the entry point for the Player Card button
+  window.openCardShare = openCardShare;
+})();
