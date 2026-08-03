@@ -146,6 +146,11 @@
 
 ## Done
 
+- ✅ 2026-08-01 — **Bug fix (money reference):** per-slot relief no longer cross-contaminates. A member
+  in two slots was getting BOTH slots' relief subtracted on EACH slot's effective (10−5 / 15−5 instead
+  of 10−2 / 15−3). `_member_relief` now takes an optional `slot` filter; the per-slot card, confirm-store
+  and settled-check pass it, while the aggregated Insights row keeps the summed total. Unit-tested.
+
 - ✅ 2026-08-01 — **Feature + fix:** (1) themed modal system — `nwConfirm`/`nwAlert`/`nwPrompt`
   (Promise-based) replace ALL 137 native browser confirm/alert/prompt calls; styled via the app's CSS
   vars so they follow light/dark automatically (Esc/click-out cancels, Enter confirms). (2) Race-fix:

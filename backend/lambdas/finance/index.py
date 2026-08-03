@@ -402,11 +402,13 @@ def _prev_period(month, year):
     return (MONTHS[i - 1], year - 1 if i == 0 else year)
 
 
-def _member_relief(settlement, memberships, ident, month, year):
-    """Relief a member gets in (month, year): the sum of LAST month's
-    residual_per_head for each slot they were a Yes member in then. A member
-    who forfeited that prior slot gets nothing from it. This is the single
-    source of truth used by both the members list and insights."""
+def _member_relief(settlement, memberships, ident, month, year, slot=None):
+    """Relief a member gets in (month, year): the previous month's residual.
+    If `slot` is given, ONLY that slot's relief (used for the per-slot member
+    card / confirm / settled-check, so a member in two slots doesn't get both
+    slots' relief subtracted on each). If `slot` is None, summed across all the
+    member's slots - their total for the month (used by the aggregated Insights
+    row). A slot the member forfeited contributes nothing."""
     p_month, p_year = _prev_period(month, year)
     relief = 0.0
     for m in memberships:
@@ -415,6 +417,8 @@ def _member_relief(settlement, memberships, ident, month, year):
                 and (m.get('player_id') or f"name:{m.get('display_name')}") == ident):
             if m.get('forfeit_residual'):
                 continue
+            if slot is not None and str(m.get('slot')) != str(slot):
+                continue  # per-slot: only this slot's own relief
             res = (settlement.get((p_month, p_year, str(m.get('slot')))) or {}).get('residual_per_head')
             if res:
                 relief += res
@@ -467,7 +471,8 @@ def list_records(record_type, params, group_id=None):
             for it in items:
                 ident = it.get('player_id') or f"name:{it.get('display_name')}"
                 relief = _member_relief(settlement, all_mem, ident,
-                                        str(params['month']), int(_num(params['year'])))
+                                        str(params['month']), int(_num(params['year'])),
+                                        slot=str(params['slot']))
                 it['relief'] = relief
                 if cph is not None:
                     it['effective'] = round(max(cph - relief, 0), 2)
@@ -523,7 +528,8 @@ def update_record(record_type, record_id, body, group_id=None):
             ident = existing.get('player_id') or f"name:{existing.get('display_name')}"
             all_mem = _scan_type('membership', existing.get('group_id'))
             relief = _member_relief(settlement, all_mem, ident,
-                                    str(existing.get('month')), int(_num(existing.get('year'))))
+                                    str(existing.get('month')), int(_num(existing.get('year'))),
+                                    slot=str(existing.get('slot')))
             effective = round(max(cph - relief, 0), 2)
             existing['payment_confirmed_amount'] = Decimal(str(effective))
         else:
@@ -792,7 +798,7 @@ def _settlement_rows(group_id=None):
         if not b or b.get('cost_per_head') is None:
             continue
         ident = m.get('player_id') or f"name:{m.get('display_name')}"
-        relief = _member_relief(periods, memberships, ident, b['month'], b['year'])
+        relief = _member_relief(periods, memberships, ident, b['month'], b['year'], slot=b['slot'])
         effective = round(max(b['cost_per_head'] - relief, 0), 2)
         if abs(_num(m.get('payment_confirmed_amount')) - effective) < 0.01:
             matched[key] += 1

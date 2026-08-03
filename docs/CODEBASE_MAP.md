@@ -338,7 +338,7 @@ _NetWorth - tournaments Lambda (singles or doubles)_
 | `substitute_player` | tournament_id, event | 971 | Swap a player out of a team for all of that team's FUTURE (unplayed) |
 | `_response` | status_code, body_dict | 1050 | — |
 
-#### `finance` — 1028 LOC
+#### `finance` — 1034 LOC
 _NetWorth - finance Lambda_
 
 **Module constants:** `GROUPS_TABLE`, `DEFAULT_GROUP_NAME`, `VIEW_KEY`, `CONFIRMATION_CODE`, `MONTHS`, `FINANCE_LEVELS`, `ALLOWED_FIELDS`, `NUMERIC_FIELDS`, `REQUIRED_FIELDS`, `AVG_GAMES_PER_SESSION`, `SESSION_RATE`, `ACTIVE_DAYS_THRESHOLD`
@@ -362,21 +362,21 @@ _NetWorth - finance Lambda_
 | `_clean` | record_type, data | 377 | — |
 | `_resolve_name` | pid_cache, player_id | 389 | — |
 | `_prev_period` | month, year | 400 | — |
-| `_member_relief` | settlement, memberships, ident, month, year | 405 | Relief a member gets in (month, year): the sum of LAST month's |
-| `list_records` | record_type, params, group_id | 424 | — |
-| `create_records` | record_type, body, group_id | 477 | — |
-| `update_record` | record_type, record_id, body, group_id | 499 | — |
-| `delete_record_enforced` | record_type, record_id, event | 561 | Triple-gated: SuperAdmin identity + FINANCE_VIEW_KEY + the existing |
-| `delete_record` | record_type, record_id, body, group_id | 584 | — |
-| `get_settings` |  | 598 | — |
-| `put_settings` | body | 607 | — |
-| `public_upi` |  | 622 | The pay card is shown to guests (they pay walk-in fees), so the UPI |
-| `my_settlement` | claims, group_id | 630 | A single member's own dues in a group: for every (month, slot) where |
-| `public_walkins` |  | 694 | — |
-| `_settlement_rows` | group_id | 714 | Per (month, year, slot): the exact math from the Calculations sheet. |
-| `summary` | group_id | 811 | — |
-| `insights` | group_id | 828 | Per-member monthly economics, ghosts, and walk-in conversion. |
-| `_response` | status_code, body_dict | 1019 | — |
+| `_member_relief` | settlement, memberships, ident, month, year,  | 405 | Relief a member gets in (month, year): the previous month's residual. |
+| `list_records` | record_type, params, group_id | 428 | — |
+| `create_records` | record_type, body, group_id | 482 | — |
+| `update_record` | record_type, record_id, body, group_id | 504 | — |
+| `delete_record_enforced` | record_type, record_id, event | 567 | Triple-gated: SuperAdmin identity + FINANCE_VIEW_KEY + the existing |
+| `delete_record` | record_type, record_id, body, group_id | 590 | — |
+| `get_settings` |  | 604 | — |
+| `put_settings` | body | 613 | — |
+| `public_upi` |  | 628 | The pay card is shown to guests (they pay walk-in fees), so the UPI |
+| `my_settlement` | claims, group_id | 636 | A single member's own dues in a group: for every (month, slot) where |
+| `public_walkins` |  | 700 | — |
+| `_settlement_rows` | group_id | 720 | Per (month, year, slot): the exact math from the Calculations sheet. |
+| `summary` | group_id | 817 | — |
+| `insights` | group_id | 834 | Per-member monthly economics, ghosts, and walk-in conversion. |
+| `_response` | status_code, body_dict | 1025 | — |
 
 #### `progress_scheduler` — 220 LOC
 _NetWorth - progress_scheduler Lambda_
