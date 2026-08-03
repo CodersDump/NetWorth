@@ -67,6 +67,7 @@ matches_table = dynamodb.Table(os.environ['MATCHES_TABLE'])
 GROUPS_TABLE = os.environ.get('GROUPS_TABLE')
 groups_table = dynamodb.Table(GROUPS_TABLE) if GROUPS_TABLE else None
 DEFAULT_GROUP_NAME = 'Club (default)'
+GROUP_SLOT = '(whole group)'   # sentinel slot for slot-less, group-wide records
 _default_group_id_cache = None
 
 # Both secrets arrive as environment variables set by CloudFormation
@@ -368,9 +369,9 @@ ALLOWED_FIELDS = {
 }
 NUMERIC_FIELDS = {'estimated_cost', 'actual_cost', 'estimated_qty', 'actual_qty', 'fee', 'year'}
 REQUIRED_FIELDS = {
-    'expense': ['month', 'year', 'slot', 'item'],
+    'expense': ['month', 'year', 'item'],          # slot optional -> group-wide
     'membership': ['month', 'year', 'slot', 'display_name', 'status'],
-    'walkin': ['date', 'slot', 'display_name'],
+    'walkin': ['date', 'display_name'],             # slot optional -> group-wide
 }
 
 
@@ -681,6 +682,27 @@ def my_settlement(claims, group_id):
             'owed_back_to_you': round(owed_back, 2),
             'collection_status': b.get('collection_status'),
         })
+    # Group-wide (slot-less) share: for each month this member is a distinct
+    # Yes member, add one "(whole group)" line with the shared cost + owed-back.
+    member_months = {(str(m.get('month')), int(_num(m.get('year'))))
+                     for m in memberships
+                     if m.get('player_id') == pid and m.get('status') == 'Yes'}
+    for (mth, yr) in member_months:
+        gw = rows.get((mth, yr, GROUP_SLOT))
+        if not gw or gw.get('cost_per_head') is None:
+            continue
+        gw_cost = gw['cost_per_head']
+        gw_back = gw.get('residual_per_head') or 0.0
+        owe_total += gw_cost
+        owed_back_total += gw_back
+        lines.append({
+            'month': mth, 'year': yr, 'slot': GROUP_SLOT,
+            'expected_per_head': gw_cost,
+            'you_paid': False,
+            'you_owe': round(gw_cost, 2),
+            'owed_back_to_you': round(gw_back, 2),
+            'collection_status': gw.get('collection_status'),
+        })
     lines.sort(key=lambda l: (l['year'], l['month'], l['slot']), reverse=True)
     payee = group.get('finance_payee') or {}
     return _response(200, {
@@ -741,8 +763,18 @@ def _settlement_rows(group_id=None):
             'extra_collected': 0.0, 'player_count': 0, 'forfeit_count': 0, 'items': []
         })
 
+    # A record with no slot is GROUP-WIDE: its cost/residual is split across the
+    # DISTINCT "Yes" members across every slot that month (counted once even if
+    # in two slots). It lives in its own (month, year, GROUP_SLOT) bucket whose
+    # player_count is set to that distinct count below, so the same per-bucket
+    # math then divides it correctly.
+    def _slot_key(slot):
+        return GROUP_SLOT if slot in (None, '', 'None') else slot
+
+    distinct_members = {}  # (month, year) -> set of idents (Yes, any slot)
+
     for e in expenses:
-        b = bucket(e.get('month'), e.get('year'), e.get('slot'))
+        b = bucket(e.get('month'), e.get('year'), _slot_key(e.get('slot')))
         est = _num(e.get('estimated_cost')) * _num(e.get('estimated_qty'), 1)
         act_cost = e.get('actual_cost')
         act = (_num(act_cost) if act_cost is not None else _num(e.get('estimated_cost'))) \
@@ -757,6 +789,8 @@ def _settlement_rows(group_id=None):
             b['player_count'] += 1
             if m.get('forfeit_residual'):
                 b['forfeit_count'] += 1
+            ident = m.get('player_id') or f"name:{m.get('display_name')}"
+            distinct_members.setdefault((str(m.get('month')), int(_num(m.get('year')))), set()).add(ident)
 
     for w in walkins:
         date = w.get('date') or ''
@@ -766,7 +800,14 @@ def _settlement_rows(group_id=None):
                 month = MONTHS[int(month_num) - 1]
             except (ValueError, IndexError):
                 continue
-            bucket(month, year, w.get('slot'))['extra_collected'] += _num(w.get('fee'))
+            bucket(month, year, _slot_key(w.get('slot')))['extra_collected'] += _num(w.get('fee'))
+
+    # Give each group-wide bucket its denominator: the month's distinct Yes members.
+    for (month, year), members in distinct_members.items():
+        gwkey = (str(month), int(year), GROUP_SLOT)
+        if gwkey in periods:
+            periods[gwkey]['player_count'] = len(members)
+            periods[gwkey]['is_group_wide'] = True
 
     for key, b in periods.items():
         count = b['player_count']
@@ -921,8 +962,21 @@ def insights(group_id=None):
                                         'total': srow.get('estimated_total'),
                                         'members': srow.get('player_count')})
 
+        # Group-wide (slot-less) cost + relief, added once per distinct member.
+        gw = settlement.get((month, year, GROUP_SLOT))
+        if gw and gw.get('cost_per_head') is not None:
+            paid += gw['cost_per_head']
+            paid_breakdown.append({'slot': GROUP_SLOT, 'per_head': gw['cost_per_head'],
+                                    'total': gw.get('estimated_total'), 'members': gw.get('player_count')})
+
         p_month, p_year = prev_period(month, year)
         relief = _member_relief(settlement, memberships, ident, month, year)
+        # Group-wide relief from last month (only if they were a distinct Yes
+        # member then, i.e. they have an entry for the previous period).
+        p_gw = settlement.get((p_month, p_year, GROUP_SLOT))
+        if (p_gw and p_gw.get('residual_per_head')
+                and (ident, p_month, p_year) in by_member_month):
+            relief += p_gw['residual_per_head']
 
         attended_briefly = any(
             mem3.get('attended_briefly') for mem3 in memberships
