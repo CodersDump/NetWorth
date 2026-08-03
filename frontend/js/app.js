@@ -1776,7 +1776,7 @@ let userPool = null;
           const editLabel = perm.canActDirectly ? 'Edit' : 'Request edit';
           const delLabel = perm.canActDirectly ? 'Delete' : 'Request delete';
           const gid = m.group_id || '';
-          actions = `<button class="secondary" style="margin-top:0;padding:4px 8px;font-size:11px;" onclick="editMatchScore('${m.match_id}', ${m.score_a}, ${m.score_b}, '${encodeURIComponent(label)}', '${gid}')">${editLabel}</button> `
+          actions = `<button class="secondary" style="margin-top:0;padding:4px 8px;font-size:11px;" onclick="editMatch('${m.match_id}', '${gid}')">${editLabel}</button> `
                   + `<button class="secondary" style="margin-top:0;padding:4px 8px;font-size:11px;" onclick="deleteMatch('${m.match_id}', '${encodeURIComponent(label)}', '${gid}')">${delLabel}</button>`;
         }
         html += `<tr><td>${date}</td><td>${teamA}</td><td>${teamB}</td><td>${m.score_a} - ${m.score_b}</td><td>${notes}</td><td>${actions}</td></tr>`;
@@ -1848,6 +1848,68 @@ let userPool = null;
         });
         nwAlert(res.ok ? 'Request sent to the admin for approval.' : `Error: ${error}`);
       } catch (e) { nwAlert(`Request failed: ${e.message}`); }
+    }
+
+    // Full match edit (players + score), SuperAdmin only. Non-admins keep the
+    // score-only request flow. Changing players recomputes every rating, same
+    // as a score edit, since Elo is path-dependent.
+    async function editMatch(matchId, groupId) {
+      const m = (gameLogRows || []).find(r => r.match_id === matchId);
+      if (!m) { return editMatchScore(matchId, 0, 0, '', groupId || ''); }
+      if (!isSuperAdmin()) {
+        // non-admins: fall back to the existing score-only request path
+        const label = playerLabelsById(m.team_a, m.team_a_names).join(' & ') + ' vs ' + playerLabelsById(m.team_b, m.team_b_names).join(' & ');
+        return editMatchScore(matchId, m.score_a, m.score_b, encodeURIComponent(label), groupId || '');
+      }
+      const size = (m.team_a || []).length || 1;
+      const opts = (sel) => (allPlayers || []).map(p =>
+        `<option value="${p.player_id}"${p.player_id === sel ? ' selected' : ''}>${escapeHtml(p.name)} (${escapeHtml(p.nickname)}) (${p.rating})</option>`).join('');
+      const pickers = (team, prefix) => Array.from({ length: size }, (_, i) =>
+        `<select class="nw-modal-input ${prefix}" style="margin-bottom:6px;">${opts((team || [])[i])}</select>`).join('');
+
+      const overlay = document.createElement('div');
+      overlay.className = 'nw-modal-overlay';
+      overlay.innerHTML = `
+        <div class="nw-modal" style="max-width:460px;">
+          <div class="nw-modal-msg">Edit match \u2014 players &amp; score.<br><span style="font-size:12px;opacity:0.7;">Saving recomputes every player's rating from the corrected history.</span></div>
+          <div style="display:flex; gap:12px;">
+            <div style="flex:1;"><strong style="font-size:13px;">Team A</strong>${pickers(m.team_a, 'nw-ta')}
+              <input type="number" class="nw-modal-input nw-sa" value="${m.score_a}" style="margin-top:4px;" placeholder="Score A"></div>
+            <div style="flex:1;"><strong style="font-size:13px;">Team B</strong>${pickers(m.team_b, 'nw-tb')}
+              <input type="number" class="nw-modal-input nw-sb" value="${m.score_b}" style="margin-top:4px;" placeholder="Score B"></div>
+          </div>
+          <input type="text" class="nw-modal-input nw-code" placeholder="Confirmation code" style="margin-top:10px;">
+          <div class="nw-modal-actions">
+            <button class="nw-modal-btn nw-cancel">Cancel</button>
+            <button class="nw-modal-btn nw-primary nw-save">Save &amp; recompute</button>
+          </div>
+        </div>`;
+      document.body.appendChild(overlay);
+      requestAnimationFrame(() => overlay.classList.add('nw-open'));
+      const close = () => { overlay.classList.remove('nw-open'); setTimeout(() => overlay.remove(), 140); };
+      overlay.querySelector('.nw-cancel').onclick = close;
+      overlay.addEventListener('mousedown', e => { if (e.target === overlay) close(); });
+      overlay.querySelector('.nw-save').onclick = async () => {
+        const team_a = [...overlay.querySelectorAll('.nw-ta')].map(s => s.value);
+        const team_b = [...overlay.querySelectorAll('.nw-tb')].map(s => s.value);
+        const score_a = parseInt(overlay.querySelector('.nw-sa').value, 10);
+        const score_b = parseInt(overlay.querySelector('.nw-sb').value, 10);
+        const confirm = overlay.querySelector('.nw-code').value;
+        if (new Set([...team_a, ...team_b]).size !== team_a.length + team_b.length) { nwAlert('A player can\'t be on both teams (or picked twice).'); return; }
+        if (isNaN(score_a) || isNaN(score_b) || score_a === score_b) { nwAlert('Enter two different scores.'); return; }
+        if (!confirm) { nwAlert('Enter the confirmation code.'); return; }
+        try {
+          const res = await fetch(`${API_BASE_URL}/matches/${matchId}`, {
+            method: 'PUT', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ team_a, team_b, score_a, score_b, confirm })
+          });
+          const data = await res.json();
+          if (!res.ok) { nwAlert('Error: ' + (data.error || 'could not save')); return; }
+          close();
+          nwAlert('Match updated. All ratings were recomputed.');
+          loadGameLog(); loadPlayers();
+        } catch (e) { nwAlert('Request failed: ' + e.message); }
+      };
     }
 
     async function editMatchScore(matchId, currentScoreA, currentScoreB, encLabel, groupId) {

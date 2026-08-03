@@ -738,10 +738,32 @@ def update_match(match_id, event):
 
     new_winner = 'A' if new_score_a > new_score_b else 'B'
 
+    # Optionally change the players too (not just the score). Teams keep the
+    # match's original size (singles=1, doubles=2). Validated exactly like a
+    # new match, and every valid player must exist. Omitting teams leaves the
+    # rosters untouched (score-only edit, the original behaviour).
+    set_parts = ['score_a = :sa', 'score_b = :sb', 'winner = :w']
+    vals = {':sa': new_score_a, ':sb': new_score_b, ':w': new_winner}
+    if body.get('team_a') is not None or body.get('team_b') is not None:
+        team_a = body.get('team_a') or existing.get('team_a') or []
+        team_b = body.get('team_b') or existing.get('team_b') or []
+        size = len(existing.get('team_a') or []) or 1
+        if len(team_a) != size or len(team_b) != size:
+            return _response(400, {'error': f'this match needs {size} player(s) per team'})
+        if set(team_a) & set(team_b):
+            return _response(400, {'error': 'a player cannot be on both teams'})
+        # every player must exist
+        for pid in list(team_a) + list(team_b):
+            if not players_table.get_item(Key={'player_id': pid}).get('Item'):
+                return _response(404, {'error': f'player not found: {pid}'})
+        set_parts += ['team_a = :ta', 'team_b = :tb']
+        vals[':ta'] = team_a
+        vals[':tb'] = team_b
+
     matches_table.update_item(
         Key={'match_id': match_id},
-        UpdateExpression='SET score_a = :sa, score_b = :sb, winner = :w',
-        ExpressionAttributeValues={':sa': new_score_a, ':sb': new_score_b, ':w': new_winner}
+        UpdateExpression='SET ' + ', '.join(set_parts),
+        ExpressionAttributeValues=vals
     )
 
     recompute_all_ratings()

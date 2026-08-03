@@ -146,6 +146,12 @@
 
 ## Done
 
+- ✅ 2026-08-03 — **Feature:** edit PLAYERS in a recorded match, not just the score. `update_match`
+  (matches lambda) now optionally accepts `team_a`/`team_b` (validated: right size, no player on both
+  teams, all must exist) and recomputes every rating. Game-log Edit opens a themed modal with per-team
+  player pickers + scores (SuperAdmin); non-admins keep the score-only request flow. **Backend change —
+  needs a prod deploy.**
+
 - ✅ 2026-08-03 — **Bug fix:** match reorder (review day) drag-and-drop now works. `dragstart` never
   stored the source index and `getData()` is unreadable during `dragover` (protected mode), so `from`
   was always NaN and nothing moved. Now the index is stashed on dragstart, and the reorder happens once
