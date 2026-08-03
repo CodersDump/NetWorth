@@ -1063,6 +1063,8 @@
                     <option value="banner_image">Premium banner (image)</option>
                     <option value="background_image">Premium background (image)</option>
                     <option value="card_frame">Card frame (image)</option>
+                    <option value="card_frame_preset">Card frame — preset (glass / gold / …)</option>
+                    <option value="background_preset">Card background — preset</option>
                     <option value="card_layout">Card stats layout (text)</option>
                     <option value="title">Title / flair (text)</option>
                     <option value="profile_effect">Profile effect</option>
@@ -1076,6 +1078,7 @@
                 </select>
               </label>
               <label id="store-effect-value-row">Value (colour hex, title text, etc.) <input type="text" id="store-item-value" placeholder="#FFD700 or 'Champion'"></label>
+              <label id="store-effect-preset-row" style="display:none;">Preset <select id="store-item-preset"></select></label>
               <div id="store-image-row" style="display:none;">
                 <label>Image <input type="file" id="store-item-image" accept="image/jpeg,image/png,image/webp" onchange="onStoreImagePick(this)"></label>
                 <span id="store-image-status" style="font-size:12px;"></span>
