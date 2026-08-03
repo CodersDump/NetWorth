@@ -146,6 +146,18 @@
 
 ## Done
 
+- ✅ 2026-08-02 — **Feature (money):** slot-less / group-wide expenses & walk-ins. A record with no
+  slot goes to a group-wide bucket whose cost/residual splits across the DISTINCT Yes members across
+  every slot that month (counted once even if in two slots). `_settlement_rows` sets the group-wide
+  bucket's player_count to that distinct count so the same per-bucket math applies; `my_settlement` and
+  `insights` add each distinct member's group-wide cost + relief (a "(whole group)" line). Slot is now
+  optional on the expense/walk-in forms ("— whole group —"); membership still requires a slot.
+  Unit-tested (300 split across 3 distinct = 100 each, Z-in-both-slots counted once; group-wide walk-in
+  feeds group-wide residual; real slots unaffected). Note: group-wide has no per-member payment tracking
+  (always 'collecting') and no forfeit — edge cases for later.
+- ✅ 2026-08-02 — **QoL:** the Finance tab remembers your last month/slot (localStorage), restored on
+  open, so you don't re-pick every visit.
+
 - ✅ 2026-08-01 — **Bug fix (money reference):** per-slot relief no longer cross-contaminates. A member
   in two slots was getting BOTH slots' relief subtracted on EACH slot's effective (10−5 / 15−5 instead
   of 10−2 / 15−3). `_member_relief` now takes an optional `slot` filter; the per-slot card, confirm-store
@@ -166,11 +178,6 @@
   650; settled matches on 650, not the pre-relief 825).
 
 
-### Then: optional slot-less (group-wide) expenses/walk-ins
-A record with no slot splits its cost across ALL DISTINCT "Yes" members across every slot that month
-(counted once even if in two slots). Requires a two-tier settlement: per-slot buckets + a group-wide
-bucket allocated across the union of Yes members. Money-critical - build + test carefully. Walk-ins
-may also be slot-less (date kept, slot optional).
 
 - ✅ 2026-08-01 — **Feature (money):** residual forfeit + redistribute. A membership can be marked
   `forfeit_residual` (owner-only "Forfeit refund" toggle on the card); that member's relief becomes ₹0

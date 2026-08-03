@@ -4516,8 +4516,39 @@ let userPool = null;
         const sel = document.getElementById(id);
         if (!sel) return;
         const prev = sel.value;
-        sel.innerHTML = slots.map(s => `<option>${escapeHtml(s)}</option>`).join('');
-        if (slots.includes(prev)) sel.value = prev;  // keep selection if still valid
+        let opts = slots.map(s => `<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`).join('');
+        // Expenses and walk-ins can be group-wide (no slot): the cost/fee is
+        // then split across ALL distinct Yes members that month. Membership
+        // always needs a real slot.
+        if (id === 'fexp_slot' || id === 'fwalk_slot') {
+          opts += `<option value="">\u2014 whole group (no slot) \u2014</option>`;
+        }
+        sel.innerHTML = opts;
+        // Restore the last slot you used (QoL), else keep the current value.
+        const remembered = (id === 'fmem_slot') ? _rememberedFinance('slot') : null;
+        const want = (remembered && [...sel.options].some(o => o.value === remembered)) ? remembered : prev;
+        if ([...sel.options].some(o => o.value === want)) sel.value = want;
+      });
+    }
+
+    // Small QoL: remember the finance month/slot you last worked with so you
+    // don't re-pick every visit. Guarded so it never throws or triggers loads.
+    function _rememberedFinance(key) {
+      try { return (JSON.parse(localStorage.getItem('nw_finance_sel') || '{}'))[key] || null; }
+      catch (_) { return null; }
+    }
+    function _rememberFinance(key, val) {
+      try {
+        const o = JSON.parse(localStorage.getItem('nw_finance_sel') || '{}');
+        o[key] = val; localStorage.setItem('nw_finance_sel', JSON.stringify(o));
+      } catch (_) {}
+    }
+    function restoreFinanceMonth() {
+      const m = _rememberedFinance('month');
+      if (!m) return;
+      ['fexp_month', 'fmem_month', 'fwalk_month'].forEach(id => {
+        const sel = document.getElementById(id);
+        if (sel && [...(sel.options || [])].some(o => o.value === m)) sel.value = m;
       });
     }
 
@@ -5343,7 +5374,11 @@ let userPool = null;
     document.getElementById('finance-add-expense-btn').addEventListener('click', addFinanceExpense);
     document.getElementById('finance-cancel-expense-edit-btn').addEventListener('click', resetExpenseEdit);
     document.getElementById('finance-load-expenses-btn').addEventListener('click', loadFinanceExpenses);
-    document.getElementById('finance-load-members-btn').addEventListener('click', loadFinanceMembers);
+    document.getElementById('finance-load-members-btn').addEventListener('click', () => {
+      _rememberFinance('month', document.getElementById('fmem_month').value);
+      _rememberFinance('slot', document.getElementById('fmem_slot').value);
+      loadFinanceMembers();
+    });
     document.getElementById('finance-recalc-btn').addEventListener('click', recalcMembers);
     document.getElementById('finance-add-member-btn').addEventListener('click', addFinanceMember);
     document.getElementById('finance-copy-prev-month-btn').addEventListener('click', copyPreviousMonthMembers);
@@ -7351,6 +7386,7 @@ let userPool = null;
             } else {
               populateFinanceGroups();
             }
+            restoreFinanceMonth();
             populateMyDuesGroups();
           })();
         }
