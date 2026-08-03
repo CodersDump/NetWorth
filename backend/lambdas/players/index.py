@@ -159,6 +159,8 @@ def list_players():
             'avatar_url': i.get('avatar_url'),
             'banner_url': i.get('banner_url'),
             'background_url': i.get('background_url'),
+            'card_frame_url': i.get('card_frame_url'),
+            'card_layout': i.get('card_layout') or 'full',
             'avatar_uploads': i.get('avatar_uploads') or [],
             'banner_uploads': i.get('banner_uploads') or [],
             'background_uploads': i.get('background_uploads') or [],
@@ -1358,9 +1360,32 @@ def _owns_store_cosmetic(player, key, kind):
     owned = player.get('owned_items') or {}
     if not owned:
         return False
-    want = {'avatar': 'avatar_frame', 'banner': 'banner_image', 'background': 'background_image'}.get(kind)
+    want = {'avatar': 'avatar_frame', 'banner': 'banner_image',
+            'background': 'background_image', 'card': 'card_frame'}.get(kind)
     for it in _load_catalog():
         if it.get('item_id') in owned and it.get('image_url') == key and (it.get('effect') or {}).get('kind') == want:
+            return True
+    return False
+
+
+# Layouts everyone gets for free; premium layouts are unlocked by owning a
+# store item of kind 'card_layout' whose effect.value names the layout id.
+# The layout is a code path that ships in the app, so the store item grants
+# the RIGHT to use it rather than delivering any asset (unlike frames).
+FREE_CARD_LAYOUTS = {'full', 'compact'}
+
+
+def _owns_card_layout(player, layout):
+    """True if the player may use this stats layout - free ones always,
+    premium ones only when a matching card_layout store item is owned."""
+    if layout in FREE_CARD_LAYOUTS:
+        return True
+    owned = player.get('owned_items') or {}
+    if not owned:
+        return False
+    for it in _load_catalog():
+        eff = it.get('effect') or {}
+        if it.get('item_id') in owned and eff.get('kind') == 'card_layout' and eff.get('value') == layout:
             return True
     return False
 
@@ -1425,6 +1450,8 @@ def update_my_card(event):
     avatar_url = body.get('avatar_url')
     banner_url = body.get('banner_url')
     background_url = body.get('background_url')
+    card_frame_url = body.get('card_frame_url')
+    card_layout = body.get('card_layout')
     _me = table.get_item(Key={'player_id': player_id}).get('Item') or {}
     def _ref_ok(url, kind):
         return _valid_upload_key(url, player_id, kind) or _owns_store_cosmetic(_me, url, kind)
@@ -1440,7 +1467,14 @@ def update_my_card(event):
         return _response(400, {'error': f'unknown banner_id - choose from {sorted(ALLOWED_BANNERS)}'})
     if background_id is not None and background_id not in ALLOWED_BACKGROUNDS:
         return _response(400, {'error': f'unknown background_id - choose from {sorted(ALLOWED_BACKGROUNDS)}'})
-    if all(v is None for v in (avatar_id, banner_id, background_id, avatar_url, banner_url, background_url)):
+    # A card frame is store-only art (never a personal upload), so it's valid
+    # only when empty (clear) or an owned card_frame cosmetic.
+    if card_frame_url not in (None, '') and not _owns_store_cosmetic(_me, card_frame_url, 'card'):
+        return _response(400, {'error': 'you do not own that card frame'})
+    if card_layout is not None and not _owns_card_layout(_me, card_layout):
+        return _response(400, {'error': 'you do not own that card layout'})
+    if all(v is None for v in (avatar_id, banner_id, background_id, avatar_url,
+                               banner_url, background_url, card_frame_url, card_layout)):
         return _response(400, {'error': 'nothing to update'})
 
     update_parts = []
@@ -1491,6 +1525,14 @@ def update_my_card(event):
         kept = _rotate_uploads(player_id, 'background', background_url)
         update_parts.append('background_uploads = :gup')
         values[':gup'] = kept
+    # Frames don't join the personal-upload rotation - they're store assets,
+    # not the player's own files - so this is a plain set (or clear).
+    if card_frame_url is not None:
+        update_parts.append('card_frame_url = :cf')
+        values[':cf'] = card_frame_url or None
+    if card_layout is not None:
+        update_parts.append('card_layout = :cl')
+        values[':cl'] = card_layout or None
 
     table.update_item(
         Key={'player_id': player_id},

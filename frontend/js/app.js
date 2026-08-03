@@ -2776,7 +2776,7 @@ let userPool = null;
       } catch (e) { listEl.textContent = 'Could not load items.'; }
     }
 
-    const STORE_IMAGE_EFFECTS = ['avatar_frame', 'banner_image', 'background_image', 'profile_effect'];
+    const STORE_IMAGE_EFFECTS = ['avatar_frame', 'banner_image', 'background_image', 'profile_effect', 'card_frame'];
 
     function onStoreTypeChange() {
       const type = document.getElementById('store-item-type').value;
