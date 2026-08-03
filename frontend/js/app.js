@@ -5502,22 +5502,34 @@ let userPool = null;
            ${reviewLocked ? '' : '<span style="opacity:0.4;">⠿</span>'}`;
 
         if (!reviewLocked) {
-          li.addEventListener('dragstart', e => { e.dataTransfer.setData('text/plain', idx); li.style.opacity = '0.4'; });
+          li.addEventListener('dragstart', e => {
+            // getData() is unreadable during dragover (spec puts it in
+            // protected mode until drop), so stash the source index in a var
+            // too - the dragover handler relies on this to know what's moving.
+            reviewDragFrom = idx;
+            e.dataTransfer.setData('text/plain', idx);
+            e.dataTransfer.effectAllowed = 'move';
+            li.style.opacity = '0.4';
+          });
           li.addEventListener('dragend', () => { li.style.opacity = ''; });
           li.addEventListener('dragover', e => {
-            e.preventDefault();
-            // Smooth "insert" behaviour: as the held row passes over another,
-            // slide it into that slot live (everything else shifts up/down)
-            // rather than only swapping two rows on drop.
-            const from = parseInt(e.dataTransfer.getData('text/plain') || reviewDragFrom, 10);
-            const to = idx;
-            if (isNaN(from) || from === to) return;
-            const [moved] = reviewMatches.splice(from, 1);
-            reviewMatches.splice(to, 0, moved);
-            reviewDragFrom = to;   // the held row is now at its new index
-            renderReviewList();
+            e.preventDefault();               // allow the drop
+            e.dataTransfer.dropEffect = 'move';
+            if (reviewDragFrom !== idx) li.style.borderTop = '2px solid var(--court)';
           });
-          li.addEventListener('drop', e => e.preventDefault());
+          li.addEventListener('dragleave', () => { li.style.borderTop = ''; });
+          li.addEventListener('drop', e => {
+            e.preventDefault();
+            li.style.borderTop = '';
+            const from = parseInt(e.dataTransfer.getData('text/plain'), 10);
+            const src = isNaN(from) ? reviewDragFrom : from;
+            const to = idx;
+            if (src == null || isNaN(src) || src === to) return;
+            const [moved] = reviewMatches.splice(src, 1);
+            reviewMatches.splice(to, 0, moved);
+            reviewDragFrom = null;
+            renderReviewList();               // single rebuild AFTER the drop
+          });
         }
         listEl.appendChild(li);
       });

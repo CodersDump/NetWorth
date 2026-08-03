@@ -146,6 +146,12 @@
 
 ## Done
 
+- ✅ 2026-08-03 — **Bug fix:** match reorder (review day) drag-and-drop now works. `dragstart` never
+  stored the source index and `getData()` is unreadable during `dragover` (protected mode), so `from`
+  was always NaN and nothing moved. Now the index is stashed on dragstart, and the reorder happens once
+  on `drop` (with a green insertion line on hover) instead of rebuilding the list mid-drag, which was
+  destroying the dragged row.
+
 - ✅ 2026-08-02 — **Feature (money):** slot-less / group-wide expenses & walk-ins. A record with no
   slot goes to a group-wide bucket whose cost/residual splits across the DISTINCT Yes members across
   every slot that month (counted once even if in two slots). `_settlement_rows` sets the group-wide
