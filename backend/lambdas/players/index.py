@@ -148,6 +148,7 @@ def list_players():
             'skill_level': i.get('skill_level'),
             'rating': i.get('rating', 1000),
             'previous_rating': i.get('previous_rating', i.get('rating', 1000)),
+            'games_played': int(i.get('games_played', 0) or 0),
             'xp': int(i.get('xp', 0) or 0),
             'level': int(i.get('level', 1) or 1),
             'coins': int(i.get('coins', 0) or 0),

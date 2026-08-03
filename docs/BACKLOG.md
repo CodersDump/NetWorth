@@ -146,6 +146,12 @@
 
 ## Done
 
+- ✅ 2026-08-03 — **Feature:** ranking eligibility — only players with **5+ games** are ranked. A
+  rating from 0-4 games is mostly noise, so those players are shown separately as "provisional (N/5
+  games)", unranked. `recompute_all_ratings` and the record-match path now track `games_played` on each
+  player (exposed in the players list + group members). **Backend change — needs a prod deploy, then
+  click "Recompute all ratings" ONCE to backfill games_played for existing players.**
+
 - ✅ 2026-08-03 — **Feature:** edit PLAYERS in a recorded match, not just the score. `update_match`
   (matches lambda) now optionally accepts `team_a`/`team_b` (validated: right size, no player on both
   teams, all must exist) and recomputes every rating. Game-log Edit opens a themed modal with per-team

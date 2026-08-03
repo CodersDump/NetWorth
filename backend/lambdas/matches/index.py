@@ -806,6 +806,7 @@ def recompute_all_ratings():
     # keeps it consistent. It only accumulates (never subtracts), keyed by
     # player, replaying every match's award in order.
     xp_totals = {p['player_id']: 0 for p in players}
+    game_counts = {p['player_id']: 0 for p in players}  # matches actually played
     pairing_counts = {}  # frozenset({p1,p2}) -> matches played together so far
 
     matches = matches_table.scan().get('Items', [])
@@ -858,8 +859,10 @@ def recompute_all_ratings():
 
         for pid in team_a:
             current_ratings[pid] = current_ratings.get(pid, 1000.0) + delta_a
+            game_counts[pid] = game_counts.get(pid, 0) + 1
         for pid in team_b:
             current_ratings[pid] = current_ratings.get(pid, 1000.0) + delta_b
+            game_counts[pid] = game_counts.get(pid, 0) + 1
 
         # XP: every player who played earns the base for this match's stage,
         # winners earn a bonus. Stage is None for a regular match. (Event
@@ -906,11 +909,11 @@ def recompute_all_ratings():
         balance = max(0, earned + quest_coins - spent)
         players_table.update_item(
             Key={'player_id': pid},
-            UpdateExpression='SET rating = :r, xp = :xp, #lvl = :lvl, coins = :c, coins_earned = :ce',
+            UpdateExpression='SET rating = :r, xp = :xp, #lvl = :lvl, coins = :c, coins_earned = :ce, games_played = :g',
             ExpressionAttributeNames={'#lvl': 'level'},
             ExpressionAttributeValues={
                 ':r': int(round(rating)), ':xp': xp, ':lvl': level,
-                ':c': balance, ':ce': earned
+                ':c': balance, ':ce': earned, ':g': game_counts.get(pid, 0)
             })
 
 
@@ -1061,10 +1064,11 @@ def _play_and_log(match_type, team_a_ids, team_b_ids, score_a, score_b, group_id
         balance = max(0, earned + quest_coins - spent)
         players_table.update_item(
             Key={'player_id': pid},
-            UpdateExpression='SET rating = :r, previous_rating = :pr, xp = :xp, #lvl = :lvl, coins = :c, coins_earned = :ce',
+            UpdateExpression='SET rating = :r, previous_rating = :pr, xp = :xp, #lvl = :lvl, coins = :c, coins_earned = :ce, games_played = if_not_exists(games_played, :zero) + :one',
             ExpressionAttributeNames={'#lvl': 'level'},
             ExpressionAttributeValues={':r': new_rating, ':pr': prev, ':xp': new_xp,
-                                       ':lvl': new_level, ':c': balance, ':ce': earned})
+                                       ':lvl': new_level, ':c': balance, ':ce': earned,
+                                       ':zero': 0, ':one': 1})
 
     item = {
         'match_id': str(uuid.uuid4()),

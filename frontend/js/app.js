@@ -2030,11 +2030,20 @@ let userPool = null;
 
         if (!rankedPlayers.length) { resultEl.innerHTML = '<p style="font-size:13px;color:var(--text-secondary);">No players to rank.</p>'; return; }
 
-        const sorted = [...rankedPlayers].sort((a, b) => Number(b.rating) - Number(a.rating));
+        // Only players with enough games are ranked - a rating from 0-4 games
+        // is mostly noise (one lucky win can outrank someone who earned their
+        // spot over dozens of games). Provisional players are listed below,
+        // unranked, so they can see how many more games until they count.
+        const MIN_GAMES = 5;
+        const gp = (p) => Number(p.games_played || 0);
+        const eligible = rankedPlayers.filter(p => gp(p) >= MIN_GAMES);
+        const provisional = rankedPlayers.filter(p => gp(p) > 0 && gp(p) < MIN_GAMES);
+
+        const sorted = [...eligible].sort((a, b) => Number(b.rating) - Number(a.rating));
         // Rank each player a second time by their previous rating, so we can
         // show whether they climbed or fell after their most recent match.
         // Green up-arrow = moved up, red down = fell, dash = unchanged/new.
-        const prevSorted = [...rankedPlayers].sort((a, b) =>
+        const prevSorted = [...eligible].sort((a, b) =>
           Number(b.previous_rating ?? b.rating) - Number(a.previous_rating ?? a.rating));
         const prevRankById = {};
         prevSorted.forEach((p, i) => { prevRankById[p.player_id] = i; });
@@ -2052,6 +2061,17 @@ let userPool = null;
           html += `<tr><td>${idx + 1}</td><td>${arrow}</td><td>${label}</td><td class="rating">${p.rating}</td></tr>`;
         });
         html += '</table>';
+        if (!sorted.length) {
+          html = `<p style="font-size:13px;color:var(--text-secondary);">No one has played ${MIN_GAMES}+ games yet, so no one is ranked.</p>`;
+        }
+        if (provisional.length) {
+          html += `<p style="font-size:12px;color:var(--text-secondary);margin-top:14px;">Provisional \u2014 not yet ranked (need ${MIN_GAMES} games):</p><table>`;
+          provisional.sort((a, b) => gp(b) - gp(a)).forEach(p => {
+            html += `<tr><td>${formatPlayerLabel(p.name, p.nickname)}</td>`
+                  + `<td style="color:var(--text-secondary);font-size:12px;">${gp(p)}/${MIN_GAMES} games</td></tr>`;
+          });
+          html += '</table>';
+        }
         resultEl.innerHTML = html;
       } catch (err) {
         resultEl.textContent = `Request failed: ${err.message}`;
