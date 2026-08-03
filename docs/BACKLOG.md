@@ -137,6 +137,13 @@
   persists via `/update-my-card` (new `card_frame_url` field; `background_url`/`background_id` reused).
   Backend: `card_frame` added to `_owns_store_cosmetic`, new `card_layout` value-cosmetic +
   `_owns_card_layout`/`FREE_CARD_LAYOUTS`, both new fields serialized. Follow-ups:
+    - **DONE in v1.9.0** — preset frames & backgrounds sellable from the UI with no art assets. New
+      `card_frame_preset` / `background_preset` value-cosmetics; visuals code-defined in `card-share.js`
+      (css preview + canvas painters, incl. the Holo glass frame). SuperAdmin adds them by picking a
+      preset from a dropdown in the store form (`window.NW_CARD_PRESETS` feeds it). Equipped state
+      persists to `card_frame_preset` / `background_preset`, mutually exclusive with the image/id fields
+      (`_owns_value_cosmetic` gates ownership). Add a new preset later = add to the lib in card-share.js
+      (css class + canvas painter); selling it is then pure admin.
     - `[feat] M` Premium **stats layouts** (curve / donut graphs) as `card_layout` cosmetics — backend
       field already accepts them; needs the per-layout canvas draw code + a third customizer axis.
     - `[feat] S` Use the player's avatar image (not just initials) on the exported card.

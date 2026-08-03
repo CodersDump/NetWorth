@@ -2793,8 +2793,17 @@ let userPool = null;
     function onStoreEffectChange() {
       const eff = document.getElementById('store-item-effect').value;
       const needsImage = STORE_IMAGE_EFFECTS.includes(eff);
+      const presetList = (window.NW_CARD_PRESETS && window.NW_CARD_PRESETS.kinds && window.NW_CARD_PRESETS.kinds[eff]) || null;
       document.getElementById('store-image-row').style.display = needsImage ? 'block' : 'none';
-      document.getElementById('store-effect-value-row').style.display = needsImage ? 'none' : 'block';
+      document.getElementById('store-effect-value-row').style.display = (needsImage || presetList) ? 'none' : 'block';
+      const presetRow = document.getElementById('store-effect-preset-row');
+      if (presetRow) {
+        presetRow.style.display = presetList ? 'block' : 'none';
+        if (presetList) {
+          document.getElementById('store-item-preset').innerHTML =
+            presetList.map(p => `<option value="${p.id}">${p.name}</option>`).join('');
+        }
+      }
     }
 
     async function uploadStoreImage(file) {
@@ -2834,6 +2843,10 @@ let userPool = null;
           statusEl.textContent = 'Pick an image for this cosmetic.'; return;
         }
         effect.image_url = image_url;
+      } else if (window.NW_CARD_PRESETS && window.NW_CARD_PRESETS.kinds && window.NW_CARD_PRESETS.kinds[effKind]) {
+        const pv = document.getElementById('store-item-preset').value;
+        if (!pv) { statusEl.textContent = 'Pick a preset.'; return; }
+        effect.value = pv;
       } else {
         const val = document.getElementById('store-item-value').value.trim();
         if (val) effect.value = val;

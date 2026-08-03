@@ -57,6 +57,64 @@
     blueprint: ['#041d2e', '#053046', '#063b5c']
   };
 
+  // ---- premium presets (code-defined; sold via *_preset store items) -------
+  // Visuals live here so they render identically in the live preview (css) and
+  // the exported PNG (canvas) - no art assets required.
+  const PREMIUM_BG = [
+    { id: 'aurora',  name: 'Aurora',  css: bgCss('#04121a', '#0a2e3a', '#116b5a'), canvas: ['#04121a', '#0a2e3a', '#116b5a'] },
+    { id: 'circuit', name: 'Circuit', css: bgCss('#050912', '#0a1430', '#12306b'), canvas: ['#050912', '#0a1430', '#12306b'] },
+    { id: 'flame',   name: 'Flame',   css: bgCss('#160604', '#3a0f08', '#7a1e0a'), canvas: ['#160604', '#3a0f08', '#7a1e0a'] },
+    { id: 'galaxy',  name: 'Galaxy',  css: bgCss('#0a0518', '#1a0a33', '#3a1a5c'), canvas: ['#0a0518', '#1a0a33', '#3a1a5c'] }
+  ];
+  const PREMIUM_BG_BY_ID = Object.fromEntries(PREMIUM_BG.map(b => [b.id, b]));
+
+  const FRAME_PRESETS = [
+    { id: 'gold',   name: 'Gold Elite' },
+    { id: 'holo',   name: 'Holo (glass)' },
+    { id: 'carbon', name: 'Carbon' },
+    { id: 'neon',   name: 'Neon' }
+  ];
+  const FRAME_NAME = Object.fromEntries(FRAME_PRESETS.map(f => [f.id, f.name]));
+
+  // Read by app.js's store form (at click time) to populate the preset
+  // dropdown. Only sellable presets - the free Minimal frame isn't listed.
+  window.NW_CARD_PRESETS = {
+    kinds: {
+      card_frame_preset: FRAME_PRESETS.map(f => ({ id: f.id, name: f.name })),
+      background_preset:  PREMIUM_BG.map(b => ({ id: b.id, name: b.name }))
+    }
+  };
+
+  // Canvas painter for preset frames (drawn last, over the finished card).
+  function drawFramePreset(ctx, id, W, H) {
+    const rad = 44, m = 14, x = m, y = m, w = W - m * 2, h = H - m * 2;
+    ctx.save();
+    if (id === 'gold') {
+      const g = ctx.createLinearGradient(0, 0, W, H);
+      g.addColorStop(0, '#f9df8a'); g.addColorStop(.35, '#b9871f'); g.addColorStop(.55, '#ffe9a8'); g.addColorStop(.75, '#a06b12'); g.addColorStop(1, '#f7d774');
+      ctx.strokeStyle = g; ctx.lineWidth = 10; rr(ctx, x, y, w, h, rad); ctx.stroke();
+      ctx.strokeStyle = 'rgba(255,240,190,.35)'; ctx.lineWidth = 2; rr(ctx, x + 8, y + 8, w - 16, h - 16, rad - 6); ctx.stroke();
+    } else if (id === 'carbon') {
+      ctx.strokeStyle = '#2a302c'; ctx.lineWidth = 12; rr(ctx, x, y, w, h, rad); ctx.stroke();
+      ctx.strokeStyle = 'rgba(127,216,168,.25)'; ctx.lineWidth = 2; rr(ctx, x + 7, y + 7, w - 14, h - 14, rad - 5); ctx.stroke();
+    } else if (id === 'neon') {
+      ctx.shadowColor = '#33f0c0'; ctx.shadowBlur = 26; ctx.strokeStyle = '#5affd0'; ctx.lineWidth = 6;
+      rr(ctx, x, y, w, h, rad); ctx.stroke(); ctx.shadowBlur = 0;
+    } else if (id === 'holo') {
+      const g = ctx.createLinearGradient(0, 0, W, H);
+      g.addColorStop(0, '#00e0ff'); g.addColorStop(.4, '#a855f7'); g.addColorStop(.7, '#ff4d9d'); g.addColorStop(1, '#00e0ff');
+      ctx.strokeStyle = g; ctx.lineWidth = 9; rr(ctx, x, y, w, h, rad); ctx.stroke();
+      // baked static glass streak (the animated sweep can't live in a still)
+      ctx.save(); rr(ctx, 4, 4, W - 8, H - 8, rad + 8); ctx.clip();
+      const gr = ctx.createLinearGradient(W * 0.15, 0, W * 0.6, H);
+      gr.addColorStop(0, 'rgba(255,255,255,0)'); gr.addColorStop(.5, 'rgba(255,255,255,.16)'); gr.addColorStop(1, 'rgba(255,255,255,0)');
+      ctx.fillStyle = gr; ctx.beginPath();
+      ctx.moveTo(W * 0.10, 0); ctx.lineTo(W * 0.42, 0); ctx.lineTo(W * 0.70, H); ctx.lineTo(W * 0.38, H); ctx.closePath(); ctx.fill();
+      ctx.restore();
+    }
+    ctx.restore();
+  }
+
   // ---- state ---------------------------------------------------------------
   let modal = null;
   let stats = null;            // derived from the profile bundle
@@ -101,6 +159,14 @@
     .nw-cs-content.dim{filter:grayscale(.85) brightness(.62);}
     .nw-cs-frimg{position:absolute; inset:0; z-index:3; background-size:100% 100%; background-repeat:no-repeat; pointer-events:none; border-radius:23px;}
     .nw-cs-min{padding:1.5px; background:rgba(127,216,168,.4);}
+    .nw-cs-fr-gold{padding:3px; background:linear-gradient(135deg,#f9df8a,#b9871f 35%,#ffe9a8 55%,#a06b12 75%,#f7d774);}
+    .nw-cs-fr-carbon{padding:3px; background:repeating-linear-gradient(45deg,#3a423d 0 3px,#1c211e 3px 6px);}
+    .nw-cs-fr-neon{padding:3px; background:#5affd0; box-shadow:0 0 18px rgba(51,240,192,.55);}
+    .nw-cs-fr-holo{padding:3px; background:linear-gradient(115deg,#00e0ff,#a855f7,#ff4d9d,#00e0ff); background-size:300% 300%; animation:nw-cs-holo 4.5s linear infinite;}
+    @keyframes nw-cs-holo{0%{background-position:0% 50%;}100%{background-position:300% 50%;}}
+    .nw-cs-fr-holo .nw-cs-card::before{content:''; position:absolute; inset:0; z-index:5; border-radius:23px; pointer-events:none;
+      background:linear-gradient(115deg,transparent 35%,rgba(255,255,255,.22) 50%,transparent 65%); background-size:250% 100%; animation:nw-cs-glass 3s linear infinite;}
+    @keyframes nw-cs-glass{0%{background-position:120% 0;}100%{background-position:-120% 0;}}
     .nw-cs-veil{position:absolute; inset:0; z-index:7; border-radius:23px; display:flex; flex-direction:column; align-items:center; justify-content:center; background:rgba(6,10,8,.5);}
     .nw-cs-veil .wm{position:absolute; font:800 30px Rajdhani,Inter; letter-spacing:6px; color:rgba(255,255,255,.06); transform:rotate(-24deg);}
     .nw-cs-veil .lk{font:800 15px Rajdhani,Inter; letter-spacing:3px; color:#e9f3ee;}
@@ -205,21 +271,34 @@
     try { catalog = (typeof loadStoreCatalogOnce === 'function') ? (await loadStoreCatalogOnce()) : []; }
     catch (e) { catalog = []; }
 
-    const storeOf = (kind) => catalog
+    const imgOf = (kind) => catalog
       .filter(i => (i.effect || {}).kind === kind && i.image_url && i.active !== false)
       .map(i => ({ type: 'image', key: i.image_url, name: i.name, cost: Number(i.cost) || 0,
                    item_id: i.item_id, owned: !!owned[i.item_id] }));
+    const presetOf = (kind, cssFor, nameFor) => catalog
+      .filter(i => (i.effect || {}).kind === kind && (i.effect || {}).value && i.active !== false)
+      .map(i => { const id = i.effect.value;
+        return { type: 'preset', id, name: i.name || nameFor(id) || id, css: cssFor ? cssFor(id) : undefined,
+                 cost: Number(i.cost) || 0, item_id: i.item_id, owned: !!owned[i.item_id], premium: true }; });
 
+    // Backgrounds: free presets, premium presets (owned/locked), image uploads.
     bgOpts = FREE_BG.map(b => ({ type: 'preset', id: b.id, name: b.name, css: b.css, owned: true, cost: 0 }))
-      .concat(storeOf('background_image'));
-    frameOpts = [{ type: 'none', name: 'Minimal', owned: true, cost: 0 }]
-      .concat(storeOf('card_frame'));
+      .concat(presetOf('background_preset',
+        id => (PREMIUM_BG_BY_ID[id] ? PREMIUM_BG_BY_ID[id].css : bgCss('#101511', '#1a221d', '#243029')),
+        id => (PREMIUM_BG_BY_ID[id] ? PREMIUM_BG_BY_ID[id].name : id)))
+      .concat(imgOf('background_image'));
+    // Frames: free Minimal, preset frames (owned/locked), image uploads.
+    frameOpts = [{ type: 'minimal', name: 'Minimal', owned: true, cost: 0 }]
+      .concat(presetOf('card_frame_preset', null, id => FRAME_NAME[id] || id))
+      .concat(imgOf('card_frame'));
 
     // Start on whatever the player currently has equipped, if present.
     const me = myPlayer() || {};
     if (me.background_url) { const j = bgOpts.findIndex(o => o.type === 'image' && o.key === me.background_url); if (j >= 0) idx[0] = j; }
-    else if (me.background_id) { const j = bgOpts.findIndex(o => o.type === 'preset' && o.id === me.background_id); if (j >= 0) idx[0] = j; }
+    else if (me.background_preset) { const j = bgOpts.findIndex(o => o.type === 'preset' && o.premium && o.id === me.background_preset); if (j >= 0) idx[0] = j; }
+    else if (me.background_id) { const j = bgOpts.findIndex(o => o.type === 'preset' && !o.premium && o.id === me.background_id); if (j >= 0) idx[0] = j; }
     if (me.card_frame_url) { const j = frameOpts.findIndex(o => o.type === 'image' && o.key === me.card_frame_url); if (j >= 0) idx[1] = j; }
+    else if (me.card_frame_preset) { const j = frameOpts.findIndex(o => o.type === 'preset' && o.id === me.card_frame_preset); if (j >= 0) idx[1] = j; }
   }
 
   async function loadStats() {
@@ -296,11 +375,16 @@
   }
   function escapeHtmlLocal(t) { return String(t == null ? '' : t).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
 
+  function frameClass(fr) {
+    if (fr.type === 'minimal') return 'nw-cs-min';
+    if (fr.type === 'preset') return 'nw-cs-fr-' + fr.id;
+    return '';   // image frame draws via the PNG overlay, no border bg
+  }
   function buildSlot(slotEl, bgSel, frameSel) {
-    const frMin = frameSel.type === 'none';
-    slotEl.innerHTML = `<div class="nw-cs-frame ${frMin ? 'nw-cs-min' : ''}">
+    const isImg = frameSel.type === 'image';
+    slotEl.innerHTML = `<div class="nw-cs-frame ${frameClass(frameSel)}">
         <div class="nw-cs-card"><div class="nw-cs-content"></div>
-        ${frMin ? '' : `<div class="nw-cs-frimg" style="background-image:url('${srcOf(frameSel.key)}');"></div>`}
+        ${isImg ? `<div class="nw-cs-frimg" style="background-image:url('${srcOf(frameSel.key)}');"></div>` : ''}
         </div></div>`;
     const card = slotEl.querySelector('.nw-cs-card');
     card.style.background = bgSel.type === 'preset'
@@ -411,9 +495,14 @@
     const cur = sel(0);
     if (!cur.bg.owned || !cur.frame.owned) { nwAlertLocal('Unlock the locked pick before saving.'); return; }
     const payload = {};
-    if (cur.bg.type === 'preset') payload.background_id = cur.bg.id;
-    else payload.background_url = cur.bg.key;
-    payload.card_frame_url = cur.frame.type === 'none' ? '' : cur.frame.key;
+    // background: image upload / premium preset / free preset
+    if (cur.bg.type === 'image') payload.background_url = cur.bg.key;
+    else if (cur.bg.premium) payload.background_preset = cur.bg.id;
+    else payload.background_id = cur.bg.id;
+    // frame: image upload / preset / minimal (clears both)
+    if (cur.frame.type === 'image') payload.card_frame_url = cur.frame.key;
+    else if (cur.frame.type === 'preset') payload.card_frame_preset = cur.frame.id;
+    else { payload.card_frame_url = ''; payload.card_frame_preset = ''; }
     const btn = modal.querySelector('#nw-cs-save'); btn.disabled = true; btn.textContent = 'Saving…';
     try {
       const r = await doAuthedFetch(`${api()}/update-my-card`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
@@ -459,7 +548,7 @@
 
     // background
     if (cur.bg.type === 'preset') {
-      const c = CANVAS_BG[cur.bg.id] || CANVAS_BG.court;
+      const c = CANVAS_BG[cur.bg.id] || (PREMIUM_BG_BY_ID[cur.bg.id] && PREMIUM_BG_BY_ID[cur.bg.id].canvas) || CANVAS_BG.court;
       const g = ctx.createLinearGradient(0, 0, W, H);
       g.addColorStop(0, c[0]); g.addColorStop(0.55, c[1]); g.addColorStop(1, c[2]);
       ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
@@ -541,10 +630,12 @@
     ctx.fillStyle = '#5bbf8a'; ctx.font = "700 30px 'Rajdhani', system-ui"; ctx.textAlign = 'center';
     ctx.fillText('◆  MATCHPOINT · NETWORTH  ◆', W / 2, H - pad + 8); ctx.textAlign = 'left';
 
-    // frame overlay (owned store PNG) or minimal border
-    if (cur.frame.type === 'none') {
+    // frame: minimal border / preset painter / uploaded PNG overlay
+    if (cur.frame.type === 'minimal') {
       ctx.strokeStyle = 'rgba(127,216,168,.5)'; ctx.lineWidth = 6;
       rr(ctx, 14, 14, W - 28, H - 28, 46); ctx.stroke();
+    } else if (cur.frame.type === 'preset') {
+      drawFramePreset(ctx, cur.frame.id, W, H);
     } else {
       const fr = await loadImg(srcOf(cur.frame.key));
       if (fr) ctx.drawImage(fr, 0, 0, W, H);

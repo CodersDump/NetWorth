@@ -160,6 +160,8 @@ def list_players():
             'banner_url': i.get('banner_url'),
             'background_url': i.get('background_url'),
             'card_frame_url': i.get('card_frame_url'),
+            'card_frame_preset': i.get('card_frame_preset'),
+            'background_preset': i.get('background_preset'),
             'card_layout': i.get('card_layout') or 'full',
             'avatar_uploads': i.get('avatar_uploads') or [],
             'banner_uploads': i.get('banner_uploads') or [],
@@ -1380,12 +1382,19 @@ def _owns_card_layout(player, layout):
     premium ones only when a matching card_layout store item is owned."""
     if layout in FREE_CARD_LAYOUTS:
         return True
+    return _owns_value_cosmetic(player, 'card_layout', layout)
+
+
+def _owns_value_cosmetic(player, kind, value):
+    """True if the player owns a store item of this cosmetic `kind` whose
+    effect.value matches - used for code-defined presets (frame/background
+    presets) that carry an id in effect.value rather than an uploaded image."""
     owned = player.get('owned_items') or {}
     if not owned:
         return False
     for it in _load_catalog():
         eff = it.get('effect') or {}
-        if it.get('item_id') in owned and eff.get('kind') == 'card_layout' and eff.get('value') == layout:
+        if it.get('item_id') in owned and eff.get('kind') == kind and eff.get('value') == value:
             return True
     return False
 
@@ -1451,6 +1460,8 @@ def update_my_card(event):
     banner_url = body.get('banner_url')
     background_url = body.get('background_url')
     card_frame_url = body.get('card_frame_url')
+    card_frame_preset = body.get('card_frame_preset')
+    background_preset = body.get('background_preset')
     card_layout = body.get('card_layout')
     _me = table.get_item(Key={'player_id': player_id}).get('Item') or {}
     def _ref_ok(url, kind):
@@ -1471,10 +1482,15 @@ def update_my_card(event):
     # only when empty (clear) or an owned card_frame cosmetic.
     if card_frame_url not in (None, '') and not _owns_store_cosmetic(_me, card_frame_url, 'card'):
         return _response(400, {'error': 'you do not own that card frame'})
+    if card_frame_preset not in (None, '') and not _owns_value_cosmetic(_me, 'card_frame_preset', card_frame_preset):
+        return _response(400, {'error': 'you do not own that card frame'})
+    if background_preset not in (None, '') and not _owns_value_cosmetic(_me, 'background_preset', background_preset):
+        return _response(400, {'error': 'you do not own that background'})
     if card_layout is not None and not _owns_card_layout(_me, card_layout):
         return _response(400, {'error': 'you do not own that card layout'})
-    if all(v is None for v in (avatar_id, banner_id, background_id, avatar_url,
-                               banner_url, background_url, card_frame_url, card_layout)):
+    if all(v is None for v in (avatar_id, banner_id, background_id, avatar_url, banner_url,
+                               background_url, card_frame_url, card_frame_preset,
+                               background_preset, card_layout)):
         return _response(400, {'error': 'nothing to update'})
 
     update_parts = []
@@ -1498,6 +1514,8 @@ def update_my_card(event):
         values[':g'] = background_id
         update_parts.append('background_url = :gu_clear')
         values[':gu_clear'] = None
+        update_parts.append('background_preset = :gp_clear')
+        values[':gp_clear'] = None
     if avatar_url is not None:
         update_parts.append('avatar_url = :au')
         values[':au'] = avatar_url
@@ -1522,14 +1540,36 @@ def update_my_card(event):
         if background_url:
             update_parts.append('background_id = :g_clear')
             values[':g_clear'] = None
+            update_parts.append('background_preset = :gp_clear2')
+            values[':gp_clear2'] = None
         kept = _rotate_uploads(player_id, 'background', background_url)
         update_parts.append('background_uploads = :gup')
         values[':gup'] = kept
+    # Premium background preset (code-defined). Setting it clears the free
+    # preset id and any uploaded image so the render has a single source.
+    if background_preset is not None:
+        update_parts.append('background_preset = :gp')
+        values[':gp'] = background_preset or None
+        if background_preset:
+            update_parts.append('background_id = :g_clear2')
+            values[':g_clear2'] = None
+            update_parts.append('background_url = :gu_clear2')
+            values[':gu_clear2'] = None
     # Frames don't join the personal-upload rotation - they're store assets,
-    # not the player's own files - so this is a plain set (or clear).
+    # not the player's own files - so this is a plain set (or clear). An image
+    # frame and a preset frame are mutually exclusive, same as background.
     if card_frame_url is not None:
         update_parts.append('card_frame_url = :cf')
         values[':cf'] = card_frame_url or None
+        if card_frame_url:
+            update_parts.append('card_frame_preset = :cfp_clear')
+            values[':cfp_clear'] = None
+    if card_frame_preset is not None:
+        update_parts.append('card_frame_preset = :cfp')
+        values[':cfp'] = card_frame_preset or None
+        if card_frame_preset:
+            update_parts.append('card_frame_url = :cf_clear')
+            values[':cf_clear'] = None
     if card_layout is not None:
         update_parts.append('card_layout = :cl')
         values[':cl'] = card_layout or None
