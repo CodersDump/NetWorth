@@ -146,6 +146,24 @@
 
 ## Done
 
+- ✅ 2026-08-03 — **Feature:** ranking eligibility — only players with **5+ games** are ranked. A
+  rating from 0-4 games is mostly noise, so those players are shown separately as "provisional (N/5
+  games)", unranked. `recompute_all_ratings` and the record-match path now track `games_played` on each
+  player (exposed in the players list + group members). **Backend change — needs a prod deploy, then
+  click "Recompute all ratings" ONCE to backfill games_played for existing players.**
+
+- ✅ 2026-08-03 — **Feature:** edit PLAYERS in a recorded match, not just the score. `update_match`
+  (matches lambda) now optionally accepts `team_a`/`team_b` (validated: right size, no player on both
+  teams, all must exist) and recomputes every rating. Game-log Edit opens a themed modal with per-team
+  player pickers + scores (SuperAdmin); non-admins keep the score-only request flow. **Backend change —
+  needs a prod deploy.**
+
+- ✅ 2026-08-03 — **Bug fix:** match reorder (review day) drag-and-drop now works. `dragstart` never
+  stored the source index and `getData()` is unreadable during `dragover` (protected mode), so `from`
+  was always NaN and nothing moved. Now the index is stashed on dragstart, and the reorder happens once
+  on `drop` (with a green insertion line on hover) instead of rebuilding the list mid-drag, which was
+  destroying the dragged row.
+
 - ✅ 2026-08-02 — **Feature (money):** slot-less / group-wide expenses & walk-ins. A record with no
   slot goes to a group-wide bucket whose cost/residual splits across the DISTINCT Yes members across
   every slot that month (counted once even if in two slots). `_settlement_rows` sets the group-wide

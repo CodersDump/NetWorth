@@ -1776,7 +1776,7 @@ let userPool = null;
           const editLabel = perm.canActDirectly ? 'Edit' : 'Request edit';
           const delLabel = perm.canActDirectly ? 'Delete' : 'Request delete';
           const gid = m.group_id || '';
-          actions = `<button class="secondary" style="margin-top:0;padding:4px 8px;font-size:11px;" onclick="editMatchScore('${m.match_id}', ${m.score_a}, ${m.score_b}, '${encodeURIComponent(label)}', '${gid}')">${editLabel}</button> `
+          actions = `<button class="secondary" style="margin-top:0;padding:4px 8px;font-size:11px;" onclick="editMatch('${m.match_id}', '${gid}')">${editLabel}</button> `
                   + `<button class="secondary" style="margin-top:0;padding:4px 8px;font-size:11px;" onclick="deleteMatch('${m.match_id}', '${encodeURIComponent(label)}', '${gid}')">${delLabel}</button>`;
         }
         html += `<tr><td>${date}</td><td>${teamA}</td><td>${teamB}</td><td>${m.score_a} - ${m.score_b}</td><td>${notes}</td><td>${actions}</td></tr>`;
@@ -1848,6 +1848,68 @@ let userPool = null;
         });
         nwAlert(res.ok ? 'Request sent to the admin for approval.' : `Error: ${error}`);
       } catch (e) { nwAlert(`Request failed: ${e.message}`); }
+    }
+
+    // Full match edit (players + score), SuperAdmin only. Non-admins keep the
+    // score-only request flow. Changing players recomputes every rating, same
+    // as a score edit, since Elo is path-dependent.
+    async function editMatch(matchId, groupId) {
+      const m = (gameLogRows || []).find(r => r.match_id === matchId);
+      if (!m) { return editMatchScore(matchId, 0, 0, '', groupId || ''); }
+      if (!isSuperAdmin()) {
+        // non-admins: fall back to the existing score-only request path
+        const label = playerLabelsById(m.team_a, m.team_a_names).join(' & ') + ' vs ' + playerLabelsById(m.team_b, m.team_b_names).join(' & ');
+        return editMatchScore(matchId, m.score_a, m.score_b, encodeURIComponent(label), groupId || '');
+      }
+      const size = (m.team_a || []).length || 1;
+      const opts = (sel) => (allPlayers || []).map(p =>
+        `<option value="${p.player_id}"${p.player_id === sel ? ' selected' : ''}>${escapeHtml(p.name)} (${escapeHtml(p.nickname)}) (${p.rating})</option>`).join('');
+      const pickers = (team, prefix) => Array.from({ length: size }, (_, i) =>
+        `<select class="nw-modal-input ${prefix}" style="margin-bottom:6px;">${opts((team || [])[i])}</select>`).join('');
+
+      const overlay = document.createElement('div');
+      overlay.className = 'nw-modal-overlay';
+      overlay.innerHTML = `
+        <div class="nw-modal" style="max-width:460px;">
+          <div class="nw-modal-msg">Edit match \u2014 players &amp; score.<br><span style="font-size:12px;opacity:0.7;">Saving recomputes every player's rating from the corrected history.</span></div>
+          <div style="display:flex; gap:12px;">
+            <div style="flex:1;"><strong style="font-size:13px;">Team A</strong>${pickers(m.team_a, 'nw-ta')}
+              <input type="number" class="nw-modal-input nw-sa" value="${m.score_a}" style="margin-top:4px;" placeholder="Score A"></div>
+            <div style="flex:1;"><strong style="font-size:13px;">Team B</strong>${pickers(m.team_b, 'nw-tb')}
+              <input type="number" class="nw-modal-input nw-sb" value="${m.score_b}" style="margin-top:4px;" placeholder="Score B"></div>
+          </div>
+          <input type="text" class="nw-modal-input nw-code" placeholder="Confirmation code" style="margin-top:10px;">
+          <div class="nw-modal-actions">
+            <button class="nw-modal-btn nw-cancel">Cancel</button>
+            <button class="nw-modal-btn nw-primary nw-save">Save &amp; recompute</button>
+          </div>
+        </div>`;
+      document.body.appendChild(overlay);
+      requestAnimationFrame(() => overlay.classList.add('nw-open'));
+      const close = () => { overlay.classList.remove('nw-open'); setTimeout(() => overlay.remove(), 140); };
+      overlay.querySelector('.nw-cancel').onclick = close;
+      overlay.addEventListener('mousedown', e => { if (e.target === overlay) close(); });
+      overlay.querySelector('.nw-save').onclick = async () => {
+        const team_a = [...overlay.querySelectorAll('.nw-ta')].map(s => s.value);
+        const team_b = [...overlay.querySelectorAll('.nw-tb')].map(s => s.value);
+        const score_a = parseInt(overlay.querySelector('.nw-sa').value, 10);
+        const score_b = parseInt(overlay.querySelector('.nw-sb').value, 10);
+        const confirm = overlay.querySelector('.nw-code').value;
+        if (new Set([...team_a, ...team_b]).size !== team_a.length + team_b.length) { nwAlert('A player can\'t be on both teams (or picked twice).'); return; }
+        if (isNaN(score_a) || isNaN(score_b) || score_a === score_b) { nwAlert('Enter two different scores.'); return; }
+        if (!confirm) { nwAlert('Enter the confirmation code.'); return; }
+        try {
+          const res = await fetch(`${API_BASE_URL}/matches/${matchId}`, {
+            method: 'PUT', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ team_a, team_b, score_a, score_b, confirm })
+          });
+          const data = await res.json();
+          if (!res.ok) { nwAlert('Error: ' + (data.error || 'could not save')); return; }
+          close();
+          nwAlert('Match updated. All ratings were recomputed.');
+          loadGameLog(); loadPlayers();
+        } catch (e) { nwAlert('Request failed: ' + e.message); }
+      };
     }
 
     async function editMatchScore(matchId, currentScoreA, currentScoreB, encLabel, groupId) {
@@ -1968,11 +2030,20 @@ let userPool = null;
 
         if (!rankedPlayers.length) { resultEl.innerHTML = '<p style="font-size:13px;color:var(--text-secondary);">No players to rank.</p>'; return; }
 
-        const sorted = [...rankedPlayers].sort((a, b) => Number(b.rating) - Number(a.rating));
+        // Only players with enough games are ranked - a rating from 0-4 games
+        // is mostly noise (one lucky win can outrank someone who earned their
+        // spot over dozens of games). Provisional players are listed below,
+        // unranked, so they can see how many more games until they count.
+        const MIN_GAMES = 5;
+        const gp = (p) => Number(p.games_played || 0);
+        const eligible = rankedPlayers.filter(p => gp(p) >= MIN_GAMES);
+        const provisional = rankedPlayers.filter(p => gp(p) > 0 && gp(p) < MIN_GAMES);
+
+        const sorted = [...eligible].sort((a, b) => Number(b.rating) - Number(a.rating));
         // Rank each player a second time by their previous rating, so we can
         // show whether they climbed or fell after their most recent match.
         // Green up-arrow = moved up, red down = fell, dash = unchanged/new.
-        const prevSorted = [...rankedPlayers].sort((a, b) =>
+        const prevSorted = [...eligible].sort((a, b) =>
           Number(b.previous_rating ?? b.rating) - Number(a.previous_rating ?? a.rating));
         const prevRankById = {};
         prevSorted.forEach((p, i) => { prevRankById[p.player_id] = i; });
@@ -1990,6 +2061,17 @@ let userPool = null;
           html += `<tr><td>${idx + 1}</td><td>${arrow}</td><td>${label}</td><td class="rating">${p.rating}</td></tr>`;
         });
         html += '</table>';
+        if (!sorted.length) {
+          html = `<p style="font-size:13px;color:var(--text-secondary);">No one has played ${MIN_GAMES}+ games yet, so no one is ranked.</p>`;
+        }
+        if (provisional.length) {
+          html += `<p style="font-size:12px;color:var(--text-secondary);margin-top:14px;">Provisional \u2014 not yet ranked (need ${MIN_GAMES} games):</p><table>`;
+          provisional.sort((a, b) => gp(b) - gp(a)).forEach(p => {
+            html += `<tr><td>${formatPlayerLabel(p.name, p.nickname)}</td>`
+                  + `<td style="color:var(--text-secondary);font-size:12px;">${gp(p)}/${MIN_GAMES} games</td></tr>`;
+          });
+          html += '</table>';
+        }
         resultEl.innerHTML = html;
       } catch (err) {
         resultEl.textContent = `Request failed: ${err.message}`;
@@ -5502,22 +5584,34 @@ let userPool = null;
            ${reviewLocked ? '' : '<span style="opacity:0.4;">⠿</span>'}`;
 
         if (!reviewLocked) {
-          li.addEventListener('dragstart', e => { e.dataTransfer.setData('text/plain', idx); li.style.opacity = '0.4'; });
+          li.addEventListener('dragstart', e => {
+            // getData() is unreadable during dragover (spec puts it in
+            // protected mode until drop), so stash the source index in a var
+            // too - the dragover handler relies on this to know what's moving.
+            reviewDragFrom = idx;
+            e.dataTransfer.setData('text/plain', idx);
+            e.dataTransfer.effectAllowed = 'move';
+            li.style.opacity = '0.4';
+          });
           li.addEventListener('dragend', () => { li.style.opacity = ''; });
           li.addEventListener('dragover', e => {
-            e.preventDefault();
-            // Smooth "insert" behaviour: as the held row passes over another,
-            // slide it into that slot live (everything else shifts up/down)
-            // rather than only swapping two rows on drop.
-            const from = parseInt(e.dataTransfer.getData('text/plain') || reviewDragFrom, 10);
-            const to = idx;
-            if (isNaN(from) || from === to) return;
-            const [moved] = reviewMatches.splice(from, 1);
-            reviewMatches.splice(to, 0, moved);
-            reviewDragFrom = to;   // the held row is now at its new index
-            renderReviewList();
+            e.preventDefault();               // allow the drop
+            e.dataTransfer.dropEffect = 'move';
+            if (reviewDragFrom !== idx) li.style.borderTop = '2px solid var(--court)';
           });
-          li.addEventListener('drop', e => e.preventDefault());
+          li.addEventListener('dragleave', () => { li.style.borderTop = ''; });
+          li.addEventListener('drop', e => {
+            e.preventDefault();
+            li.style.borderTop = '';
+            const from = parseInt(e.dataTransfer.getData('text/plain'), 10);
+            const src = isNaN(from) ? reviewDragFrom : from;
+            const to = idx;
+            if (src == null || isNaN(src) || src === to) return;
+            const [moved] = reviewMatches.splice(src, 1);
+            reviewMatches.splice(to, 0, moved);
+            reviewDragFrom = null;
+            renderReviewList();               // single rebuild AFTER the drop
+          });
         }
         listEl.appendChild(li);
       });

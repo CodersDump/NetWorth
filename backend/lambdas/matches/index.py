@@ -738,10 +738,32 @@ def update_match(match_id, event):
 
     new_winner = 'A' if new_score_a > new_score_b else 'B'
 
+    # Optionally change the players too (not just the score). Teams keep the
+    # match's original size (singles=1, doubles=2). Validated exactly like a
+    # new match, and every valid player must exist. Omitting teams leaves the
+    # rosters untouched (score-only edit, the original behaviour).
+    set_parts = ['score_a = :sa', 'score_b = :sb', 'winner = :w']
+    vals = {':sa': new_score_a, ':sb': new_score_b, ':w': new_winner}
+    if body.get('team_a') is not None or body.get('team_b') is not None:
+        team_a = body.get('team_a') or existing.get('team_a') or []
+        team_b = body.get('team_b') or existing.get('team_b') or []
+        size = len(existing.get('team_a') or []) or 1
+        if len(team_a) != size or len(team_b) != size:
+            return _response(400, {'error': f'this match needs {size} player(s) per team'})
+        if set(team_a) & set(team_b):
+            return _response(400, {'error': 'a player cannot be on both teams'})
+        # every player must exist
+        for pid in list(team_a) + list(team_b):
+            if not players_table.get_item(Key={'player_id': pid}).get('Item'):
+                return _response(404, {'error': f'player not found: {pid}'})
+        set_parts += ['team_a = :ta', 'team_b = :tb']
+        vals[':ta'] = team_a
+        vals[':tb'] = team_b
+
     matches_table.update_item(
         Key={'match_id': match_id},
-        UpdateExpression='SET score_a = :sa, score_b = :sb, winner = :w',
-        ExpressionAttributeValues={':sa': new_score_a, ':sb': new_score_b, ':w': new_winner}
+        UpdateExpression='SET ' + ', '.join(set_parts),
+        ExpressionAttributeValues=vals
     )
 
     recompute_all_ratings()
@@ -784,6 +806,7 @@ def recompute_all_ratings():
     # keeps it consistent. It only accumulates (never subtracts), keyed by
     # player, replaying every match's award in order.
     xp_totals = {p['player_id']: 0 for p in players}
+    game_counts = {p['player_id']: 0 for p in players}  # matches actually played
     pairing_counts = {}  # frozenset({p1,p2}) -> matches played together so far
 
     matches = matches_table.scan().get('Items', [])
@@ -836,8 +859,10 @@ def recompute_all_ratings():
 
         for pid in team_a:
             current_ratings[pid] = current_ratings.get(pid, 1000.0) + delta_a
+            game_counts[pid] = game_counts.get(pid, 0) + 1
         for pid in team_b:
             current_ratings[pid] = current_ratings.get(pid, 1000.0) + delta_b
+            game_counts[pid] = game_counts.get(pid, 0) + 1
 
         # XP: every player who played earns the base for this match's stage,
         # winners earn a bonus. Stage is None for a regular match. (Event
@@ -884,11 +909,11 @@ def recompute_all_ratings():
         balance = max(0, earned + quest_coins - spent)
         players_table.update_item(
             Key={'player_id': pid},
-            UpdateExpression='SET rating = :r, xp = :xp, #lvl = :lvl, coins = :c, coins_earned = :ce',
+            UpdateExpression='SET rating = :r, xp = :xp, #lvl = :lvl, coins = :c, coins_earned = :ce, games_played = :g',
             ExpressionAttributeNames={'#lvl': 'level'},
             ExpressionAttributeValues={
                 ':r': int(round(rating)), ':xp': xp, ':lvl': level,
-                ':c': balance, ':ce': earned
+                ':c': balance, ':ce': earned, ':g': game_counts.get(pid, 0)
             })
 
 
@@ -1039,10 +1064,11 @@ def _play_and_log(match_type, team_a_ids, team_b_ids, score_a, score_b, group_id
         balance = max(0, earned + quest_coins - spent)
         players_table.update_item(
             Key={'player_id': pid},
-            UpdateExpression='SET rating = :r, previous_rating = :pr, xp = :xp, #lvl = :lvl, coins = :c, coins_earned = :ce',
+            UpdateExpression='SET rating = :r, previous_rating = :pr, xp = :xp, #lvl = :lvl, coins = :c, coins_earned = :ce, games_played = if_not_exists(games_played, :zero) + :one',
             ExpressionAttributeNames={'#lvl': 'level'},
             ExpressionAttributeValues={':r': new_rating, ':pr': prev, ':xp': new_xp,
-                                       ':lvl': new_level, ':c': balance, ':ce': earned})
+                                       ':lvl': new_level, ':c': balance, ':ce': earned,
+                                       ':zero': 0, ':one': 1})
 
     item = {
         'match_id': str(uuid.uuid4()),
