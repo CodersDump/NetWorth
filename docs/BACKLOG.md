@@ -146,7 +146,18 @@
       (css class + canvas painter); selling it is then pure admin.
     - `[feat] M` Premium **stats layouts** (curve / donut graphs) as `card_layout` cosmetics — backend
       field already accepts them; needs the per-layout canvas draw code + a third customizer axis.
-    - `[feat] S` Use the player's avatar image (not just initials) on the exported card.
+      **DONE in v1.10.0** — Stats is now a third customizer axis (Full / Compact free, Rating-curve /
+      Season-donut premium via `card_layout` presets), with canvas draws for each in the export. Also
+      shipped: more frame presets (Ice/Plasma/Ruby/Chrome added to Gold/Holo/Carbon/Neon), fancy
+      backgrounds (Nebula/Ember/Blueprint) moved off the free defaults into store `background_preset`
+      items alongside new ones (Ocean/Sunset) + **animated** presets (Aurora Drift, Nebula Pulse —
+      animate in the live preview; the still export bakes a representative frame), and **preset preview
+      swatches** in both the player store and the admin store list (`NW_CARD_PRESETS.swatchHtml`).
+      Free background defaults trimmed to Court + Plain.
+    - `[feat] S` Use the player's avatar image (not just initials) on the exported card. **DONE in
+      v1.10.0** — avatar image is loaded (crossOrigin) and drawn on all four export layouts.
+    - `[feat] M` **Animated background export** — animated bg presets currently export as a static
+      frame; a true animated share would need WebP/APNG frame encoding on the canvas.
 - `[feat] M` Per-group leaderboards & season resets (would let the card say "season" instead of all-time).
 - `[feat] L` Move config out of inline `index.html` script into a generated `config.js`
   (update deploy injection accordingly — KNOWN_ISSUES #10).
