@@ -165,6 +165,11 @@
       is grouped into labelled category sections; Holo/Ice/Plasma glass frames given distinct palettes;
       Flame frame redrawn as actual flame tongues (SVG in preview, canvas paths in export) instead of a
       glow. Web Share of video may be rejected by IG/WhatsApp (they want MP4) → falls back to download.
+    - **v1.11.1** — animated share was silently failing (the ~2.6s recording expired the user-gesture
+      before navigator.share/download); now records first, then shows a result panel with the clip +
+      Share/Save (fresh gesture) + long-press-to-save. Backgrounds lightened (scrim reduced) + text
+      shadow for legibility. Holo/Ice/Plasma palettes made distinct. Flame frame redrawn as a full
+      four-edge fire border (canvas + preview SVG) matching the reference. Prefers MP4 where supported.
     - **v1.10.1** — SuperAdmin gets every cosmetic unlocked (customizer hides locks; `update_my_card`
       honours the same bypass via `_is_super_admin`). Added a **Flame** frame preset.
     - `[idea]` FC/FUT-style **card silhouette** (angled corners) — needs clip-path in the preview and a

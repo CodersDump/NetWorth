@@ -43,10 +43,10 @@
 
   // ---- preset visuals ------------------------------------------------------
   function bgCss(a, b, c) {
-    return `linear-gradient(rgba(7,12,10,.55),rgba(7,12,10,.72)),linear-gradient(160deg,${a} 0%,${b} 55%,${c} 100%)`;
+    return `linear-gradient(rgba(7,12,10,.28),rgba(7,12,10,.5)),linear-gradient(160deg,${a} 0%,${b} 55%,${c} 100%)`;
   }
   function animBgCss(a, b, c) {
-    return `linear-gradient(rgba(7,12,10,.5),rgba(7,12,10,.72)),linear-gradient(120deg,${a} 0%,${b} 38%,${c} 68%,${a} 100%)`;
+    return `linear-gradient(rgba(7,12,10,.26),rgba(7,12,10,.48)),linear-gradient(120deg,${a} 0%,${b} 38%,${c} 68%,${a} 100%)`;
   }
 
   // Free backgrounds map to background_id (must be in the backend allow-list).
@@ -146,28 +146,33 @@
     ice:    [[0, '#dff9ff'], [.4, '#7fd8ff'], [.7, '#bff0ff'], [1, '#5ab8e6']],     // pale icy blue/white
     plasma: [[0, '#7a2cff'], [.4, '#b026ff'], [.7, '#5a3cff'], [1, '#8a2cff']]      // deep violet/purple
   };
-  function flamePath(ctx, cx, baseY, w, h) {
+  function flameTongue(ctx, cx, baseY, w, h) {   // grows +y (inward) by h in local space
     ctx.beginPath(); ctx.moveTo(cx - w / 2, baseY);
-    ctx.quadraticCurveTo(cx - w * 0.32, baseY - h * 0.5, cx - w * 0.08, baseY - h);
-    ctx.quadraticCurveTo(cx + w * 0.04, baseY - h * 0.72, cx + w * 0.26, baseY - h * 0.42);
-    ctx.quadraticCurveTo(cx + w * 0.5, baseY - h * 0.18, cx + w / 2, baseY);
+    ctx.quadraticCurveTo(cx - w * 0.1, baseY + h * 0.5, cx, baseY + h);
+    ctx.quadraticCurveTo(cx + w * 0.1, baseY + h * 0.5, cx + w / 2, baseY);
     ctx.closePath();
   }
-  function drawFlame(ctx, W, H, t) {
-    const rad = 44;
-    ctx.strokeStyle = '#6e1c0a'; ctx.lineWidth = 9; rr(ctx, 14, 14, W - 28, H - 28, rad); ctx.stroke();
-    ctx.strokeStyle = 'rgba(255,140,40,.55)'; ctx.lineWidth = 3; rr(ctx, 14, 14, W - 28, H - 28, rad); ctx.stroke();
-    ctx.save(); rr(ctx, 14, 14, W - 28, H - 28, rad); ctx.clip();
-    const n = 14, x0 = 26, x1 = W - 26, step = (x1 - x0) / n, baseY = 96, phase = (t == null ? 0.3 : t) * Math.PI * 2;
+  function flameEdge(ctx, along, t) {            // local: x 0..along, +y points inward
+    const n = Math.max(5, Math.round(along / 46)), base = 16;
     for (let i = 0; i <= n; i++) {
-      const bx = x0 + i * step, h = 44 + Math.sin(phase + i * 1.35) * 16 + (i % 2 ? 8 : 0), w = step * 1.1;
-      let g = ctx.createLinearGradient(0, baseY - h, 0, baseY + 6);
-      g.addColorStop(0, 'rgba(255,60,0,0)'); g.addColorStop(.35, '#ff4d0a'); g.addColorStop(1, '#ffb020');
-      ctx.fillStyle = g; flamePath(ctx, bx, baseY, w, h); ctx.fill();
-      g = ctx.createLinearGradient(0, baseY - h * 0.62, 0, baseY + 4);
-      g.addColorStop(0, 'rgba(255,220,60,0)'); g.addColorStop(.5, '#ffd24a'); g.addColorStop(1, '#fff3b0');
-      ctx.fillStyle = g; flamePath(ctx, bx, baseY, w * 0.5, h * 0.62); ctx.fill();
+      const cx = (i / n) * along, w = (along / n) * 1.2;
+      const h = 40 + Math.sin(t * 6.283 + i * 1.3) * 14 + (i % 2 ? 8 : 0);
+      let g = ctx.createLinearGradient(0, base, 0, base + h);
+      g.addColorStop(0, '#ff7a12'); g.addColorStop(.5, '#ff3d0a'); g.addColorStop(1, 'rgba(200,24,0,0)');
+      ctx.fillStyle = g; flameTongue(ctx, cx, base, w, h); ctx.fill();
+      g = ctx.createLinearGradient(0, base, 0, base + h * 0.6);
+      g.addColorStop(0, '#ffe694'); g.addColorStop(1, 'rgba(255,150,20,0)');
+      ctx.fillStyle = g; flameTongue(ctx, cx, base, w * 0.48, h * 0.6); ctx.fill();
     }
+  }
+  function drawFlame(ctx, W, H, t) {
+    const rad = 44, tt = (t == null ? 0.3 : t);
+    ctx.strokeStyle = '#5a1508'; ctx.lineWidth = 8; rr(ctx, 12, 12, W - 24, H - 24, rad); ctx.stroke();
+    ctx.save(); rr(ctx, 10, 10, W - 20, H - 20, rad + 4); ctx.clip();
+    ctx.save(); flameEdge(ctx, W, tt); ctx.restore();                                  // top
+    ctx.save(); ctx.translate(W, 0); ctx.rotate(Math.PI / 2); flameEdge(ctx, H, tt + 0.25); ctx.restore();   // right
+    ctx.save(); ctx.translate(W, H); ctx.rotate(Math.PI); flameEdge(ctx, W, tt + 0.5); ctx.restore();        // bottom
+    ctx.save(); ctx.translate(0, H); ctx.rotate(-Math.PI / 2); flameEdge(ctx, H, tt + 0.75); ctx.restore();  // left
     ctx.restore();
   }
   function drawFramePreset(ctx, id, W, H, t) {
@@ -252,16 +257,16 @@
     .nw-cs-frame{width:296px; border-radius:26px; padding:3px; position:relative;}
     .nw-cs-card{border-radius:23px; position:relative; overflow:hidden; padding:20px 20px 16px; min-height:406px; display:flex; flex-direction:column;}
     .nw-cs-card::after{content:''; position:absolute; inset:0; border-radius:23px; box-shadow:inset 0 0 60px rgba(0,0,0,.28); pointer-events:none;}
-    .nw-cs-content{position:relative; z-index:1; display:flex; flex-direction:column; flex:1;}
+    .nw-cs-content{position:relative; z-index:1; display:flex; flex-direction:column; flex:1; text-shadow:0 1px 3px rgba(0,0,0,.55);}
     .nw-cs-content.dim{filter:grayscale(.85) brightness(.62);}
     .nw-cs-frimg{position:absolute; inset:0; z-index:3; background-size:100% 100%; background-repeat:no-repeat; pointer-events:none; border-radius:23px;}
     .nw-cs-min{padding:1.5px; background:rgba(127,216,168,.4);}
     .nw-cs-fr-gold{padding:3px; background:linear-gradient(135deg,#f9df8a,#b9871f 35%,#ffe9a8 55%,#a06b12 75%,#f7d774);}
     .nw-cs-fr-ruby{padding:3px; background:linear-gradient(135deg,#ff8ea6,#c11f45 40%,#ff5a7d 70%,#8a1230);}
     .nw-cs-fr-flame{padding:3px; background:linear-gradient(135deg,#8a2410,#3a0f06 50%,#6e1c0a); box-shadow:0 0 16px rgba(255,90,20,.35);}
-    .nw-cs-fr-flame .nw-cs-content{padding-top:46px;}
-    .nw-cs-flames{position:absolute; top:5px; left:8px; right:8px; height:60px; z-index:2; pointer-events:none; transform-origin:bottom; animation:nw-cs-flick .9s ease-in-out infinite alternate; filter:drop-shadow(0 0 6px rgba(255,120,20,.5));}
-    @keyframes nw-cs-flick{from{transform:scaleY(.9);}to{transform:scaleY(1.08);}}
+    .nw-cs-fr-flame .nw-cs-content{padding:38px 30px 26px;}
+    .nw-cs-flames{position:absolute; inset:0; z-index:2; pointer-events:none; filter:drop-shadow(0 0 5px rgba(255,120,20,.5)); animation:nw-cs-flick .9s ease-in-out infinite alternate;}
+    @keyframes nw-cs-flick{from{opacity:.82; transform:scale(1);}to{opacity:1; transform:scale(1.015);}}
     .nw-cs-fr-chrome{padding:3px; background:linear-gradient(135deg,#f2f5f8,#9aa6b2 35%,#fff 55%,#7d8794 75%,#dfe6ec);}
     .nw-cs-fr-carbon{padding:3px; background:repeating-linear-gradient(45deg,#3a423d 0 3px,#1c211e 3px 6px);}
     .nw-cs-fr-neon{padding:3px; background:#5affd0; box-shadow:0 0 18px rgba(51,240,192,.55);}
@@ -313,6 +318,7 @@
     .nw-cs-share.off{background:#1a211d; color:#5f726a; cursor:not-allowed;}
     .nw-cs-sw{width:34px; height:34px; border-radius:7px; display:inline-block; overflow:hidden; border:1px solid rgba(255,255,255,.14); vertical-align:middle; background-size:cover;}
     .nw-cs-sw-lg{width:100%; height:120px; border-radius:8px; margin-bottom:10px; display:block;}
+    .nw-cs-vid{position:absolute; inset:0; z-index:20; background:rgba(4,7,6,.95); display:flex; flex-direction:column; align-items:center; justify-content:center; gap:14px; padding:20px;}
     `;
     document.head.appendChild(s);
   }
@@ -522,22 +528,36 @@
     if (fr.type === 'preset') return 'nw-cs-fr-' + fr.id;
     return '';
   }
-  const FLAME_SVG = (function () {
-    const w = 284, h = 60, n = 13; let p = '';
-    for (let i = 0; i <= n; i++) {
-      const cx = 12 + i * (w - 24) / n, hh = 38 + (i % 3) * 9;
-      p += `<path d="M${cx - 10} ${h} Q${cx - 6} ${(h - hh * 0.5).toFixed(1)} ${cx - 1} ${(h - hh).toFixed(1)} Q${cx + 1} ${(h - hh * 0.7).toFixed(1)} ${cx + 5} ${(h - hh * 0.4).toFixed(1)} Q${cx + 8} ${(h - hh * 0.15).toFixed(1)} ${cx + 10} ${h} Z" fill="url(#fga)"/>`;
-      p += `<path d="M${cx - 5} ${h} Q${cx - 2.5} ${(h - hh * 0.34).toFixed(1)} ${cx - 0.5} ${(h - hh * 0.6).toFixed(1)} Q${cx + 0.5} ${(h - hh * 0.42).toFixed(1)} ${cx + 2.5} ${(h - hh * 0.26).toFixed(1)} Q${cx + 4} ${(h - hh * 0.1).toFixed(1)} ${cx + 5} ${h} Z" fill="url(#fgb)"/>`;
+  function svgTongue(bx, by, dx, dy, px, py, w, h) {
+    const lx = bx - px * w / 2, ly = by - py * w / 2, rx = bx + px * w / 2, ry = by + py * w / 2;
+    const tx = bx + dx * h, ty = by + dy * h;
+    const c1x = bx - px * w * 0.1 + dx * h * 0.5, c1y = by - py * w * 0.1 + dy * h * 0.5;
+    const c2x = bx + px * w * 0.1 + dx * h * 0.5, c2y = by + py * w * 0.1 + dy * h * 0.5;
+    return `M${lx.toFixed(1)} ${ly.toFixed(1)} Q${c1x.toFixed(1)} ${c1y.toFixed(1)} ${tx.toFixed(1)} ${ty.toFixed(1)} Q${c2x.toFixed(1)} ${c2y.toFixed(1)} ${rx.toFixed(1)} ${ry.toFixed(1)} Z`;
+  }
+  const FLAME_BORDER_SVG = (function (W, H) {
+    const m = 12, ei = 14; let outer = '', inner = '';
+    function edge(x0, y0, x1, y1, dx, dy, px, py) {
+      const len = Math.hypot(x1 - x0, y1 - y0), n = Math.max(4, Math.round(len / 38));
+      for (let i = 0; i <= n; i++) {
+        const bx = x0 + (x1 - x0) * (i / n), by = y0 + (y1 - y0) * (i / n), h = 32 + (i % 3) * 9, w = (len / n) * 1.25;
+        outer += svgTongue(bx, by, dx, dy, px, py, w, h);
+        inner += svgTongue(bx, by, dx, dy, px, py, w * 0.5, h * 0.58);
+      }
     }
-    return `<svg width="100%" height="100%" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg"><defs><linearGradient id="fga" x1="0" y1="1" x2="0" y2="0"><stop offset="0" stop-color="#ff3d00"/><stop offset=".6" stop-color="#ff9a1e"/><stop offset="1" stop-color="#ffd24a"/></linearGradient><linearGradient id="fgb" x1="0" y1="1" x2="0" y2="0"><stop offset="0" stop-color="#ffb020"/><stop offset="1" stop-color="#fff3b0"/></linearGradient></defs>${p}</svg>`;
-  })();
+    edge(m + ei, ei, W - m - ei, ei, 0, 1, 1, 0);              // top
+    edge(m + ei, H - ei, W - m - ei, H - ei, 0, -1, 1, 0);     // bottom
+    edge(ei, m + ei, ei, H - m - ei, 1, 0, 0, 1);              // left
+    edge(W - ei, m + ei, W - ei, H - m - ei, -1, 0, 0, 1);     // right
+    return `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" width="100%" height="100%" xmlns="http://www.w3.org/2000/svg"><path d="${outer}" fill="#ff4d0a"/><path d="${inner}" fill="#ffd24a"/></svg>`;
+  })(300, 420);
 
   function buildSlot(slotEl, bgSel, frameSel, statsSel) {
     const isImg = frameSel.type === 'image';
     const isFlame = frameSel.type === 'preset' && frameSel.id === 'flame';
     slotEl.innerHTML = `<div class="nw-cs-frame ${frameClass(frameSel)}">
         <div class="nw-cs-card ${bgSel.anim || ''}">
-        ${isFlame ? `<div class="nw-cs-flames">${FLAME_SVG}</div>` : ''}
+        ${isFlame ? `<div class="nw-cs-flames">${FLAME_BORDER_SVG}</div>` : ''}
         <div class="nw-cs-content"></div>
         ${isImg ? `<div class="nw-cs-frimg" style="background-image:url('${srcOf(frameSel.key)}');"></div>` : ''}
         </div></div>`;
@@ -786,10 +806,12 @@
   }
   function drawComposite(ctx, cur, W, H, pad, t) {
     paintBackground(ctx, cur.bg, W, H, t);
-    const sc = ctx.createLinearGradient(0, 0, 0, H); sc.addColorStop(0, 'rgba(7,12,10,.55)'); sc.addColorStop(1, 'rgba(7,12,10,.78)');
+    const sc = ctx.createLinearGradient(0, 0, 0, H); sc.addColorStop(0, 'rgba(7,12,10,.3)'); sc.addColorStop(1, 'rgba(7,12,10,.55)');
     ctx.fillStyle = sc; ctx.fillRect(0, 0, W, H);
     ctx.textBaseline = 'alphabetic'; ctx.textAlign = 'left';
+    ctx.save(); ctx.shadowColor = 'rgba(0,0,0,.6)'; ctx.shadowBlur = 10; ctx.shadowOffsetY = 2;
     drawStatsLayout(ctx, cur.stats.id, stats, W, H, pad);
+    ctx.restore();
     if (cur.frame.type === 'minimal') { ctx.strokeStyle = 'rgba(127,216,168,.5)'; ctx.lineWidth = 6; rr(ctx, 14, 14, W - 28, H - 28, 46); ctx.stroke(); }
     else if (cur.frame.type === 'preset') { drawFramePreset(ctx, cur.frame.id, W, H, t); }
     else if (cur.frame._img) { ctx.drawImage(cur.frame._img, 0, 0, W, H); }
@@ -848,24 +870,54 @@
     const url = URL.createObjectURL(blob); const a = document.createElement('a');
     a.href = url; a.download = fname; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1500);
   }
+  function showVideoResult(blob, ext, mime, fname) {
+    const url = URL.createObjectURL(blob);
+    const panel = document.createElement('div');
+    panel.className = 'nw-cs-vid';
+    panel.innerHTML = `
+      <div style="font:700 15px Inter;">Your animated card</div>
+      <video src="${url}" autoplay loop muted playsinline style="max-width:300px; width:100%; border-radius:16px;"></video>
+      <div style="font-size:12px; color:#9aa8a0; text-align:center; max-width:300px; line-height:1.5;">Tap <b>Share</b> to send it, or <b>Save</b> / long-press the video to keep it${ext === 'webm' ? '. WebM may need you to save, then post it to Instagram/WhatsApp from your gallery.' : '.'}</div>
+      <div style="display:flex; gap:10px; width:100%; max-width:300px;">
+        <button class="nw-cs-save" id="nw-cs-vsave" style="flex:1; padding:12px; border-radius:11px; cursor:pointer;">Save</button>
+        <button class="nw-cs-share" id="nw-cs-vshare" style="flex:1; padding:12px; border-radius:11px; cursor:pointer;">Share</button>
+      </div>
+      <button id="nw-cs-vclose" style="background:none; border:none; color:#8fa39a; cursor:pointer; font-size:13px;">Close</button>`;
+    modal.appendChild(panel);
+    const cleanup = () => { panel.remove(); setTimeout(() => URL.revokeObjectURL(url), 1500); };
+    panel.querySelector('#nw-cs-vclose').onclick = cleanup;
+    panel.querySelector('#nw-cs-vsave').onclick = () => { try { download(blob, fname); } catch (e) {} try { window.open(url, '_blank'); } catch (e) {} };
+    panel.querySelector('#nw-cs-vshare').onclick = async () => {   // fresh user gesture -> share is allowed
+      const file = new File([blob], fname, { type: mime });
+      if (navigator.canShare && navigator.canShare({ files: [file] })) {
+        try { await navigator.share({ files: [file], title: 'My NetWorth card', text: 'My badminton stats card' }); }
+        catch (e) { if (!(e && e.name === 'AbortError')) nwAlertLocal('Couldn’t share directly — tap Save instead.'); }
+      } else { nwAlertLocal('This browser can’t share a video directly — tap Save, then post it from your gallery.'); }
+    };
+  }
   async function share() {
     const btn = modal.querySelector('#nw-cs-share');
     if (btn.classList.contains('off')) { nwAlertLocal('Unlock the locked pick first — a locked pick can’t be shared.'); return; }
     const cur = sel(0), animated = isAnimatedSel(cur);
-    btn.disabled = true; const label = btn.textContent; btn.textContent = animated ? 'Recording…' : 'Rendering…';
+    const base = (stats.nickname || stats.name || 'player').replace(/[^a-z0-9]+/gi, '_');
+    btn.disabled = true; const label = btn.textContent;
     try {
-      let blob = null, ext = 'png', mime = 'image/png';
-      if (animated) { const v = await renderAnimatedExport(); if (v) { blob = v.blob; ext = v.ext; mime = v.mime; } }
-      if (!blob) { blob = await renderExport(); ext = 'png'; mime = 'image/png'; }
-      if (!blob) { nwAlertLocal('Could not generate the file.'); return; }
-      const fname = `${(stats.nickname || stats.name || 'player').replace(/[^a-z0-9]+/gi, '_')}_networth.${ext}`;
-      const file = new File([blob], fname, { type: mime });
+      if (animated) {
+        btn.textContent = 'Recording…';
+        const v = await renderAnimatedExport();
+        if (v && v.blob && v.blob.size) { showVideoResult(v.blob, v.ext, v.mime, `${base}_networth.${v.ext}`); return; }
+        // recording unsupported/empty -> fall through to a still PNG
+      }
+      btn.textContent = 'Rendering…';
+      const blob = await renderExport();
+      if (!blob) { nwAlertLocal('Could not generate the image.'); return; }
+      const fname = `${base}_networth.png`;
+      const file = new File([blob], fname, { type: 'image/png' });
       if (navigator.canShare && navigator.canShare({ files: [file] })) {
         try { await navigator.share({ files: [file], title: 'My NetWorth card', text: 'My badminton stats card' }); return; }
         catch (e) { if (e && e.name === 'AbortError') return; }
       }
       download(blob, fname);
-      if (ext !== 'png') nwAlertLocal('Saved the animated card — add it to your story/status from your gallery.');
     } catch (e) { if (!(e && e.name === 'AbortError')) nwAlertLocal('Share failed: ' + (e && e.message ? e.message : e)); }
     finally { btn.disabled = false; btn.textContent = label; }
   }
