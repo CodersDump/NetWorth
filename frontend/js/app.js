@@ -2725,8 +2725,13 @@ let userPool = null;
             const label = isPerk && ownsIt ? `Buy again (own ${ownsIt})` : 'Buy';
             btn = `<button ${canAfford ? '' : 'disabled'} style="width:100%; ${canAfford ? '' : 'opacity:0.5;'}" onclick="buyStoreItem('${i.item_id}')">${label} — ${i.cost} 🪙</button>`;
           }
+          const _pk = (i.effect || {}).kind, _pv = (i.effect || {}).value;
+          const _isPreset = window.NW_CARD_PRESETS && window.NW_CARD_PRESETS.kinds && window.NW_CARD_PRESETS.kinds[_pk];
+          const _preview = i.image_url
+            ? `<img src="${imageSrc(i.image_url)}" alt="" style="width:100%; height:120px; object-fit:cover; border-radius:8px; margin-bottom:10px;">`
+            : (_isPreset ? window.NW_CARD_PRESETS.swatchHtml(_pk, _pv, 'nw-cs-sw-lg') : '');
           return `<div style="border:1px solid var(--border); border-radius:10px; padding:14px; background:var(--surface-2);">
-            ${i.image_url ? `<img src="${imageSrc(i.image_url)}" alt="" style="width:100%; height:120px; object-fit:cover; border-radius:8px; margin-bottom:10px;">` : ''}
+            ${_preview}
             <div style="font-weight:700; margin-bottom:4px;">${escapeHtml(i.name)}</div>
             <div style="font-size:11px; text-transform:uppercase; opacity:0.6; margin-bottom:10px;">${i.type}</div>
             ${btn}
@@ -2765,14 +2770,21 @@ let userPool = null;
         const data = await res.json();
         const items = data.items || [];
         if (!items.length) { listEl.innerHTML = '<p class="card-sub" style="margin:0;">No items yet.</p>'; return; }
-        listEl.innerHTML = items.map(i => `
+        listEl.innerHTML = items.map(i => {
+          const pk = (i.effect || {}).kind, pv = (i.effect || {}).value;
+          const isPreset = window.NW_CARD_PRESETS && window.NW_CARD_PRESETS.kinds && window.NW_CARD_PRESETS.kinds[pk];
+          const thumb = i.image_url
+            ? `<img src="${imageSrc(i.image_url)}" alt="" style="width:34px; height:34px; object-fit:cover; border-radius:6px; border:1px solid var(--border);">`
+            : (isPreset ? window.NW_CARD_PRESETS.swatchHtml(pk, pv) : '');
+          return `
           <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; padding:6px 0; border-bottom:1px solid var(--border);">
             <span style="display:flex; align-items:center; gap:8px;">
-              ${i.image_url ? `<img src="${imageSrc(i.image_url)}" alt="" style="width:34px; height:34px; object-fit:cover; border-radius:6px; border:1px solid var(--border);">` : ''}
+              ${thumb}
               <span><strong>${escapeHtml(i.name)}</strong> — ${i.cost} 🪙 <span style="opacity:0.6;">(${i.type})</span></span>
             </span>
             <button class="secondary" style="margin:0; padding:2px 8px; font-size:11px;" onclick="deleteStoreItem('${i.item_id}')">Delete</button>
-          </div>`).join('');
+          </div>`;
+        }).join('');
       } catch (e) { listEl.textContent = 'Could not load items.'; }
     }
 
