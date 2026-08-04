@@ -78,6 +78,7 @@
     { id: 'holo',   name: 'Holo (glass)' },
     { id: 'ice',    name: 'Ice (glass)' },
     { id: 'plasma', name: 'Plasma (glass)' },
+    { id: 'flame',  name: 'Flame' },
     { id: 'ruby',   name: 'Ruby' },
     { id: 'chrome', name: 'Chrome' },
     { id: 'carbon', name: 'Carbon' },
@@ -146,6 +147,11 @@
       ctx.strokeStyle = 'rgba(255,240,190,.35)'; ctx.lineWidth = 2; rr(ctx, 22, 22, W - 44, H - 44, rad - 6); ctx.stroke();
     } else if (id === 'ruby') {
       gradStroke(ctx, W, H, rad, [[0, '#ff8ea6'], [.4, '#c11f45'], [.7, '#ff5a7d'], [1, '#8a1230']], 10);
+    } else if (id === 'flame') {
+      ctx.save(); ctx.shadowColor = 'rgba(255,120,20,.75)'; ctx.shadowBlur = 30;
+      gradStroke(ctx, W, H, rad, [[0, '#ffe17a'], [.3, '#ff8a1e'], [.55, '#ff4d1a'], [.8, '#c81e12'], [1, '#ffb036']], 11);
+      ctx.restore();
+      ctx.strokeStyle = 'rgba(255,225,150,.4)'; ctx.lineWidth = 2; rr(ctx, 22, 22, W - 44, H - 44, rad - 6); ctx.stroke();
     } else if (id === 'chrome') {
       gradStroke(ctx, W, H, rad, [[0, '#f2f5f8'], [.35, '#9aa6b2'], [.55, '#ffffff'], [.75, '#7d8794'], [1, '#dfe6ec']], 10);
     } else if (id === 'carbon') {
@@ -230,6 +236,8 @@
     .nw-cs-min{padding:1.5px; background:rgba(127,216,168,.4);}
     .nw-cs-fr-gold{padding:3px; background:linear-gradient(135deg,#f9df8a,#b9871f 35%,#ffe9a8 55%,#a06b12 75%,#f7d774);}
     .nw-cs-fr-ruby{padding:3px; background:linear-gradient(135deg,#ff8ea6,#c11f45 40%,#ff5a7d 70%,#8a1230);}
+    .nw-cs-fr-flame{padding:3px; background:linear-gradient(135deg,#ffe17a,#ff8a1e 30%,#ff4d1a 55%,#c81e12 80%,#ffb036); background-size:200% 200%; animation:nw-cs-flame 3.2s ease-in-out infinite; box-shadow:0 0 20px rgba(255,110,20,.55);}
+    @keyframes nw-cs-flame{0%,100%{background-position:0% 50%;}50%{background-position:100% 50%;}}
     .nw-cs-fr-chrome{padding:3px; background:linear-gradient(135deg,#f2f5f8,#9aa6b2 35%,#fff 55%,#7d8794 75%,#dfe6ec);}
     .nw-cs-fr-carbon{padding:3px; background:repeating-linear-gradient(45deg,#3a423d 0 3px,#1c211e 3px 6px);}
     .nw-cs-fr-neon{padding:3px; background:#5affd0; box-shadow:0 0 18px rgba(51,240,192,.55);}
@@ -353,6 +361,8 @@
 
   async function assembleOptions() {
     const owned = ownedMap();
+    const sa = (typeof isSuperAdmin === 'function' && isSuperAdmin());
+    const own = (id) => sa || !!owned[id];   // SuperAdmin owns everything
     let catalog = [];
     try { catalog = (typeof loadStoreCatalogOnce === 'function') ? (await loadStoreCatalogOnce()) : []; }
     catch (e) { catalog = []; }
@@ -360,10 +370,10 @@
 
     const imgOf = (kind) => active
       .filter(i => (i.effect || {}).kind === kind && i.image_url)
-      .map(i => ({ type: 'image', key: i.image_url, name: i.name, cost: Number(i.cost) || 0, item_id: i.item_id, owned: !!owned[i.item_id] }));
+      .map(i => ({ type: 'image', key: i.image_url, name: i.name, cost: Number(i.cost) || 0, item_id: i.item_id, owned: own(i.item_id) }));
     const presetOf = (kind) => active
       .filter(i => (i.effect || {}).kind === kind && (i.effect || {}).value)
-      .map(i => ({ id: i.effect.value, name: i.name, cost: Number(i.cost) || 0, item_id: i.item_id, owned: !!owned[i.item_id] }));
+      .map(i => ({ id: i.effect.value, name: i.name, cost: Number(i.cost) || 0, item_id: i.item_id, owned: own(i.item_id) }));
 
     // Background: free ids + premium presets + image uploads.
     bgOpts = FREE_BG.map(b => ({ type: 'preset', id: b.id, name: b.name, css: b.css, owned: true, cost: 0 }))
