@@ -2714,7 +2714,23 @@ let userPool = null;
         const data = await res.json();
         const items = (data.items || []).filter(i => i.active !== false);
         if (!items.length) { grid.innerHTML = '<p class="card-sub">Nothing in the store yet.</p>'; return; }
-        grid.innerHTML = items.map(i => {
+        const CAT_ORDER = [
+          ['frames', 'Card frames', ['card_frame', 'card_frame_preset']],
+          ['backgrounds', 'Card backgrounds', ['background_image', 'background_preset']],
+          ['layouts', 'Card stats layouts', ['card_layout']],
+          ['avatars', 'Avatar frames', ['avatar_frame']],
+          ['banners', 'Banners', ['banner_image']],
+          ['effects', 'Profile effects', ['profile_effect']],
+          ['flair', 'Name colours & titles', ['name_color', 'title']],
+          ['perks', 'Perks', []],
+          ['other', 'Other', []]
+        ];
+        const catOf = (i) => {
+          const k = (i.effect || {}).kind;
+          for (const [key, , kinds] of CAT_ORDER) if (kinds.includes(k)) return key;
+          return i.type === 'perk' ? 'perks' : 'other';
+        };
+        const cardHtml = (i) => {
           const ownsIt = owned[i.item_id];
           const isPerk = i.type === 'perk';
           const canAfford = balance >= i.cost;
@@ -2736,6 +2752,12 @@ let userPool = null;
             <div style="font-size:11px; text-transform:uppercase; opacity:0.6; margin-bottom:10px;">${i.type}</div>
             ${btn}
           </div>`;
+        };
+        const groups = {};
+        items.forEach(i => { const c = catOf(i); (groups[c] = groups[c] || []).push(i); });
+        grid.innerHTML = CAT_ORDER.map(([key, title]) => {
+          const gi = groups[key]; if (!gi || !gi.length) return '';
+          return `<div style="grid-column:1/-1; margin:12px 0 2px; font:700 12px Inter; color:var(--text-secondary); text-transform:uppercase; letter-spacing:.6px; border-bottom:1px solid var(--border); padding-bottom:6px;">${title} <span style="opacity:.5;">(${gi.length})</span></div>` + gi.map(cardHtml).join('');
         }).join('');
       } catch (e) { grid.innerHTML = 'Could not load the store.'; }
     }

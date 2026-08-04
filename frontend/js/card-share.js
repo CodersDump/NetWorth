@@ -126,12 +126,14 @@
     ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r);
     ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath();
   }
-  function glassStreak(ctx, W, H, rad) {
+  function glassStreak(ctx, W, H, rad, t) {
+    const p = (t == null) ? 0.42 : t;               // sweep position 0..1
+    const cx = (-0.3 + 1.6 * p) * W, band = W * 0.16, sk = H * 0.14;
     ctx.save(); rr(ctx, 4, 4, W - 8, H - 8, rad + 8); ctx.clip();
-    const gr = ctx.createLinearGradient(W * 0.15, 0, W * 0.6, H);
-    gr.addColorStop(0, 'rgba(255,255,255,0)'); gr.addColorStop(.5, 'rgba(255,255,255,.16)'); gr.addColorStop(1, 'rgba(255,255,255,0)');
+    const gr = ctx.createLinearGradient(cx - band, 0, cx + band, 0);
+    gr.addColorStop(0, 'rgba(255,255,255,0)'); gr.addColorStop(.5, 'rgba(255,255,255,.24)'); gr.addColorStop(1, 'rgba(255,255,255,0)');
     ctx.fillStyle = gr; ctx.beginPath();
-    ctx.moveTo(W * 0.10, 0); ctx.lineTo(W * 0.42, 0); ctx.lineTo(W * 0.70, H); ctx.lineTo(W * 0.38, H); ctx.closePath(); ctx.fill();
+    ctx.moveTo(cx - band + sk, 0); ctx.lineTo(cx + band + sk, 0); ctx.lineTo(cx + band - sk, H); ctx.lineTo(cx - band - sk, H); ctx.closePath(); ctx.fill();
     ctx.restore();
   }
   function gradStroke(ctx, W, H, rad, stops, lw) {
@@ -139,7 +141,36 @@
     stops.forEach(s => g.addColorStop(s[0], s[1]));
     ctx.strokeStyle = g; ctx.lineWidth = lw; rr(ctx, 14, 14, W - 28, H - 28, rad); ctx.stroke();
   }
-  function drawFramePreset(ctx, id, W, H) {
+  const GLASS_STOPS = {
+    holo:   [[0, '#00e0ff'], [.35, '#ff4dd2'], [.7, '#ffd24d'], [1, '#00e0ff']],   // cyan-magenta-gold rainbow
+    ice:    [[0, '#dff9ff'], [.4, '#7fd8ff'], [.7, '#bff0ff'], [1, '#5ab8e6']],     // pale icy blue/white
+    plasma: [[0, '#7a2cff'], [.4, '#b026ff'], [.7, '#5a3cff'], [1, '#8a2cff']]      // deep violet/purple
+  };
+  function flamePath(ctx, cx, baseY, w, h) {
+    ctx.beginPath(); ctx.moveTo(cx - w / 2, baseY);
+    ctx.quadraticCurveTo(cx - w * 0.32, baseY - h * 0.5, cx - w * 0.08, baseY - h);
+    ctx.quadraticCurveTo(cx + w * 0.04, baseY - h * 0.72, cx + w * 0.26, baseY - h * 0.42);
+    ctx.quadraticCurveTo(cx + w * 0.5, baseY - h * 0.18, cx + w / 2, baseY);
+    ctx.closePath();
+  }
+  function drawFlame(ctx, W, H, t) {
+    const rad = 44;
+    ctx.strokeStyle = '#6e1c0a'; ctx.lineWidth = 9; rr(ctx, 14, 14, W - 28, H - 28, rad); ctx.stroke();
+    ctx.strokeStyle = 'rgba(255,140,40,.55)'; ctx.lineWidth = 3; rr(ctx, 14, 14, W - 28, H - 28, rad); ctx.stroke();
+    ctx.save(); rr(ctx, 14, 14, W - 28, H - 28, rad); ctx.clip();
+    const n = 14, x0 = 26, x1 = W - 26, step = (x1 - x0) / n, baseY = 96, phase = (t == null ? 0.3 : t) * Math.PI * 2;
+    for (let i = 0; i <= n; i++) {
+      const bx = x0 + i * step, h = 44 + Math.sin(phase + i * 1.35) * 16 + (i % 2 ? 8 : 0), w = step * 1.1;
+      let g = ctx.createLinearGradient(0, baseY - h, 0, baseY + 6);
+      g.addColorStop(0, 'rgba(255,60,0,0)'); g.addColorStop(.35, '#ff4d0a'); g.addColorStop(1, '#ffb020');
+      ctx.fillStyle = g; flamePath(ctx, bx, baseY, w, h); ctx.fill();
+      g = ctx.createLinearGradient(0, baseY - h * 0.62, 0, baseY + 4);
+      g.addColorStop(0, 'rgba(255,220,60,0)'); g.addColorStop(.5, '#ffd24a'); g.addColorStop(1, '#fff3b0');
+      ctx.fillStyle = g; flamePath(ctx, bx, baseY, w * 0.5, h * 0.62); ctx.fill();
+    }
+    ctx.restore();
+  }
+  function drawFramePreset(ctx, id, W, H, t) {
     const rad = 44;
     ctx.save();
     if (id === 'gold') {
@@ -148,10 +179,7 @@
     } else if (id === 'ruby') {
       gradStroke(ctx, W, H, rad, [[0, '#ff8ea6'], [.4, '#c11f45'], [.7, '#ff5a7d'], [1, '#8a1230']], 10);
     } else if (id === 'flame') {
-      ctx.save(); ctx.shadowColor = 'rgba(255,120,20,.75)'; ctx.shadowBlur = 30;
-      gradStroke(ctx, W, H, rad, [[0, '#ffe17a'], [.3, '#ff8a1e'], [.55, '#ff4d1a'], [.8, '#c81e12'], [1, '#ffb036']], 11);
-      ctx.restore();
-      ctx.strokeStyle = 'rgba(255,225,150,.4)'; ctx.lineWidth = 2; rr(ctx, 22, 22, W - 44, H - 44, rad - 6); ctx.stroke();
+      drawFlame(ctx, W, H, t);
     } else if (id === 'chrome') {
       gradStroke(ctx, W, H, rad, [[0, '#f2f5f8'], [.35, '#9aa6b2'], [.55, '#ffffff'], [.75, '#7d8794'], [1, '#dfe6ec']], 10);
     } else if (id === 'carbon') {
@@ -160,15 +188,9 @@
     } else if (id === 'neon') {
       ctx.shadowColor = '#33f0c0'; ctx.shadowBlur = 26; ctx.strokeStyle = '#5affd0'; ctx.lineWidth = 6;
       rr(ctx, 14, 14, W - 28, H - 28, rad); ctx.stroke(); ctx.shadowBlur = 0;
-    } else if (id === 'holo') {
-      gradStroke(ctx, W, H, rad, [[0, '#00e0ff'], [.4, '#a855f7'], [.7, '#ff4d9d'], [1, '#00e0ff']], 9);
-      glassStreak(ctx, W, H, rad);
-    } else if (id === 'ice') {
-      gradStroke(ctx, W, H, rad, [[0, '#bff6ff'], [.4, '#38b6d9'], [.7, '#d7fbff'], [1, '#4fd0e6']], 9);
-      glassStreak(ctx, W, H, rad);
-    } else if (id === 'plasma') {
-      gradStroke(ctx, W, H, rad, [[0, '#7a5cff'], [.4, '#c13bff'], [.7, '#ff5ad0'], [1, '#7a5cff']], 9);
-      glassStreak(ctx, W, H, rad);
+    } else if (GLASS_STOPS[id]) {
+      gradStroke(ctx, W, H, rad, GLASS_STOPS[id], 9);
+      glassStreak(ctx, W, H, rad, t);
     }
     ctx.restore();
   }
@@ -236,14 +258,16 @@
     .nw-cs-min{padding:1.5px; background:rgba(127,216,168,.4);}
     .nw-cs-fr-gold{padding:3px; background:linear-gradient(135deg,#f9df8a,#b9871f 35%,#ffe9a8 55%,#a06b12 75%,#f7d774);}
     .nw-cs-fr-ruby{padding:3px; background:linear-gradient(135deg,#ff8ea6,#c11f45 40%,#ff5a7d 70%,#8a1230);}
-    .nw-cs-fr-flame{padding:3px; background:linear-gradient(135deg,#ffe17a,#ff8a1e 30%,#ff4d1a 55%,#c81e12 80%,#ffb036); background-size:200% 200%; animation:nw-cs-flame 3.2s ease-in-out infinite; box-shadow:0 0 20px rgba(255,110,20,.55);}
-    @keyframes nw-cs-flame{0%,100%{background-position:0% 50%;}50%{background-position:100% 50%;}}
+    .nw-cs-fr-flame{padding:3px; background:linear-gradient(135deg,#8a2410,#3a0f06 50%,#6e1c0a); box-shadow:0 0 16px rgba(255,90,20,.35);}
+    .nw-cs-fr-flame .nw-cs-content{padding-top:46px;}
+    .nw-cs-flames{position:absolute; top:5px; left:8px; right:8px; height:60px; z-index:2; pointer-events:none; transform-origin:bottom; animation:nw-cs-flick .9s ease-in-out infinite alternate; filter:drop-shadow(0 0 6px rgba(255,120,20,.5));}
+    @keyframes nw-cs-flick{from{transform:scaleY(.9);}to{transform:scaleY(1.08);}}
     .nw-cs-fr-chrome{padding:3px; background:linear-gradient(135deg,#f2f5f8,#9aa6b2 35%,#fff 55%,#7d8794 75%,#dfe6ec);}
     .nw-cs-fr-carbon{padding:3px; background:repeating-linear-gradient(45deg,#3a423d 0 3px,#1c211e 3px 6px);}
     .nw-cs-fr-neon{padding:3px; background:#5affd0; box-shadow:0 0 18px rgba(51,240,192,.55);}
-    .nw-cs-fr-holo{padding:3px; background:linear-gradient(115deg,#00e0ff,#a855f7,#ff4d9d,#00e0ff); background-size:300% 300%; animation:nw-cs-holo 4.5s linear infinite;}
-    .nw-cs-fr-ice{padding:3px; background:linear-gradient(115deg,#bff6ff,#38b6d9,#d7fbff,#4fd0e6); background-size:300% 300%; animation:nw-cs-holo 5s linear infinite;}
-    .nw-cs-fr-plasma{padding:3px; background:linear-gradient(115deg,#7a5cff,#c13bff,#ff5ad0,#7a5cff); background-size:300% 300%; animation:nw-cs-holo 4s linear infinite;}
+    .nw-cs-fr-holo{padding:3px; background:linear-gradient(115deg,#00e0ff,#ff4dd2,#ffd24d,#00e0ff); background-size:300% 300%; animation:nw-cs-holo 4.5s linear infinite;}
+    .nw-cs-fr-ice{padding:3px; background:linear-gradient(115deg,#dff9ff,#7fd8ff,#bff0ff,#5ab8e6); background-size:300% 300%; animation:nw-cs-holo 5s linear infinite;}
+    .nw-cs-fr-plasma{padding:3px; background:linear-gradient(115deg,#7a2cff,#b026ff,#5a3cff,#8a2cff); background-size:300% 300%; animation:nw-cs-holo 4s linear infinite;}
     @keyframes nw-cs-holo{0%{background-position:0% 50%;}100%{background-position:300% 50%;}}
     .nw-cs-fr-holo .nw-cs-card::before,.nw-cs-fr-ice .nw-cs-card::before,.nw-cs-fr-plasma .nw-cs-card::before{content:''; position:absolute; inset:0; z-index:5; border-radius:23px; pointer-events:none;
       background:linear-gradient(115deg,transparent 35%,rgba(255,255,255,.22) 50%,transparent 65%); background-size:250% 100%; animation:nw-cs-glass 3s linear infinite;}
@@ -498,10 +522,23 @@
     if (fr.type === 'preset') return 'nw-cs-fr-' + fr.id;
     return '';
   }
+  const FLAME_SVG = (function () {
+    const w = 284, h = 60, n = 13; let p = '';
+    for (let i = 0; i <= n; i++) {
+      const cx = 12 + i * (w - 24) / n, hh = 38 + (i % 3) * 9;
+      p += `<path d="M${cx - 10} ${h} Q${cx - 6} ${(h - hh * 0.5).toFixed(1)} ${cx - 1} ${(h - hh).toFixed(1)} Q${cx + 1} ${(h - hh * 0.7).toFixed(1)} ${cx + 5} ${(h - hh * 0.4).toFixed(1)} Q${cx + 8} ${(h - hh * 0.15).toFixed(1)} ${cx + 10} ${h} Z" fill="url(#fga)"/>`;
+      p += `<path d="M${cx - 5} ${h} Q${cx - 2.5} ${(h - hh * 0.34).toFixed(1)} ${cx - 0.5} ${(h - hh * 0.6).toFixed(1)} Q${cx + 0.5} ${(h - hh * 0.42).toFixed(1)} ${cx + 2.5} ${(h - hh * 0.26).toFixed(1)} Q${cx + 4} ${(h - hh * 0.1).toFixed(1)} ${cx + 5} ${h} Z" fill="url(#fgb)"/>`;
+    }
+    return `<svg width="100%" height="100%" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg"><defs><linearGradient id="fga" x1="0" y1="1" x2="0" y2="0"><stop offset="0" stop-color="#ff3d00"/><stop offset=".6" stop-color="#ff9a1e"/><stop offset="1" stop-color="#ffd24a"/></linearGradient><linearGradient id="fgb" x1="0" y1="1" x2="0" y2="0"><stop offset="0" stop-color="#ffb020"/><stop offset="1" stop-color="#fff3b0"/></linearGradient></defs>${p}</svg>`;
+  })();
+
   function buildSlot(slotEl, bgSel, frameSel, statsSel) {
     const isImg = frameSel.type === 'image';
+    const isFlame = frameSel.type === 'preset' && frameSel.id === 'flame';
     slotEl.innerHTML = `<div class="nw-cs-frame ${frameClass(frameSel)}">
-        <div class="nw-cs-card ${bgSel.anim || ''}"><div class="nw-cs-content"></div>
+        <div class="nw-cs-card ${bgSel.anim || ''}">
+        ${isFlame ? `<div class="nw-cs-flames">${FLAME_SVG}</div>` : ''}
+        <div class="nw-cs-content"></div>
         ${isImg ? `<div class="nw-cs-frimg" style="background-image:url('${srcOf(frameSel.key)}');"></div>` : ''}
         </div></div>`;
     const card = slotEl.querySelector('.nw-cs-card');
@@ -721,53 +758,114 @@
     foot();
   }
 
-  async function renderExport() {
-    const cur = sel(0);
-    const W = 1080, H = 1350, pad = 72;
-    const canvas = document.createElement('canvas'); canvas.width = W; canvas.height = H;
-    const ctx = canvas.getContext('2d');
-    if (document.fonts && document.fonts.ready) { try { await document.fonts.ready; } catch (e) {} }
-
-    if (cur.bg.type === 'preset') {
-      const c = CANVAS_BG_LOOKUP(cur.bg);
-      const g = ctx.createLinearGradient(0, 0, W, H); g.addColorStop(0, c[0]); g.addColorStop(0.55, c[1]); g.addColorStop(1, c[2]);
-      ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
-    } else {
-      const bgImg = await loadImg(srcOf(cur.bg.key));
-      if (bgImg) drawCover(ctx, bgImg, 0, 0, W, H); else { ctx.fillStyle = '#0b1712'; ctx.fillRect(0, 0, W, H); }
-    }
-    const sc = ctx.createLinearGradient(0, 0, 0, H); sc.addColorStop(0, 'rgba(7,12,10,.55)'); sc.addColorStop(1, 'rgba(7,12,10,.78)');
-    ctx.fillStyle = sc; ctx.fillRect(0, 0, W, H);
-
-    stats._av = stats.avatarUrl ? await loadImg(stats.avatarUrl) : null;
-    ctx.textBaseline = 'alphabetic'; ctx.textAlign = 'left';
-    drawStatsLayout(ctx, cur.stats.id, stats, W, H, pad);
-
-    if (cur.frame.type === 'minimal') { ctx.strokeStyle = 'rgba(127,216,168,.5)'; ctx.lineWidth = 6; rr(ctx, 14, 14, W - 28, H - 28, 46); ctx.stroke(); }
-    else if (cur.frame.type === 'preset') { drawFramePreset(ctx, cur.frame.id, W, H); }
-    else { const fr = await loadImg(srcOf(cur.frame.key)); if (fr) ctx.drawImage(fr, 0, 0, W, H); }
-
-    return await new Promise(res => canvas.toBlob(b => res(b), 'image/png'));
-  }
   const CANVAS_BG_FREE = { court: ['#0b3018', '#12452a', '#1F7A4D'], plain: ['#0c110e', '#121814', '#1a221d'] };
   function CANVAS_BG_LOOKUP(bg) {
     return CANVAS_BG_FREE[bg.id] || (PREMIUM_BG_BY_ID[bg.id] && PREMIUM_BG_BY_ID[bg.id].canvas) || CANVAS_BG_FREE.court;
   }
+  function paintBackground(ctx, bg, W, H, t) {
+    if (bg.type === 'image') {
+      if (bg._img) drawCover(ctx, bg._img, 0, 0, W, H);
+      else { ctx.fillStyle = '#0b1712'; ctx.fillRect(0, 0, W, H); }
+      return;
+    }
+    const c = CANVAS_BG_LOOKUP(bg), tt = (t == null) ? 0 : t;
+    if (bg.anim === 'nw-cs-bg-drift') {
+      const ang = tt * Math.PI * 2, cx = W / 2, cy = H / 2, R = Math.hypot(W, H) / 2;
+      const g = ctx.createLinearGradient(cx - Math.cos(ang) * R, cy - Math.sin(ang) * R, cx + Math.cos(ang) * R, cy + Math.sin(ang) * R);
+      g.addColorStop(0, c[0]); g.addColorStop(.5, c[1]); g.addColorStop(1, c[2]);
+      ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+    } else if (bg.anim === 'nw-cs-bg-pulse') {
+      const b = Math.sin(tt * Math.PI * 2) * 0.5 + 0.5, rad = W * (0.5 + 0.35 * b);
+      const g = ctx.createRadialGradient(W / 2, H * 0.42, W * 0.04, W / 2, H * 0.5, rad);
+      g.addColorStop(0, c[2]); g.addColorStop(.6, c[1]); g.addColorStop(1, c[0]);
+      ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+    } else {
+      const g = ctx.createLinearGradient(0, 0, W, H); g.addColorStop(0, c[0]); g.addColorStop(.55, c[1]); g.addColorStop(1, c[2]);
+      ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+    }
+  }
+  function drawComposite(ctx, cur, W, H, pad, t) {
+    paintBackground(ctx, cur.bg, W, H, t);
+    const sc = ctx.createLinearGradient(0, 0, 0, H); sc.addColorStop(0, 'rgba(7,12,10,.55)'); sc.addColorStop(1, 'rgba(7,12,10,.78)');
+    ctx.fillStyle = sc; ctx.fillRect(0, 0, W, H);
+    ctx.textBaseline = 'alphabetic'; ctx.textAlign = 'left';
+    drawStatsLayout(ctx, cur.stats.id, stats, W, H, pad);
+    if (cur.frame.type === 'minimal') { ctx.strokeStyle = 'rgba(127,216,168,.5)'; ctx.lineWidth = 6; rr(ctx, 14, 14, W - 28, H - 28, 46); ctx.stroke(); }
+    else if (cur.frame.type === 'preset') { drawFramePreset(ctx, cur.frame.id, W, H, t); }
+    else if (cur.frame._img) { ctx.drawImage(cur.frame._img, 0, 0, W, H); }
+  }
+  async function preloadAssets(cur) {
+    stats._av = stats.avatarUrl ? await loadImg(stats.avatarUrl) : null;
+    if (cur.bg.type === 'image') cur.bg._img = await loadImg(srcOf(cur.bg.key));
+    if (cur.frame.type === 'image') cur.frame._img = await loadImg(srcOf(cur.frame.key));
+  }
+  const ANIM_FRAMES = { holo: 1, ice: 1, plasma: 1, flame: 1 };
+  function isAnimatedSel(cur) {
+    return (cur.frame.type === 'preset' && ANIM_FRAMES[cur.frame.id]) || (cur.bg.type === 'preset' && !!cur.bg.anim);
+  }
 
+  async function renderExport() {
+    const cur = sel(0), W = 1080, H = 1350, pad = 72;
+    const canvas = document.createElement('canvas'); canvas.width = W; canvas.height = H;
+    const ctx = canvas.getContext('2d');
+    if (document.fonts && document.fonts.ready) { try { await document.fonts.ready; } catch (e) {} }
+    await preloadAssets(cur);
+    drawComposite(ctx, cur, W, H, pad, null);      // null t = representative still
+    return await new Promise(res => canvas.toBlob(b => res(b), 'image/png'));
+  }
+
+  async function renderAnimatedExport() {
+    const cur = sel(0), W = 1080, H = 1350, pad = 72;
+    const canvas = document.createElement('canvas'); canvas.width = W; canvas.height = H;
+    const ctx = canvas.getContext('2d');
+    if (document.fonts && document.fonts.ready) { try { await document.fonts.ready; } catch (e) {} }
+    await preloadAssets(cur);
+    const mimes = ['video/mp4;codecs=h264', 'video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm'];
+    let mime = ''; for (const m of mimes) { if (window.MediaRecorder && MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(m)) { mime = m; break; } }
+    if (!canvas.captureStream || !window.MediaRecorder || !mime) return null;   // unsupported -> caller falls back to PNG
+    let rec;
+    try { rec = new MediaRecorder(canvas.captureStream(30), { mimeType: mime, videoBitsPerSecond: 6000000 }); }
+    catch (e) { return null; }
+    const chunks = []; rec.ondataavailable = e => { if (e.data && e.data.size) chunks.push(e.data); };
+    const DURATION = 2600;
+    const done = new Promise(res => { rec.onstop = () => res(new Blob(chunks, { type: mime })); });
+    drawComposite(ctx, cur, W, H, pad, 0);
+    rec.start();
+    const start = performance.now();
+    await new Promise(resolve => {
+      (function frame(now) {
+        const el = now - start;
+        drawComposite(ctx, cur, W, H, pad, (el % DURATION) / DURATION);
+        if (el >= DURATION) resolve(); else requestAnimationFrame(frame);
+      })(start);
+    });
+    try { rec.stop(); } catch (e) {}
+    const blob = await done;
+    return { blob, ext: mime.indexOf('video/mp4') === 0 ? 'mp4' : 'webm', mime };
+  }
+
+  function download(blob, fname) {
+    const url = URL.createObjectURL(blob); const a = document.createElement('a');
+    a.href = url; a.download = fname; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1500);
+  }
   async function share() {
     const btn = modal.querySelector('#nw-cs-share');
     if (btn.classList.contains('off')) { nwAlertLocal('Unlock the locked pick first — a locked pick can’t be shared.'); return; }
-    btn.disabled = true; const label = btn.textContent; btn.textContent = 'Rendering…';
+    const cur = sel(0), animated = isAnimatedSel(cur);
+    btn.disabled = true; const label = btn.textContent; btn.textContent = animated ? 'Recording…' : 'Rendering…';
     try {
-      const blob = await renderExport();
-      if (!blob) { nwAlertLocal('Could not generate the image.'); return; }
-      const fname = `${(stats.nickname || stats.name || 'player').replace(/[^a-z0-9]+/gi, '_')}_networth.png`;
-      const file = new File([blob], fname, { type: 'image/png' });
+      let blob = null, ext = 'png', mime = 'image/png';
+      if (animated) { const v = await renderAnimatedExport(); if (v) { blob = v.blob; ext = v.ext; mime = v.mime; } }
+      if (!blob) { blob = await renderExport(); ext = 'png'; mime = 'image/png'; }
+      if (!blob) { nwAlertLocal('Could not generate the file.'); return; }
+      const fname = `${(stats.nickname || stats.name || 'player').replace(/[^a-z0-9]+/gi, '_')}_networth.${ext}`;
+      const file = new File([blob], fname, { type: mime });
       if (navigator.canShare && navigator.canShare({ files: [file] })) {
-        await navigator.share({ files: [file], title: 'My NetWorth card', text: 'My badminton stats card' });
-      } else {
-        const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = fname; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1500);
+        try { await navigator.share({ files: [file], title: 'My NetWorth card', text: 'My badminton stats card' }); return; }
+        catch (e) { if (e && e.name === 'AbortError') return; }
       }
+      download(blob, fname);
+      if (ext !== 'png') nwAlertLocal('Saved the animated card — add it to your story/status from your gallery.');
     } catch (e) { if (!(e && e.name === 'AbortError')) nwAlertLocal('Share failed: ' + (e && e.message ? e.message : e)); }
     finally { btn.disabled = false; btn.textContent = label; }
   }
