@@ -158,6 +158,13 @@
       v1.10.0** — avatar image is loaded (crossOrigin) and drawn on all four export layouts.
     - `[feat] M` **Animated background export** — animated bg presets currently export as a static
       frame; a true animated share would need WebP/APNG frame encoding on the canvas.
+      **DONE in v1.11.0** — animated share via `MediaRecorder` + `canvas.captureStream`: when the
+      selected frame or background animates, the export records a ~2.6s loop to **WebM** (MP4 where the
+      browser's MediaRecorder supports h264) and shares/downloads it; static picks still export PNG.
+      `drawComposite(ctx,cur,W,H,pad,t)` unifies the still + animated draw. Also v1.11.0: player store
+      is grouped into labelled category sections; Holo/Ice/Plasma glass frames given distinct palettes;
+      Flame frame redrawn as actual flame tongues (SVG in preview, canvas paths in export) instead of a
+      glow. Web Share of video may be rejected by IG/WhatsApp (they want MP4) → falls back to download.
     - **v1.10.1** — SuperAdmin gets every cosmetic unlocked (customizer hides locks; `update_my_card`
       honours the same bypass via `_is_super_admin`). Added a **Flame** frame preset.
     - `[idea]` FC/FUT-style **card silhouette** (angled corners) — needs clip-path in the preview and a
