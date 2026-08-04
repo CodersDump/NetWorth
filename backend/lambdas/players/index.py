@@ -1451,6 +1451,9 @@ def update_my_card(event):
     player_id = claims.get('custom:player_id')
     if not player_id:
         return _response(403, {'error': 'your account is not linked to a player yet'})
+    # SuperAdmin gets every cosmetic unlocked - the customizer hides the locks
+    # for them, so the server honours the same bypass or Save would 403.
+    _sa = _is_super_admin(claims)
 
     body = json.loads(event.get('body') or '{}')
     avatar_id = body.get('avatar_id')
@@ -1480,13 +1483,13 @@ def update_my_card(event):
         return _response(400, {'error': f'unknown background_id - choose from {sorted(ALLOWED_BACKGROUNDS)}'})
     # A card frame is store-only art (never a personal upload), so it's valid
     # only when empty (clear) or an owned card_frame cosmetic.
-    if card_frame_url not in (None, '') and not _owns_store_cosmetic(_me, card_frame_url, 'card'):
+    if card_frame_url not in (None, '') and not (_sa or _owns_store_cosmetic(_me, card_frame_url, 'card')):
         return _response(400, {'error': 'you do not own that card frame'})
-    if card_frame_preset not in (None, '') and not _owns_value_cosmetic(_me, 'card_frame_preset', card_frame_preset):
+    if card_frame_preset not in (None, '') and not (_sa or _owns_value_cosmetic(_me, 'card_frame_preset', card_frame_preset)):
         return _response(400, {'error': 'you do not own that card frame'})
-    if background_preset not in (None, '') and not _owns_value_cosmetic(_me, 'background_preset', background_preset):
+    if background_preset not in (None, '') and not (_sa or _owns_value_cosmetic(_me, 'background_preset', background_preset)):
         return _response(400, {'error': 'you do not own that background'})
-    if card_layout is not None and not _owns_card_layout(_me, card_layout):
+    if card_layout is not None and not (_sa or _owns_card_layout(_me, card_layout)):
         return _response(400, {'error': 'you do not own that card layout'})
     if all(v is None for v in (avatar_id, banner_id, background_id, avatar_url, banner_url,
                                background_url, card_frame_url, card_frame_preset,

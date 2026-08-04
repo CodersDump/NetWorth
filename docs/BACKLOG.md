@@ -158,6 +158,10 @@
       v1.10.0** — avatar image is loaded (crossOrigin) and drawn on all four export layouts.
     - `[feat] M` **Animated background export** — animated bg presets currently export as a static
       frame; a true animated share would need WebP/APNG frame encoding on the canvas.
+    - **v1.10.1** — SuperAdmin gets every cosmetic unlocked (customizer hides locks; `update_my_card`
+      honours the same bypass via `_is_super_admin`). Added a **Flame** frame preset.
+    - `[idea]` FC/FUT-style **card silhouette** (angled corners) — needs clip-path in the preview and a
+      matching canvas path (bg clip + frame stroke) in the export; decide global shape vs per-frame.
 - `[feat] M` Per-group leaderboards & season resets (would let the card say "season" instead of all-time).
 - `[feat] L` Move config out of inline `index.html` script into a generated `config.js`
   (update deploy injection accordingly — KNOWN_ISSUES #10).
