@@ -104,13 +104,13 @@
 - `[security] S` Remove committed AWS account id from `current-policy.json` /
   `networth-deploy-policy.json`; parameterize. (KNOWN_ISSUES #3)
 
-- `[perf] L` **Load-time API fan-out → Lambda throttling (the 500s) — "Build B".** First paint fires
-  ~15 concurrent `/matches?...`/tournaments/finance calls; the account Lambda concurrency limit is 10,
-  so the overflow is throttled and 500s with no CORS (KNOWN_ISSUES #16). Fix: lazy-load per tab + one
-  bundle endpoint (scan matches once; extend `profile_bundle_for`) + cached CORS preflights + client
-  caching with per-domain dirty flags (`matchesRev`/`financeRev`/`playersRev`; auto-refetch a tab only
-  when its domain changed, keep the existing "new matches - refresh" banner for the on-tab case).
-  (Found 2026-08-07.)
+- `[perf] M` **Build B2 — backend fan-out reduction (follow-on to Build B).** Build B killed the
+  first-paint burst frontend-side (lazy-load + freshness), so throttling should be gone. Remaining
+  server-side polish: (a) a single **bundle endpoint** that scans matches once and returns the Stats +
+  Profile views together (extend `profile_bundle_for`) so opening those tabs is 1 call, not 6–7;
+  (b) cache CORS **preflights** via `Access-Control-Max-Age` to drop the OPTIONS round-trip per call;
+  (c) **paginate `table.scan()`** (KNOWN_ISSUES #15) while in these handlers. Backend deploy; do after
+  confirming Build B cleared the 500s.
 - `[ops] S` **Request a Lambda concurrency-limit increase.** Account is at the new-account default of 10
   concurrent executions (normal 1000); Service Quotas → Lambda → "Concurrent executions". Instant
   headroom for the throttling above while Build B lands. (KNOWN_ISSUES #16.)
@@ -119,6 +119,12 @@
   the per-player linked-status check. Loop on `LastEvaluatedKey`. (KNOWN_ISSUES #15.)
 
 ## Next / medium
+- `[bug] M` **iOS card-share: animated video won't save.** On the animated share result panel, "Save"
+  opens the clip in a viewer instead of downloading on iOS. iOS Safari ignores `<a download>` for video
+  blobs — it navigates/opens the media rather than saving. The reliable iOS path to Photos is the native
+  share sheet (`navigator.share({ files: [videoFile] })` → "Save Video"), not a download link. Fix:
+  detect iOS (or feature-detect `navigator.canShare({files})`) and route Save through the share sheet;
+  keep the `<a download>` path for desktop/Android. Card-share.js only — own focused patch. (2026-08-07.)
 
 - `[debt] L` Split `app.js` (6570 LOC, one IIFE) into modules by the existing section banners
   (auth, matches, tournaments, finance, store, profile…). Big win for local-model context limits.
@@ -190,7 +196,9 @@
       matching canvas path (bg clip + frame stroke) in the export; decide global shape vs per-frame.
 - `[feat] L` **Seasons (monthly) — leaderboards, badges, history selector ("Build C").** Apex/PUBG-style:
   monthly windows, per-season leaderboards, participation/achievement badges mapped to each season, and a
-  season selector to browse past seasons. **Design fork (decide first):** derived (season = a date window;
+  season selector to browse past seasons. **Placement (decided 2026-08-07):** render season
+  rating/badges *inside the Player Card* (not a separate Profile section) — next to the existing
+  rating-history chart. **Design fork (decide first):** derived (season = a date window;
   leaderboard replayed/delta'd within it; lifetime Elo untouched; freeze a snapshot at rollover,
   piggybacking `progress_scheduler`) vs a destructive rank reset. Strong lean: derived + an optional
   soft-reset "season rank" shown next to lifetime Elo, because Elo is path-dependent and the architecture
@@ -219,6 +227,18 @@
 
 ## Done
 
+- ✅ 2026-08-07 — **Build B (frontend-only): lazy per-tab loading + freshness — the throttling fix.**
+  Root cause was the boot fan-out (~13 eager API calls in the init IIFE: rankings, diversity, badges,
+  history, HoF, attendance, public-walkins, tournaments×2, and a 5-call `loadProfile`) exceeding the
+  account Lambda concurrency limit of 10 (KNOWN_ISSUES #16). Fix: removed the eager fan-out; each tab now
+  pulls its own data on first open via a small lazy layer (`ensureFresh`/`ensureOnce`/`ensureProfileFresh`
+  + `loadActiveTabData`). Freshness: `matchesRev` bumps on every match add/edit/delete/reorder/recompute,
+  so a matches-derived tab (Stats, Profile) auto-refetches on next open only when matches actually changed
+  — otherwise switching tabs is free (this is the "add a match, switch to Stats, had to hit reload" pain).
+  `loadVisiblePlayers` no longer auto-fires `loadProfile` at boot (gated on the Profile tab being active).
+  First paint drops from ~13 concurrent invocations to ~6, comfortably under 10. Static deploy, no lambda/
+  DDB change. Remaining server-side polish (bundle endpoint, preflight caching, `.scan()` pagination) is
+  logged as Build B2. **Still recommended:** request the Lambda concurrency-limit increase regardless.
 - ✅ 2026-08-07 — **Build A (frontend-only): quests visibility, profile settings on its own tab,
   re-login nudge.** (1) **Quests** moved out of the SuperAdmin-only Store tab (where regular users could
   never see or claim them) into their own **Quests** tab, gated by `xpVisible()` like Store; `loadQuests()`
