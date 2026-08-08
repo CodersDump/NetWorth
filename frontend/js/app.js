@@ -331,6 +331,59 @@ let userPool = null;
       });
     }
 
+    // ---------- lazy tab loading + freshness (Build B) ----------
+    // First paint used to fire ~15 API calls at once (every tab's data,
+    // eagerly), blowing past the account Lambda concurrency limit and
+    // 500-ing the overflow. Now each tab pulls its own data on first open,
+    // and re-pulls only when the matches domain changed since - so switching
+    // tabs is usually free.
+    let matchesRev = 0;                 // bumped on any match add/edit/delete/reorder/recompute
+    const _tabRev = {};                 // freshness key -> matchesRev when last loaded
+    const _tabOnce = {};                // one-shot key -> loaded flag
+    function bumpMatchesRev() { matchesRev++; }
+    function isTabActive(tab) {
+      const p = document.getElementById('tab-' + tab);
+      return !!(p && p.classList.contains('active'));
+    }
+    /** Run loader only if this key hasn't loaded at the current matches rev. */
+    function ensureFresh(key, loader) {
+      if (_tabRev[key] === matchesRev) return;
+      _tabRev[key] = matchesRev;
+      loader();
+    }
+    /** Run loader only the first time (never auto-reloads). */
+    function ensureOnce(key, loader) {
+      if (_tabOnce[key]) return;
+      _tabOnce[key] = true;
+      loader();
+    }
+    /** Everything the Stats tab shows - loaded/refreshed as a unit. */
+    function loadStatsBundle() {
+      loadRankings(); loadDiversity(); loadBadges();
+      loadHistory(); loadHallOfFame(); loadAttendance();
+      loadPublicWalkins();
+    }
+    /** Profile is per-selected-player and needs the roster ready, so it has
+     *  its own guard: don't mark it loaded until a player is actually
+     *  selected (the select is populated by loadVisiblePlayers, which only
+     *  runs once the session is restored). */
+    function ensureProfileFresh() {
+      if (_tabRev['profile'] === matchesRev) return;
+      const sel = document.getElementById('profile_player_select');
+      if (!sel || !sel.value) return;   // not ready yet - retry on next trigger
+      _tabRev['profile'] = matchesRev;
+      loadProfile();
+    }
+    /** Load data for whatever tab is showing after boot (hash-restored or
+     *  the default Players tab, which needs nothing beyond the roster). */
+    function loadActiveTabData() {
+      const active = (document.querySelector('.tab-panel.active') || {}).id || '';
+      const tab = active.replace('tab-', '');
+      if (tab === 'stats')            ensureFresh('stats', loadStatsBundle);
+      else if (tab === 'tournaments') ensureOnce('tournaments', () => { loadTournamentGroupOptions(); loadTournamentsList(); });
+      else if (tab === 'profile')     ensureProfileFresh();
+    }
+
     async function loadPlayers() {
       const res = await fetch(`${API_BASE_URL}/players`);
       const data = await res.json();
@@ -1565,6 +1618,7 @@ let userPool = null;
             msg += ` - came back from a ${data.momentum.winner_overcame_deficit}-point deficit!`;
           }
           showMatchOutcome(true, msg);
+          bumpMatchesRev();
           document.getElementById('score_a').value = '';
           document.getElementById('score_b').value = '';
           livePointLog = [];
@@ -1688,7 +1742,7 @@ let userPool = null;
             method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(pend.payload)
           });
-          if (res && res.ok) { clearPendingMatch(); offerPendingMatchRestore(); loadPlayers(); showMatchOutcome(true, 'Saved match recorded.'); }
+          if (res && res.ok) { clearPendingMatch(); offerPendingMatchRestore(); loadPlayers(); bumpMatchesRev(); showMatchOutcome(true, 'Saved match recorded.'); }
           else if (sessionExpired) { handleSessionExpired(); btn.disabled = false; btn.textContent = 'Record it now'; }
           else { btn.disabled = false; btn.textContent = 'Record it now'; nwAlert('Still could not record: ' + (error || 'unknown')); }
         } catch (err) {
@@ -1907,7 +1961,7 @@ let userPool = null;
           if (!res.ok) { nwAlert('Error: ' + (data.error || 'could not save')); return; }
           close();
           nwAlert('Match updated. All ratings were recomputed.');
-          loadGameLog(); loadPlayers();
+          loadGameLog(); loadPlayers(); bumpMatchesRev();
         } catch (e) { nwAlert('Request failed: ' + e.message); }
       };
     }
@@ -1939,6 +1993,7 @@ let userPool = null;
           nwAlert('Score corrected. All ratings have been recomputed.');
           loadGameLog();
           loadPlayers();
+          bumpMatchesRev();
         } else {
           nwAlert(`Error: ${data.error}`);
         }
@@ -1970,6 +2025,7 @@ let userPool = null;
           nwAlert('Match deleted. All ratings have been recomputed.');
           loadGameLog();
           loadPlayers();
+          bumpMatchesRev();
         } else {
           nwAlert(`Error: ${data.error}`);
         }
@@ -2152,7 +2208,7 @@ let userPool = null;
         // opts.keepSelection means refreshProfile() is driving this and
         // will call loadProfile() itself straight after - firing it here
         // too would double every request on a manual refresh.
-        if (isFreshLoad && visible.length && !opts.keepSelection) loadProfile();
+        if (isFreshLoad && visible.length && !opts.keepSelection && isTabActive('profile')) ensureProfileFresh();
       } catch (err) { /* silent - profile tab just stays empty until this succeeds */ }
     }
 
@@ -2534,6 +2590,7 @@ let userPool = null;
         await loadPlayers();
         updateHeaderCoins();
         statusEl.textContent = 'Done - ratings and XP rebuilt.';
+        bumpMatchesRev();
       } catch (e) { statusEl.textContent = `Failed: ${e.message}`; }
     }
 
@@ -5690,6 +5747,7 @@ let userPool = null;
         });
         if (!res.ok) { statusEl.textContent = `Error: ${error}`; return; }
         statusEl.textContent = 'Done - order applied and ratings recomputed.';
+        bumpMatchesRev();
         loadReviewDay();  // reload to show the corrected times and reset the baseline
       } catch (e) { statusEl.textContent = `Failed: ${e.message}`; }
     }
@@ -6365,16 +6423,10 @@ let userPool = null;
         if (asRes.ok) { const _as = await asRes.json(); xpPublic = !!_as.xp_public; voiceEnabled = !!_as.voice_enabled; if (typeof applyVoiceVisibility === 'function') applyVoiceVisibility(); }
       } catch (_) {}
       if (typeof updateAuthUI === 'function') updateAuthUI();
-      loadTournamentGroupOptions();
-      loadTournamentsList();
-      loadRankings();
-      loadDiversity();
-      loadBadges();
-      loadHistory();
-      loadHallOfFame();
-      loadAttendance();
-      loadPublicWalkins();
-      loadProfile();
+      // Build B: per-tab data now loads lazily on first open (tab handler
+      // + loadActiveTabData) rather than all at once here, which is what
+      // exceeded the Lambda concurrency limit on first paint.
+      loadActiveTabData();
     })();
 
     // ---------- tournaments ----------
@@ -7556,6 +7608,15 @@ let userPool = null;
         }
         if (btn.dataset.tab === 'quests') {
           loadQuests();
+        }
+        if (btn.dataset.tab === 'stats') {
+          ensureFresh('stats', loadStatsBundle);
+        }
+        if (btn.dataset.tab === 'tournaments') {
+          ensureOnce('tournaments', () => { loadTournamentGroupOptions(); loadTournamentsList(); });
+        }
+        if (btn.dataset.tab === 'profile') {
+          ensureProfileFresh();
         }
         if (btn.dataset.tab === 'finance') {
           // Dues card + ledger selector both read allGroups. If it hasn't
