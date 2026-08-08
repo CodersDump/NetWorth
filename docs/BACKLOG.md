@@ -104,6 +104,20 @@
 - `[security] S` Remove committed AWS account id from `current-policy.json` /
   `networth-deploy-policy.json`; parameterize. (KNOWN_ISSUES #3)
 
+- `[perf] L` **Load-time API fan-out → Lambda throttling (the 500s) — "Build B".** First paint fires
+  ~15 concurrent `/matches?...`/tournaments/finance calls; the account Lambda concurrency limit is 10,
+  so the overflow is throttled and 500s with no CORS (KNOWN_ISSUES #16). Fix: lazy-load per tab + one
+  bundle endpoint (scan matches once; extend `profile_bundle_for`) + cached CORS preflights + client
+  caching with per-domain dirty flags (`matchesRev`/`financeRev`/`playersRev`; auto-refetch a tab only
+  when its domain changed, keep the existing "new matches - refresh" banner for the on-tab case).
+  (Found 2026-08-07.)
+- `[ops] S` **Request a Lambda concurrency-limit increase.** Account is at the new-account default of 10
+  concurrent executions (normal 1000); Service Quotas → Lambda → "Concurrent executions". Instant
+  headroom for the throttling above while Build B lands. (KNOWN_ISSUES #16.)
+- `[bug] M` **Paginate `table.scan()`.** `list_players` (and any sibling bare `.scan(`) reads only the
+  first 1 MB page; players past it silently vanish from `/players` → `allPlayers` → every dropdown and
+  the per-player linked-status check. Loop on `LastEvaluatedKey`. (KNOWN_ISSUES #15.)
+
 ## Next / medium
 
 - `[debt] L` Split `app.js` (6570 LOC, one IIFE) into modules by the existing section banners
@@ -174,7 +188,20 @@
       honours the same bypass via `_is_super_admin`). Added a **Flame** frame preset.
     - `[idea]` FC/FUT-style **card silhouette** (angled corners) — needs clip-path in the preview and a
       matching canvas path (bg clip + frame stroke) in the export; decide global shape vs per-frame.
-- `[feat] M` Per-group leaderboards & season resets (would let the card say "season" instead of all-time).
+- `[feat] L` **Seasons (monthly) — leaderboards, badges, history selector ("Build C").** Apex/PUBG-style:
+  monthly windows, per-season leaderboards, participation/achievement badges mapped to each season, and a
+  season selector to browse past seasons. **Design fork (decide first):** derived (season = a date window;
+  leaderboard replayed/delta'd within it; lifetime Elo untouched; freeze a snapshot at rollover,
+  piggybacking `progress_scheduler`) vs a destructive rank reset. Strong lean: derived + an optional
+  soft-reset "season rank" shown next to lifetime Elo, because Elo is path-dependent and the architecture
+  is replay-based. Owner to pick reset behaviour (hard / soft / lifetime+season-rank). Best built after
+  isolated staging so the migration is testable. Also lets the share-card say "season" not all-time.
+- `[ops] L` **Isolated staging (data clone) — "Build D".** `deploy-staging.yml` is frontend-only and
+  points at PROD's backend/DB/Cognito today, so "testing in staging" mutates prod. A true staging needs a
+  parallel stack (separate DynamoDB tables, API Gateway, uploads bucket) + a clone script (scan prod →
+  write staging). Wrinkles: Cognito password hashes can't be cloned (share prod pool for read-only tests
+  or seed test users); make the uploads/CDN base a per-env injected config global so cloned image keys
+  resolve against staging's CDN. Stand up before Build C. (Owner idea 2026-08-07.)
 - `[feat] L` Move config out of inline `index.html` script into a generated `config.js`
   (update deploy injection accordingly — KNOWN_ISSUES #10).
 - `[cost] S` Evaluate provisioned-capacity DynamoDB vs on-demand once traffic is steady.
@@ -191,6 +218,21 @@
 ---
 
 ## Done
+
+- ✅ 2026-08-07 — **Build A (frontend-only): quests visibility, profile settings on its own tab,
+  re-login nudge.** (1) **Quests** moved out of the SuperAdmin-only Store tab (where regular users could
+  never see or claim them) into their own **Quests** tab, gated by `xpVisible()` like Store; `loadQuests()`
+  fires on the Quests-tab open and `loadStore()` on the Store-tab open (were coupled in one branch).
+  (2) **Profile customization** (edit name, avatar/banner/background) moved off the burger menu — the
+  `open-settings-btn` now sits on the **Player Card** tab header beside Share card; the burger is
+  utility-only (logout / display-mode / theme). (3) **Re-login nudge:** new `refreshMySession()`
+  force-refreshes the Cognito ID token via `refreshSession` (no full logout), so an account linked or
+  repaired server-side after last login picks up its `custom:player_id` in place; surfaced as a
+  "Refresh my session" button on the "Finish setting up your account" (unlinked) notice. Frontend-only,
+  static deploy, no lambda/DDB change. **Also confirmed:** password-reset was **already shipped**
+  (`auth-forgot-view` + `doForgotPassword`/`doConfirmForgotPassword`, reachable via "Forgot password?" on
+  the login view) — no work needed. Note: `CODEBASE_MAP.md` predates card-share and now `refreshMySession`
+  too; regenerate it in a housekeeping pass.
 
 - ✅ 2026-08-03 — **Feature:** ranking eligibility — only players with **5+ games** are ranked. A
   rating from 0-4 games is mostly noise, so those players are shown separately as "provisional (N/5

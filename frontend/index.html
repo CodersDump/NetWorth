@@ -28,7 +28,6 @@
       <button class="secondary" id="auth-login-btn" type="button">Log in</button>
       <button class="theme-toggle" id="header-menu-btn" type="button" onclick="toggleHeaderMenu()">&#9776;</button>
       <div id="header-menu-dropdown" style="display:none; position:absolute; top:44px; right:0; background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); box-shadow:0 4px 16px rgba(0,0,0,0.25); z-index:50; min-width:180px; padding:6px;">
-        <button class="secondary" id="open-settings-btn" type="button" style="display:none; width:100%; margin:4px 0;" onclick="openSettingsModal(); toggleHeaderMenu();">Settings</button>
         <button class="secondary" id="auth-logout-btn" type="button" style="display:none; width:100%; margin:4px 0;">Log out</button>
         <button class="secondary" id="display-mode-toggle-btn" type="button" style="width:100%; margin:4px 0;">Show: Nickname</button>
         <button class="secondary" id="theme-toggle-btn" type="button" style="width:100%; margin:4px 0;">Dark mode</button>
@@ -215,6 +214,7 @@
     <button class="tab-btn" data-tab="stats">Stats</button>
     <button class="tab-btn" data-tab="finance">Finance</button>
     <button class="tab-btn" data-tab="profile">Player Card</button>
+    <button class="tab-btn" data-tab="quests" id="quests-tab-btn" style="display:none;">Quests</button>
     <button class="tab-btn" data-tab="store" id="store-tab-btn" style="display:none;">Store</button>
     <button class="tab-btn" data-tab="review" id="review-tab-btn" style="display:none;">Reviews &amp; Approvals</button>
   </nav>
@@ -376,6 +376,9 @@
         <button type="button" onclick="openCompleteProfileModal()">Link my profile</button>
         <button type="button" class="secondary" onclick="checkApprovalStatus()">Check approval status</button>
         <div id="approval-check-status" style="font-size:13px; margin-top:8px;"></div>
+        <p class="card-sub" style="margin:14px 0 6px;">Already linked, or an admin just fixed it for you? Your login may still be showing old info. Refresh it without logging out:</p>
+        <button type="button" class="secondary" onclick="refreshMySession('relink-refresh-status')">Refresh my session</button>
+        <div id="relink-refresh-status" style="font-size:13px; margin-top:8px;"></div>
       </div>
       <div class="card" id="record-match-card">
         <h2>Record a match</h2>
@@ -785,6 +788,9 @@
         <div id="store-items" style="display:grid; grid-template-columns:repeat(auto-fill,minmax(200px,1fr)); gap:12px; margin-top:12px;"></div>
       </div>
 
+    </div>
+
+    <div class="tab-panel" id="tab-quests">
       <div class="card">
         <h2>Weekly quests</h2>
         <p class="card-sub">Complete these before the week resets (Monday). Claim each reward once it's done.</p>
@@ -808,6 +814,8 @@
           </label>
           <button type="button" class="secondary" id="profile-refresh-btn" title="Reload this player's stats"
                   style="margin:0; padding:8px 12px; font-size:16px; line-height:1;" onclick="refreshProfile()">&#8635;</button>
+          <button type="button" id="open-settings-btn" title="Customize my card &amp; account settings"
+                  style="margin:0; padding:8px 14px; font-size:13px; line-height:1; display:none;" onclick="openSettingsModal()">&#9881; Settings</button>
           <button type="button" id="profile-share-btn" title="Customize &amp; share your card"
                   style="margin:0; padding:8px 14px; font-size:13px; line-height:1;" onclick="openCardShare()">Share card</button>
         </div>
