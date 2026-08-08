@@ -69,6 +69,17 @@ Live split-screen scoring can produce malformed point logs (there's literally a 
 `clear_bogus_momentum.py`). Comeback-bonus math trusts `point_log`. **Safe move:** validate point
 logs on write if you touch that path; don't assume a stored `momentum` block is well-formed.
 
+### 15. Unpaginated `table.scan()` truncates silently at 1 MB  · sev: medium (latent)
+`list_players` (players lambda) does `table.scan().get('Items', [])` with **no pagination**. DynamoDB
+caps a scan page at 1 MB and returns a `LastEvaluatedKey` you must loop on; this code doesn't. Today
+the players table fits one page (~55 rows) so it works, but as rows grow (more players, plus per-row
+cosmetics/uploads/`owned_items`) whoever lands past the boundary silently vanishes from `/players`, and
+therefore from the frontend `allPlayers` roster. That breaks everything reading `allPlayers`: dropdowns,
+team pickers, stats, finance settlement, and each dropped player's own `hasLinkedPlayer()` (they read as
+"no linked profile" despite a healthy Cognito link — a candidate cause in the 2026-08-07 Suren case
+before it turned out to be a stale token). **Safe move:** paginate every `.scan()` (loop on
+`LastEvaluatedKey`); grep all lambdas for bare `.scan(` — a copy-paste-prone shape. (Found 2026-08-07.)
+
 ---
 
 ## Ops / deploy fragility
@@ -78,6 +89,18 @@ When CloudFormation fails, the stage isn't refreshed and integrations 500 at the
 **no CORS headers**, so the browser reports a CORS error that's really a deploy failure.
 **Safe move / fix:** `aws apigateway create-deployment --rest-api-id zywd1pvlm6 --stage-name prod`.
 The deploy workflow already runs this as a dedicated step — keep that step.
+
+### 16. Account Lambda concurrency = 10 → burst throttling → 500s with no CORS  · sev: medium
+Same *symptom* as #8 (browser says "blocked by CORS / no Access-Control-Allow-Origin", really a raw
+gateway 500), different *cause*. The account's `ConcurrentExecutions` limit is **10** (new-account
+default; normal 1000), shared across all 8 functions. First paint fans out ~15 simultaneous
+`/matches?...`/tournaments/finance calls, exceeds 10, and the overflow is **throttled by the Lambda
+service before the function runs** — so it 500s with no CORS header **and leaves no CloudWatch log**
+(nothing executed). Which requests lose the race is random, so the failing endpoints differ per reload.
+**Distinguisher from #8:** a code exception leaves a traceback; a throttle leaves *no* invocation log
+but shows on the `Throttles` CloudWatch metric. **Safe move:** (a) request a Service Quotas increase for
+Lambda "Concurrent executions"; (b) cut the load-time fan-out (lazy-load per tab + one bundle endpoint
++ cached preflights) so first paint needs 2–3 invocations, not ~15. (BACKLOG Now/high; found 2026-08-07.)
 
 ### 9. Website bucket == uploads bucket  · sev: high if `--delete` used
 User cosmetics live under `uploads/` in the same S3 bucket that serves the site. A

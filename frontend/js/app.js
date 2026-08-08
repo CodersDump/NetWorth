@@ -5710,13 +5710,15 @@ let userPool = null;
       updateReviewTabScope();
       const storeBtn = document.getElementById('store-tab-btn');
       if (storeBtn) storeBtn.style.display = xpVisible() ? '' : 'none';
+      const questsBtn = document.getElementById('quests-tab-btn');
+      if (questsBtn) questsBtn.style.display = xpVisible() ? '' : 'none';
       // If the tab you're currently ON just became unavailable (e.g. you were
       // in Reviews and logged out), don't leave its panel showing - fall back
       // to Players. Otherwise a logged-out user keeps seeing an admin panel
       // until they refresh.
       const activePanel = document.querySelector('.tab-panel.active');
       const hiddenNow = (id, btn) => activePanel && activePanel.id === id && btn && btn.style.display === 'none';
-      if (hiddenNow('tab-review', reviewBtn) || hiddenNow('tab-store', storeBtn)) {
+      if (hiddenNow('tab-review', reviewBtn) || hiddenNow('tab-store', storeBtn) || hiddenNow('tab-quests', questsBtn)) {
         const playersBtn = document.querySelector('.tab-btn[data-tab="players"]');
         if (playersBtn) playersBtn.click();
       }
@@ -5783,6 +5785,44 @@ let userPool = null;
       // Logging in, logging out, and a roster refresh all change what
       // "my own background" resolves to, and all three land here.
       updatePageBackground();
+    }
+
+    /**
+     * Force a fresh ID token from Cognito WITHOUT a full logout. If an admin
+     * linked or repaired this account after the user last logged in, the
+     * custom:player_id was written server-side but their cached (still-valid)
+     * token predates it - a page reload just reuses the stale token, so the
+     * "no linked profile" state sticks until they happen to re-authenticate.
+     * refreshSession re-mints the ID token from current attributes, so this
+     * picks up the new claim in place and re-checks the linked state.
+     */
+    function refreshMySession(statusElId) {
+      const setStatus = (msg) => {
+        if (!statusElId) return;
+        const el = document.getElementById(statusElId);
+        if (el) el.textContent = msg;
+      };
+      const user = (authSession && authSession.cognitoUser) || (userPool && userPool.getCurrentUser());
+      if (!user) { setStatus('You are not logged in - please log in again.'); return; }
+      setStatus('Refreshing your session...');
+      user.getSession((err, session) => {
+        if (err || !session) { setStatus('Could not refresh - please log out and back in.'); return; }
+        user.refreshSession(session.getRefreshToken(), (err2, newSession) => {
+          if (err2 || !newSession) { setStatus('Could not refresh - please log out and back in.'); return; }
+          setAuthSession(newSession, user, { silent: true });
+          // Re-pull the roster so hasLinkedPlayer() can match the (possibly
+          // now-present) custom:player_id claim against a live player row.
+          loadPlayers().then(() => {
+            updateAuthUI();
+            setStatus(hasLinkedPlayer()
+              ? 'Done - your profile is linked now.'
+              : 'Still not linked. If you just linked your profile, log out and back in; otherwise ask an admin to check your account.');
+          }).catch(() => {
+            updateAuthUI();
+            setStatus(hasLinkedPlayer() ? 'Done - your profile is linked now.' : 'Refreshed, but could not reload the roster - try again in a moment.');
+          });
+        });
+      });
     }
 
     function openAuthModal() { document.getElementById('auth-modal').style.display = 'flex'; showAuthView('login'); }
@@ -7513,6 +7553,8 @@ let userPool = null;
         }
         if (btn.dataset.tab === 'store') {
           loadStore();
+        }
+        if (btn.dataset.tab === 'quests') {
           loadQuests();
         }
         if (btn.dataset.tab === 'finance') {
