@@ -149,6 +149,7 @@ def list_players():
             'rating': i.get('rating', 1000),
             'previous_rating': i.get('previous_rating', i.get('rating', 1000)),
             'games_played': int(i.get('games_played', 0) or 0),
+            'privacy_private': bool(i.get('privacy_private', False)),
             'xp': int(i.get('xp', 0) or 0),
             'level': int(i.get('level', 1) or 1),
             'coins': int(i.get('coins', 0) or 0),
@@ -769,7 +770,9 @@ def get_app_settings(event):
     return _response(200, {
         'instant_create': bool(item.get('instant_create', False)),
         'xp_public': bool(item.get('xp_public', False)),
-        'voice_enabled': bool(item.get('voice_enabled', False))
+        'voice_enabled': bool(item.get('voice_enabled', False)),
+        'privacy_mode_enabled': bool(item.get('privacy_mode_enabled', False)),
+        'privacy_cooldown_days': int(item.get('privacy_cooldown_days', 7) or 0)
     })
 
 
@@ -779,15 +782,22 @@ def set_app_setting(event):
         return _response(403, {'error': 'only a SuperAdmin can change app settings'})
     body = json.loads(event.get('body') or '{}')
     key = body.get('key')
-    if key not in ('instant_create', 'xp_public', 'voice_enabled'):
+    if key not in ('instant_create', 'xp_public', 'voice_enabled', 'privacy_mode_enabled', 'privacy_cooldown_days'):
         return _response(400, {'error': 'unknown setting'})
+    if key == 'privacy_cooldown_days':
+        try:
+            value = max(0, min(30, int(body.get('value'))))
+        except (TypeError, ValueError):
+            return _response(400, {'error': 'privacy_cooldown_days must be a number (0-30)'})
+    else:
+        value = bool(body.get('value'))
     table.update_item(
         Key={'player_id': _APP_SETTINGS_ID},
         UpdateExpression='SET #k = :v',
         ExpressionAttributeNames={'#k': key},
-        ExpressionAttributeValues={':v': bool(body.get('value'))}
+        ExpressionAttributeValues={':v': value}
     )
-    return _response(200, {key: bool(body.get('value'))})
+    return _response(200, {key: value})
 
 
 # ---------- store: catalog, purchase, inventory ----------
@@ -1467,6 +1477,34 @@ def update_my_card(event):
     background_preset = body.get('background_preset')
     card_layout = body.get('card_layout')
     _me = table.get_item(Key={'player_id': player_id}).get('Item') or {}
+    # Privacy ("cloak") toggle - this is the caller's own-row endpoint. A
+    # privacy-only request sets the flag + a change timestamp (for the
+    # cooldown) and returns; comparative endpoints read the flag. SuperAdmin
+    # self-toggles bypass the cooldown.
+    if 'privacy_private' in body:
+        want = bool(body.get('privacy_private'))
+        _settings = table.get_item(Key={'player_id': _APP_SETTINGS_ID}).get('Item') or {}
+        if not bool(_settings.get('privacy_mode_enabled', False)):
+            return _response(403, {'error': 'private mode is not enabled'})
+        cooldown_days = int(_settings.get('privacy_cooldown_days', 7) or 0)
+        now = datetime.now(timezone.utc)
+        changed_at = _me.get('privacy_changed_at')
+        currently = bool(_me.get('privacy_private', False))
+        if changed_at and cooldown_days > 0 and currently != want and not _sa:
+            try:
+                last = datetime.fromisoformat(changed_at)
+                remaining = cooldown_days * 86400 - (now - last).total_seconds()
+                if remaining > 0:
+                    days_left = int((remaining + 86399) // 86400)
+                    return _response(429, {'error': f'you changed your visibility recently - you can switch again in about {days_left} day(s)', 'cooldown_days_left': days_left})
+            except Exception:
+                pass
+        table.update_item(
+            Key={'player_id': player_id},
+            UpdateExpression='SET privacy_private = :p, privacy_changed_at = :t',
+            ExpressionAttributeValues={':p': want, ':t': now.isoformat()}
+        )
+        return _response(200, {'privacy_private': want, 'privacy_changed_at': now.isoformat()})
     def _ref_ok(url, kind):
         return _valid_upload_key(url, player_id, kind) or _owns_store_cosmetic(_me, url, kind)
     if not _ref_ok(avatar_url, 'avatar'):
@@ -1662,6 +1700,21 @@ def update_player(player_id, event):
     if not claims:
         return _response(403, {'error': 'log in to edit a player'})
     body = json.loads(event.get('body') or '{}')
+    # Admin force-flip of a player's privacy: a moderation toggle, not an
+    # identity/history edit, so SuperAdmin may set it standalone without the
+    # confirmation code and ignoring the cooldown.
+    if 'privacy_private' in body and _is_super_admin(claims):
+        _ex = table.get_item(Key={'player_id': player_id}).get('Item')
+        if not _ex:
+            return _response(404, {'error': 'player not found'})
+        _want = bool(body.get('privacy_private'))
+        table.update_item(
+            Key={'player_id': player_id},
+            UpdateExpression='SET privacy_private = :p, privacy_changed_at = :t',
+            ExpressionAttributeValues={':p': _want, ':t': datetime.now(timezone.utc).isoformat()}
+        )
+        if not (body.get('name') or body.get('skill_level') or 'nickname' in body):
+            return _response(200, {'player_id': player_id, 'privacy_private': _want})
     if body.get('confirm') != CONFIRMATION_CODE:
         return _response(400, {'error': "confirmation code is missing or incorrect"})
 
