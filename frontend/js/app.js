@@ -384,6 +384,84 @@ let userPool = null;
       else if (tab === 'profile')     ensureProfileFresh();
     }
 
+    // ---------- privacy ("cloak") mode (P2) ----------
+    let privacyModeEnabled = false;   // from /app-settings; gates all privacy UI
+    function myPlayerRecord() { return allPlayers.find(p => p.player_id === myPlayerId()) || null; }
+    function iAmPrivate() { const me = myPlayerRecord(); return privacyModeEnabled && !!(me && me.privacy_private); }
+    /** player_ids to hide from comparative views for the CURRENT viewer.
+     *  Empty when the feature is off or the viewer is a SuperAdmin (sees all). */
+    function privateHiddenIds() {
+      if (!privacyModeEnabled || isSuperAdmin()) return new Set();
+      return new Set(allPlayers.filter(p => p.privacy_private).map(p => p.player_id));
+    }
+    function renderPrivacyControl() {
+      const el = document.getElementById('privacy-control');
+      if (!el) return;
+      const me = myPlayerRecord();
+      const sel = document.getElementById('profile_player_select');
+      const viewingOwn = me && sel && sel.value === me.player_id;
+      if (!privacyModeEnabled || !me || !viewingOwn) { el.style.display = 'none'; el.innerHTML = ''; return; }
+      const isPriv = !!me.privacy_private;
+      el.style.display = 'block';
+      el.innerHTML =
+        '<div class="card" style="margin-bottom:12px;">'
+        + '<h2 style="margin-top:0;">Visibility: ' + (isPriv ? 'Private' : 'Public') + '</h2>'
+        + '<p class="card-sub">' + (isPriv
+            ? 'Your stats are hidden from others - and in return the Stats tab and other players\' cards are hidden from you. Only you see your own card.'
+            : 'Your stats show in rankings, Hall of Fame and head-to-heads. Go private to hide them - you\'ll also lose those comparative views yourself while private.')
+        + '</p>'
+        + '<button type="button" class="secondary" onclick="toggleMyPrivacy()">' + (isPriv ? 'Go public' : 'Go private') + '</button>'
+        + '<div id="privacy-toggle-status" style="font-size:13px;margin-top:8px;"></div>'
+        + '</div>';
+    }
+    async function toggleMyPrivacy() {
+      const me = myPlayerRecord();
+      if (!me) return;
+      const goingPrivate = !me.privacy_private;
+      const ok = await nwConfirm(goingPrivate
+        ? 'Go private? Your stats will be hidden from everyone, and you\'ll lose the Stats tab and other players\' cards until you switch back. A cooldown applies before you can switch again.'
+        : 'Go public? Your stats will be visible again. A cooldown applies before you can switch back.');
+      if (!ok) return;
+      const statusEl = document.getElementById('privacy-toggle-status');
+      if (statusEl) statusEl.textContent = 'Saving...';
+      try {
+        const { res, data, error } = await authedFetch(`${API_BASE_URL}/update-my-card`, {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ privacy_private: goingPrivate })
+        });
+        if (res && res.status === 429) { if (statusEl) statusEl.textContent = (data && data.error) || 'You changed your visibility recently - please wait for the cooldown.'; return; }
+        if (!res || !res.ok) { if (statusEl) statusEl.textContent = 'Error: ' + (error || (data && data.error) || 'could not save'); return; }
+        await loadPlayers();
+        updateAuthUI();
+        renderPrivacyControl();
+        if (statusEl) statusEl.textContent = goingPrivate ? 'You are now private.' : 'You are now public.';
+      } catch (e) { if (statusEl) statusEl.textContent = 'Failed: ' + e.message; }
+    }
+    async function setPrivacyMode(value) {
+      const statusEl = document.getElementById('app-privacy-mode-status');
+      statusEl.textContent = 'Saving...';
+      try {
+        const { res, error } = await authedFetch(`${API_BASE_URL}/app-settings`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ key: 'privacy_mode_enabled', value })
+        });
+        if (!res.ok) { statusEl.textContent = `Error: ${error}`; return; }
+        privacyModeEnabled = value;
+        statusEl.textContent = value ? 'Private mode is ON - players can cloak their stats.' : 'Private mode is OFF.';
+        loadPlayers().then(() => updateAuthUI());
+      } catch (e) { statusEl.textContent = `Failed: ${e.message}`; }
+    }
+    async function setPrivacyCooldown(value) {
+      const statusEl = document.getElementById('app-privacy-cooldown-status');
+      statusEl.textContent = 'Saving...';
+      try {
+        const { res, error } = await authedFetch(`${API_BASE_URL}/app-settings`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ key: 'privacy_cooldown_days', value: Number(value) })
+        });
+        statusEl.textContent = res.ok ? `Cooldown set to ${Number(value)} day(s).` : `Error: ${error}`;
+      } catch (e) { statusEl.textContent = `Failed: ${e.message}`; }
+    }
     async function loadPlayers() {
       const res = await fetch(`${API_BASE_URL}/players`);
       const data = await res.json();
@@ -2084,6 +2162,9 @@ let userPool = null;
           rankedPlayers = allPlayers;
         }
 
+        const _privHidden = privateHiddenIds();
+        if (_privHidden.size) rankedPlayers = rankedPlayers.filter(p => !_privHidden.has(p.player_id));
+
         if (!rankedPlayers.length) { resultEl.innerHTML = '<p style="font-size:13px;color:var(--text-secondary);">No players to rank.</p>'; return; }
 
         // Only players with enough games are ranked - a rating from 0-4 games
@@ -2181,12 +2262,21 @@ let userPool = null;
         // second person logging in inherits the first person's selected
         // card and never sees their own by default.
         const selectionIsMine = profileSelectionOwner === myPlayerId();
-        populateSelect(document.getElementById('profile_player_select'), labeledVisible, 'player_id', 'label', null);
-        populateSelect(document.getElementById('profile_h2h_opponent_select'), labeledVisible, 'player_id', 'label', null);
-        populateSelect(document.getElementById('profile_partner_select'), labeledVisible, 'player_id', 'label', null);
-        populateSelect(document.getElementById('profile_compare2_select'), labeledVisible, 'player_id', 'label', 'None');
-        populateSelect(document.getElementById('profile_compare3_select'), labeledVisible, 'player_id', 'label', 'None');
-        populateSelect(document.getElementById('profile_compare4_select'), labeledVisible, 'player_id', 'label', 'None');
+        // Privacy: cloaked viewers can only look up themselves; public viewers
+        // don't see private players in the lookup/opponent/partner selects.
+        let _selVisible = labeledVisible;
+        if (iAmPrivate() && !isSuperAdmin()) {
+          _selVisible = labeledVisible.filter(p => p.player_id === myPlayerId());
+        } else {
+          const _ph = privateHiddenIds();
+          if (_ph.size) _selVisible = labeledVisible.filter(p => !_ph.has(p.player_id) || p.player_id === myPlayerId());
+        }
+        populateSelect(document.getElementById('profile_player_select'), _selVisible, 'player_id', 'label', null);
+        populateSelect(document.getElementById('profile_h2h_opponent_select'), _selVisible, 'player_id', 'label', null);
+        populateSelect(document.getElementById('profile_partner_select'), _selVisible, 'player_id', 'label', null);
+        populateSelect(document.getElementById('profile_compare2_select'), _selVisible, 'player_id', 'label', 'None');
+        populateSelect(document.getElementById('profile_compare3_select'), _selVisible, 'player_id', 'label', 'None');
+        populateSelect(document.getElementById('profile_compare4_select'), _selVisible, 'player_id', 'label', 'None');
         const myId = myPlayerId();
         const isFreshLoad = !previousSelection || !selectionIsMine;
         if (previousSelection && selectionIsMine && visible.some(p => p.player_id === previousSelection)) {
@@ -2606,7 +2696,13 @@ let userPool = null;
         voiceEnabled = !!data.voice_enabled;
         const vc = document.getElementById('app-voice-enabled');
         if (vc) vc.checked = voiceEnabled;
+        privacyModeEnabled = !!data.privacy_mode_enabled;
+        const pc = document.getElementById('app-privacy-mode');
+        if (pc) pc.checked = privacyModeEnabled;
+        const pcd = document.getElementById('app-privacy-cooldown');
+        if (pcd) pcd.value = (data.privacy_cooldown_days != null ? data.privacy_cooldown_days : 7);
         applyVoiceVisibility();
+        if (typeof updateAuthUI === 'function') updateAuthUI();
       } catch (_) { /* leave unchecked */ }
     }
 
@@ -4180,7 +4276,7 @@ let userPool = null;
       }
     }
 
-    document.getElementById('profile_player_select').addEventListener('change', loadProfile);
+    document.getElementById('profile_player_select').addEventListener('change', () => { loadProfile(); renderPrivacyControl(); });
     document.getElementById('profile_h2h_opponent_select').addEventListener('change', loadProfile);
     document.getElementById('profile_partner_select').addEventListener('change', () => loadProfileWithPartner(document.getElementById('profile_player_select').value));
     ['profile_compare2_select', 'profile_compare3_select', 'profile_compare4_select', 'profile_xaxis_mode',
@@ -5770,6 +5866,15 @@ let userPool = null;
       if (storeBtn) storeBtn.style.display = xpVisible() ? '' : 'none';
       const questsBtn = document.getElementById('quests-tab-btn');
       if (questsBtn) questsBtn.style.display = xpVisible() ? '' : 'none';
+      // Privacy: a cloaked non-admin loses the Stats tab (reciprocity).
+      const statsBtn = document.querySelector('.tab-btn[data-tab="stats"]');
+      const hideStats = iAmPrivate() && !isSuperAdmin();
+      if (statsBtn) statsBtn.style.display = hideStats ? 'none' : '';
+      const statsPanel = document.getElementById('tab-stats');
+      if (hideStats && statsPanel && statsPanel.classList.contains('active')) {
+        const pb = document.querySelector('.tab-btn[data-tab="players"]'); if (pb) pb.click();
+      }
+      renderPrivacyControl();
       // If the tab you're currently ON just became unavailable (e.g. you were
       // in Reviews and logged out), don't leave its panel showing - fall back
       // to Players. Otherwise a logged-out user keeps seeing an admin panel
@@ -6420,7 +6525,7 @@ let userPool = null;
       // non-admins see levels/coins/store/quests when it's enabled.
       try {
         const asRes = await fetch(`${API_BASE_URL}/app-settings`);
-        if (asRes.ok) { const _as = await asRes.json(); xpPublic = !!_as.xp_public; voiceEnabled = !!_as.voice_enabled; if (typeof applyVoiceVisibility === 'function') applyVoiceVisibility(); }
+        if (asRes.ok) { const _as = await asRes.json(); xpPublic = !!_as.xp_public; voiceEnabled = !!_as.voice_enabled; privacyModeEnabled = !!_as.privacy_mode_enabled; if (typeof applyVoiceVisibility === 'function') applyVoiceVisibility(); }
       } catch (_) {}
       if (typeof updateAuthUI === 'function') updateAuthUI();
       // Build B: per-tab data now loads lazily on first open (tab handler
