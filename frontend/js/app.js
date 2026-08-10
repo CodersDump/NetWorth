@@ -466,7 +466,7 @@ let userPool = null;
       const res = await fetch(`${API_BASE_URL}/players`);
       const data = await res.json();
       allPlayers = data.players || [];
-      const labeled = allPlayers.map(p => ({ ...p, label: `${p.name} (${p.nickname}) (${p.rating})` }));
+      const labeled = allPlayers.map(p => ({ ...p, label: `${p.name} (${p.nickname})` }));
       // Profile-related selects are populated separately by
       // loadVisiblePlayers(), which is group-scoped server-side.
       renderAddPlayersChecklist();
@@ -633,7 +633,7 @@ let userPool = null;
         return;
       }
       container.innerHTML = available.map(p =>
-        `<label style="display:block; padding:2px 0;"><input type="checkbox" class="add-player-checkbox" value="${p.player_id}"> ${p.name} (${p.rating})</label>`
+        `<label style="display:block; padding:2px 0;"><input type="checkbox" class="add-player-checkbox" value="${p.player_id}"> ${p.name}</label>`
       ).join('');
     }
 
@@ -706,7 +706,7 @@ let userPool = null;
           .filter(Boolean);
 
         const available = pool.filter(p => !excludedElsewhere.includes(p.player_id));
-        const labeled = available.map(p => ({ ...p, label: `${p.name} (${p.rating})` }));
+        const labeled = available.map(p => ({ ...p, label: `${p.name}` }));
         populateSelect(selectEl, labeled, 'player_id', 'label', null);
 
         if (currentValues[id] && available.some(p => p.player_id === currentValues[id])) {
@@ -1548,7 +1548,7 @@ let userPool = null;
       if (!list) return;
       const sorted = [...allPlayers].sort((a, b) => String(a.name).localeCompare(String(b.name)));
       list.innerHTML = sorted.map(p =>
-        `<label style="display:block;padding:2px 0;font-size:13px;"><input type="checkbox" class="nw-pp-cb" value="${p.player_id}"> ${escapeHtml(p.name)} <span style="color:var(--text-secondary,#888);">(${p.rating})</span></label>`
+        `<label style="display:block;padding:2px 0;font-size:13px;"><input type="checkbox" class="nw-pp-cb" value="${p.player_id}"> ${escapeHtml(p.name)}</label>`
       ).join('');
       nwPairingUpdateCount();
     }
@@ -1995,7 +1995,7 @@ let userPool = null;
       }
       const size = (m.team_a || []).length || 1;
       const opts = (sel) => (allPlayers || []).map(p =>
-        `<option value="${p.player_id}"${p.player_id === sel ? ' selected' : ''}>${escapeHtml(p.name)} (${escapeHtml(p.nickname)}) (${p.rating})</option>`).join('');
+        `<option value="${p.player_id}"${p.player_id === sel ? ' selected' : ''}>${escapeHtml(p.name)} (${escapeHtml(p.nickname)})</option>`).join('');
       const pickers = (team, prefix) => Array.from({ length: size }, (_, i) =>
         `<select class="nw-modal-input ${prefix}" style="margin-bottom:6px;">${opts((team || [])[i])}</select>`).join('');
 
@@ -2245,7 +2245,7 @@ let userPool = null;
           if (idx >= 0) allPlayers[idx] = { ...allPlayers[idx], ...vp };
         });
         const labeledVisible = visible.map(p => ({
-          ...p, label: `${formatPlayerLabel(p.name, p.nickname)} (${p.rating})`
+          ...p, label: `${formatPlayerLabel(p.name, p.nickname)}`
         }));
         // Note: the "added by <email>" audit tag used to be appended here
         // for SuperAdmins, but this is the Player Card picker - a viewing
@@ -6564,7 +6564,7 @@ let userPool = null;
       const container = document.getElementById('manual-teams-container');
       const isDoubles = document.getElementById('tournament_match_type').value === 'doubles';
       const rowIndex = container.children.length;
-      const labeled = allPlayers.map(p => ({ ...p, label: `${p.name} (${p.nickname}) (${p.rating})` }));
+      const labeled = allPlayers.map(p => ({ ...p, label: `${p.name} (${p.nickname})` }));
 
       const row = document.createElement('div');
       row.className = 'row';
@@ -6638,7 +6638,7 @@ let userPool = null;
         return;
       }
       container.innerHTML = [...data.members].sort((a, b) => a.name.localeCompare(b.name)).map(m =>
-        `<label style="display:block; padding:2px 0;"><input type="checkbox" class="tournament-participant-checkbox" value="${m.player_id}" checked> ${m.name} (${m.rating})</label>`
+        `<label style="display:block; padding:2px 0;"><input type="checkbox" class="tournament-participant-checkbox" value="${m.player_id}" checked> ${m.name}</label>`
       ).join('');
       updateParticipantsCount();
     }
@@ -6773,7 +6773,7 @@ let userPool = null;
         const participant_ids = collectTournamentParticipants();
         const filterOut = new Set(participant_ids);
         const candidates = allPlayers.filter(p => !filterOut.has(p.player_id));
-        const labeled = candidates.map(p => ({ ...p, label: `${p.name} (${p.rating})` }));
+        const labeled = candidates.map(p => ({ ...p, label: `${p.name}` }));
         populateSelect(document.getElementById('filler_existing_select'), labeled, 'player_id', 'label', null);
         document.getElementById('filler-result').textContent = '';
         document.getElementById('filler_new_toggle').checked = false;
@@ -6922,7 +6922,7 @@ let userPool = null;
       });
       populateSelect(document.getElementById('sub_old_player_select'), memberOptions, 'player_id', 'label', null);
 
-      const labeled = allPlayers.map(p => ({ ...p, label: `${p.name} (${p.nickname}) (${p.rating})` }));
+      const labeled = allPlayers.map(p => ({ ...p, label: `${p.name} (${p.nickname})` }));
       populateSelect(document.getElementById('sub_new_player_select'), labeled, 'player_id', 'label', null);
     }
 
