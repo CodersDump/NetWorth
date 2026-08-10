@@ -1024,6 +1024,15 @@
               </label>
               <span id="app-privacy-cooldown-status" style="font-size:12px;margin-left:8px;"></span>
             </div>
+            <div style="margin-top:12px;border-top:1px solid var(--border);padding-top:10px;">
+              <label style="font-size:13px;display:block;margin-bottom:4px;">Force a player's visibility (ignores cooldown):</label>
+              <select id="admin-privacy-player" style="max-width:280px;"></select>
+              <div style="margin-top:6px;">
+                <button type="button" class="secondary" onclick="adminSetPrivacy(true)">Make private</button>
+                <button type="button" class="secondary" onclick="adminSetPrivacy(false)">Make public</button>
+              </div>
+              <span id="admin-privacy-status" style="font-size:12px;"></span>
+            </div>
 
             <div class="switch-row" style="margin-top:12px;">
               <label class="switch"><input type="checkbox" id="app-voice-enabled" onchange="setVoiceEnabled(this.checked)"><span class="slider"></span></label>

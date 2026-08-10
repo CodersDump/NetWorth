@@ -241,6 +241,17 @@
 
 ## Done
 
+- ✅ 2026-08-09 — **Privacy P2c (admin polish) - privacy epic now functionally complete.** app.js +
+  index.html. (1) **Admin see-all:** comparative reads now route through `statsFetch()` - SuperAdmins hit
+  the authed `/profile-secure/matches?...` (unscrubbed), everyone else the public `/matches` (scrubbed), so
+  admins see private players in Hall of Fame / diversity / badges / history / attendance, not just rankings.
+  (2) **Admin force-flip:** a "Force a player's visibility" control in the admin settings panel
+  (`adminSetPrivacy` -> `PUT /players/{id} {privacy_private}`, no confirm code, ignores cooldown; the select
+  flags who's already PRIVATE). (3) **Pure-admin UX:** the "Set up your player profile" modal no longer
+  fires for SuperAdmins (they're intentionally player-less). Ships with privacy mode still default-off.
+  **Privacy epic status:** P1a/P1b (backend) + P2a/P2b (frontend) + P2c (admin) done. Remaining bare
+  `.scan()` sites (players `list_players`, matches attendance-window/week/groups/history/tournaments) are
+  the only tracked follow-up (KNOWN_ISSUES #15). **Ready to test end-to-end** once deployed + flag enabled.
 - ✅ 2026-08-08 — **Privacy P2b (Elo-label strip) — the pairing-bias fix. NOT dark (visible on deploy).**
   app.js only. Removed the rating from the *picker* labels — the surfaces where you choose who's in a
   match/team, which is where the "no one wants to pair with the low number" bias lived: the match player
