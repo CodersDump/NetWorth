@@ -462,6 +462,43 @@ let userPool = null;
         statusEl.textContent = res.ok ? `Cooldown set to ${Number(value)} day(s).` : `Error: ${error}`;
       } catch (e) { statusEl.textContent = `Failed: ${e.message}`; }
     }
+    /** Comparative reads: admins go through the authed /profile-secure route
+     *  (unscrubbed - admin see-all); everyone else hits public /matches
+     *  (privates scrubbed server-side). */
+    function statsFetch(query) {
+      if (isSuperAdmin()) {
+        return fetch(`${API_BASE_URL}/profile-secure/matches?${query}`, { headers: getAuthHeaders() });
+      }
+      return fetch(`${API_BASE_URL}/matches?${query}`);
+    }
+    function populateAdminPrivacySelect() {
+      const sel = document.getElementById('admin-privacy-player');
+      if (!sel) return;
+      const cur = sel.value;
+      sel.innerHTML = allPlayers
+        .filter(p => p && p.player_id && !String(p.player_id).startsWith('__'))
+        .slice().sort((a, b) => (a.name || '').localeCompare(b.name || ''))
+        .map(p => `<option value="${p.player_id}">${escapeHtml(p.name)} (${escapeHtml(p.nickname || '')})${p.privacy_private ? ' - PRIVATE' : ''}</option>`).join('');
+      if (cur) sel.value = cur;
+    }
+    async function adminSetPrivacy(makePrivate) {
+      const sel = document.getElementById('admin-privacy-player');
+      const pid = sel && sel.value;
+      const statusEl = document.getElementById('admin-privacy-status');
+      if (!pid) { if (statusEl) statusEl.textContent = 'Pick a player first.'; return; }
+      if (statusEl) statusEl.textContent = 'Saving...';
+      try {
+        const { res, data, error } = await authedFetch(`${API_BASE_URL}/players/${pid}`, {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ privacy_private: makePrivate })
+        });
+        if (!res || !res.ok) { if (statusEl) statusEl.textContent = 'Error: ' + (error || (data && data.error) || 'could not save'); return; }
+        await loadPlayers();
+        populateAdminPrivacySelect();
+        updateAuthUI();
+        if (statusEl) statusEl.textContent = 'Done - set to ' + (makePrivate ? 'private' : 'public') + '. They may need to log out/in to see it.';
+      } catch (e) { if (statusEl) statusEl.textContent = 'Failed: ' + e.message; }
+    }
     async function loadPlayers() {
       const res = await fetch(`${API_BASE_URL}/players`);
       const data = await res.json();
@@ -1846,7 +1883,7 @@ let userPool = null;
       if (dateTo) params.set('date_to', dateTo);
 
       try {
-        const res = await fetch(`${API_BASE_URL}/matches?${params.toString()}`);
+        const res = await statsFetch(params.toString());
         const data = await res.json();
         if (!res.ok) { logEl.textContent = `Error: ${data.error}`; return; }
         // Opponent filter is applied client-side (the API returns team_a /
@@ -2702,6 +2739,7 @@ let userPool = null;
         const pcd = document.getElementById('app-privacy-cooldown');
         if (pcd) pcd.value = (data.privacy_cooldown_days != null ? data.privacy_cooldown_days : 7);
         applyVoiceVisibility();
+        populateAdminPrivacySelect();
         if (typeof updateAuthUI === 'function') updateAuthUI();
       } catch (_) { /* leave unchecked */ }
     }
@@ -4349,7 +4387,7 @@ let userPool = null;
 
       try {
         const params = new URLSearchParams({ progress_history: 'true', scope, period });
-        const res = await fetch(`${API_BASE_URL}/matches?${params.toString()}`);
+        const res = await statsFetch(params.toString());
         const data = await res.json();
         if (!res.ok) { resultEl.textContent = `Error: ${data.error}`; return; }
         lastHistoryData = data;
@@ -4428,7 +4466,7 @@ let userPool = null;
       try {
         const params = new URLSearchParams({ progress_badges: 'true' });
         if (groupId) params.set('group_id', groupId);
-        const res = await fetch(`${API_BASE_URL}/matches?${params.toString()}`);
+        const res = await statsFetch(params.toString());
         const data = await res.json();
         if (!res.ok) { resultEl.textContent = `Error: ${data.error}`; return; }
         lastBadgesData = data;
@@ -4479,7 +4517,7 @@ let userPool = null;
       try {
         const params = new URLSearchParams({ diversity: 'true' });
         if (groupId) params.set('group_id', groupId);
-        const res = await fetch(`${API_BASE_URL}/matches?${params.toString()}`);
+        const res = await statsFetch(params.toString());
         const data = await res.json();
         if (!res.ok) { resultEl.textContent = `Error: ${data.error}`; return; }
         lastDiversityData = data;
@@ -4528,7 +4566,7 @@ let userPool = null;
       try {
         const params = new URLSearchParams({ hall_of_fame: 'true' });
         if (groupId) params.set('group_id', groupId);
-        const res = await fetch(`${API_BASE_URL}/matches?${params.toString()}`);
+        const res = await statsFetch(params.toString());
         const data = await res.json();
         if (!res.ok) { resultEl.textContent = `Error: ${data.error}`; return; }
         lastHofData = data;
@@ -4635,7 +4673,7 @@ let userPool = null;
       if (groupId) params.set('group_id', groupId);
 
       try {
-        const res = await fetch(`${API_BASE_URL}/matches?${params.toString()}`);
+        const res = await statsFetch(params.toString());
         const data = await res.json();
         if (!res.ok) { resultEl.textContent = `Error: ${data.error}`; return; }
         lastAttendanceData = data;
@@ -6007,7 +6045,7 @@ let userPool = null;
       // create one, right here rather than tying it to signup
       // specifically (covers self-signup and any other unlinked-account
       // case identically). Skipped on a silent restore.
-      if (!opts.silent && !authSession.claims['custom:player_id']) {
+      if (!opts.silent && !authSession.claims['custom:player_id'] && !isSuperAdmin()) {
         openCompleteProfileModal();
       }
       // If a match was stranded before a re-login, surface it now so they
