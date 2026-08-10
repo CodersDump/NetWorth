@@ -241,6 +241,23 @@
 
 ## Done
 
+- ✅ 2026-08-08 — **Privacy P1b (backend enforcement, still dark).** matches lambda only. Central
+  scrubber (`_scrub_private` + `_load_private_ids`) omits private players from the *live* comparative
+  computes — Hall of Fame, diversity, progress-badges, attendance, top-opponents (H2H distribution),
+  partner-distribution, partnerships, and the profile bundle's leaderboard parts — keyed on
+  player_id/opponent_id/partner_id/top_partner_id. **Grandfathered:** frozen `progress_history` is left
+  as-is (per decision); the card owner's own `recent_form`/`overall_record` are not scrubbed (factual
+  history). **SuperAdmin see-all:** `profile_view_enforced` short-circuits admins straight to
+  `list_matches`, and `list_matches` only builds the private set when the caller is *not* a verified
+  SuperAdmin — so a raw public `/matches` call (no claims) is always filtered, while an admin via
+  `/profile-secure` sees everything. Enforced server-side (not spoofable via query param). No-op while
+  the flag is off (scrubber returns the same object on an empty set). **B2 folded in (partial):**
+  `_scan_all()` paginates the `list_matches` feed *and* `recompute_all_ratings`' match+player scans
+  (KNOWN_ISSUES #15 — recompute truncating would silently corrupt ratings past 1 MB). Remaining bare
+  `.scan()` sites in this lambda (attendance-window, week, groups, history, tournaments) + players
+  `list_players` still to paginate — lower risk, follow-up. **Next: P2 (frontend)** — hide Stats for
+  private users, self-lock the card lookup, toggle UI + cooldown messaging, admin controls, and the
+  global Elo-label strip; route SuperAdmin stats reads through `/profile-secure`.
 - ✅ 2026-08-08 — **Privacy P1a (backend foundation, dark).** players lambda only, no template changes.
   `app-settings` gains `privacy_mode_enabled` (default **off**) + `privacy_cooldown_days` (default 7,
   0–30) via `get_app_settings`/`set_app_setting`. Self toggle rides `/update-my-card` (`privacy_private`
