@@ -241,6 +241,18 @@
 
 ## Done
 
+- ✅ 2026-08-08 — **Privacy P2b (Elo-label strip) — the pairing-bias fix. NOT dark (visible on deploy).**
+  app.js only. Removed the rating from the *picker* labels — the surfaces where you choose who's in a
+  match/team, which is where the "no one wants to pair with the low number" bias lived: the match player
+  selects, add-player checkboxes, team-pairing participant picker, game-log edit-players dropdown,
+  tournament-participant checkboxes, and the profile lookup/H2H/partner/compare selects (10 sites total).
+  **Kept** (rating still shown): the rankings table and Player Card (the point of them), roster/member
+  rows, and the Elo-*balanced* pairing preview (rating there is the tool's balancing rationale, not a
+  manual-pairing lever). Unlike the rest of the privacy epic this ships live, not behind the flag — it's
+  an unconditional UX change. **Open question for owner:** want the rating pulled from the pairing preview
+  + member rows too (lines 572/1577/1580/6895), or leave them? **Remaining privacy work (P2c):** admin
+  force-flip UI (control on admin player-edit → `PUT /players/{id} {privacy_private}`) and routing the
+  admin's Stats reads through `/profile-secure` so admins see privates in HoF/diversity.
 - ✅ 2026-08-08 — **Privacy P2a (frontend enforcement + controls, still dark).** index.html + app.js.
   Reads `privacy_mode_enabled` into a `privacyModeEnabled` global (init + loadAppSettings). **Player**
   self-toggle: a Visibility card on their own Player Card (`renderPrivacyControl`/`toggleMyPrivacy`) that
