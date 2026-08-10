@@ -104,6 +104,20 @@
 - `[security] S` Remove committed AWS account id from `current-policy.json` /
   `networth-deploy-policy.json`; parameterize. (KNOWN_ISSUES #3)
 
+- `[feat] L` **Privacy / "cloak" mode (reciprocity visibility filter) — admin-gated, ships dark.**
+  A player can go *private*: they drop out of everyone's comparative views (rankings, Hall of Fame, H2H
+  distribution, lookup/opponent dropdowns) AND lose the Stats tab themselves (reciprocity) — but keep
+  their own Player Card, and stay fully selectable when recording matches. Public players see everyone
+  except privates (ranks compress 1..N). **Also global:** strip the Elo from every dropdown *label*
+  (the pairing-bias signal the club reacted to). Enforced server-side (a raw `/matches` call must not
+  see through it). 7-day cooldown between switches (admin-configurable); SuperAdmin sees all + can
+  force-flip anyone ignoring cooldown. Decisions locked 2026-08 (cloak not zen; rank compression yes;
+  existing HoF records kept, future ones exclude privates; private names stay in factual match history).
+  **No template/route changes needed** — reuses `/update-my-card`, `PUT /players/{id}`, `/app-settings`,
+  and `/profile-secure` (all already Cognito-authed). Staged: **P1a** foundation (done) → **P1b** the
+  comparative filter (fold B2's `.scan()` pagination in here) → **P2** frontend (hide Stats, self-lock
+  the card lookup, toggle UI + cooldown messaging, admin controls, Elo-label strip). Build **before**
+  Seasons so the season leaderboard inherits the filter.
 - `[perf] M` **Build B2 — backend fan-out reduction (follow-on to Build B).** Build B killed the
   first-paint burst frontend-side (lazy-load + freshness), so throttling should be gone. Remaining
   server-side polish: (a) a single **bundle endpoint** that scans matches once and returns the Stats +
@@ -227,6 +241,33 @@
 
 ## Done
 
+- ✅ 2026-08-08 — **Privacy P1b (backend enforcement, still dark).** matches lambda only. Central
+  scrubber (`_scrub_private` + `_load_private_ids`) omits private players from the *live* comparative
+  computes — Hall of Fame, diversity, progress-badges, attendance, top-opponents (H2H distribution),
+  partner-distribution, partnerships, and the profile bundle's leaderboard parts — keyed on
+  player_id/opponent_id/partner_id/top_partner_id. **Grandfathered:** frozen `progress_history` is left
+  as-is (per decision); the card owner's own `recent_form`/`overall_record` are not scrubbed (factual
+  history). **SuperAdmin see-all:** `profile_view_enforced` short-circuits admins straight to
+  `list_matches`, and `list_matches` only builds the private set when the caller is *not* a verified
+  SuperAdmin — so a raw public `/matches` call (no claims) is always filtered, while an admin via
+  `/profile-secure` sees everything. Enforced server-side (not spoofable via query param). No-op while
+  the flag is off (scrubber returns the same object on an empty set). **B2 folded in (partial):**
+  `_scan_all()` paginates the `list_matches` feed *and* `recompute_all_ratings`' match+player scans
+  (KNOWN_ISSUES #15 — recompute truncating would silently corrupt ratings past 1 MB). Remaining bare
+  `.scan()` sites in this lambda (attendance-window, week, groups, history, tournaments) + players
+  `list_players` still to paginate — lower risk, follow-up. **Next: P2 (frontend)** — hide Stats for
+  private users, self-lock the card lookup, toggle UI + cooldown messaging, admin controls, and the
+  global Elo-label strip; route SuperAdmin stats reads through `/profile-secure`.
+- ✅ 2026-08-08 — **Privacy P1a (backend foundation, dark).** players lambda only, no template changes.
+  `app-settings` gains `privacy_mode_enabled` (default **off**) + `privacy_cooldown_days` (default 7,
+  0–30) via `get_app_settings`/`set_app_setting`. Self toggle rides `/update-my-card` (`privacy_private`
+  in body): gated on the feature flag, enforces the cooldown (per-direction, SuperAdmin-exempt), stamps
+  `privacy_changed_at`, returns 429 with days-left when cooling. Admin force-flip rides `PUT /players/{id}`
+  (SuperAdmin sets `privacy_private` standalone — no confirmation code, no cooldown). `list_players` now
+  serializes `privacy_private`. New player fields `privacy_private`/`privacy_changed_at` are schemaless
+  (absent = public), so no migration. Ships dark — flag off = identical behavior. **Next:** P1b applies the
+  actual comparative filter (rankings/HoF/diversity/badges/history/H2H) + SuperAdmin see-all via
+  `/profile-secure`; P2 is the frontend.
 - ✅ 2026-08-07 — **Build B (frontend-only): lazy per-tab loading + freshness — the throttling fix.**
   Root cause was the boot fan-out (~13 eager API calls in the init IIFE: rankings, diversity, badges,
   history, HoF, attendance, public-walkins, tournaments×2, and a 5-call `loadProfile`) exceeding the

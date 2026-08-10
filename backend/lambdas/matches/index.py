@@ -109,6 +109,59 @@ def xp_for_match(stage, won, margin=0):
 # totals. Overlapping events take the highest multiplier.
 _EVENTS_ROW_ID = '__events__'
 _QUESTS_ROW_ID = '__quests__'
+_APP_SETTINGS_ID = '__app_settings__'
+
+def _scan_all(table, **kw):
+    """Full-table scan that follows LastEvaluatedKey - a bare .scan() returns
+    only the first 1 MB page (KNOWN_ISSUES #15)."""
+    items, last = [], None
+    while True:
+        if last:
+            kw['ExclusiveStartKey'] = last
+        resp = table.scan(**kw)
+        items.extend(resp.get('Items', []))
+        last = resp.get('LastEvaluatedKey')
+        if not last:
+            return items
+
+_PRIVATE_ID_KEYS = ('player_id', 'opponent_id', 'partner_id', 'top_partner_id')
+
+def _load_private_ids():
+    """player_ids currently flagged private - only when the feature flag is on,
+    so every call site is a no-op (empty set) while the feature is dark."""
+    settings = players_table.get_item(Key={'player_id': _APP_SETTINGS_ID}).get('Item') or {}
+    if not bool(settings.get('privacy_mode_enabled', False)):
+        return set()
+    ids = set()
+    for it in _scan_all(players_table, ProjectionExpression='player_id, privacy_private'):
+        if it.get('privacy_private'):
+            ids.add(it['player_id'])
+    return ids
+
+def _entry_is_private(x, private_ids):
+    return isinstance(x, dict) and any(x.get(k) in private_ids for k in _PRIVATE_ID_KEYS)
+
+def _scrub_private(obj, private_ids):
+    """Recursively drop leaderboard/distribution entries belonging to a private
+    player: a dict entry is dropped if any id-key names a private player; scalar
+    id-lists have private ids removed. Structure and non-player data are kept.
+    No-op when private_ids is empty (feature off / admin caller)."""
+    if not private_ids:
+        return obj
+    if isinstance(obj, list):
+        out = []
+        for x in obj:
+            if isinstance(x, str):
+                if x not in private_ids:
+                    out.append(x)
+            elif _entry_is_private(x, private_ids):
+                continue
+            else:
+                out.append(_scrub_private(x, private_ids))
+        return out
+    if isinstance(obj, dict):
+        return {k: _scrub_private(v, private_ids) for k, v in obj.items()}
+    return obj
 
 # Weekly quest condition types. Each is a rule evaluated against a player's
 # matches for the current week. The admin picks a type + target + reward.
@@ -468,6 +521,11 @@ def profile_view_enforced(event):
     if not claims:
         return _response(403, {'error': 'log in to view profiles'})
 
+    # SuperAdmin: full see-all access. Delegates straight to list_matches,
+    # which leaves private players in when the caller is an admin.
+    if _is_super_admin(claims):
+        return list_matches(event)
+
     params = event.get('queryStringParameters') or {}
     target = (params.get('profile_bundle_for') or params.get('player_id')
               or params.get('partnerships_for') or params.get('radar_for')
@@ -800,7 +858,7 @@ def recompute_all_ratings():
     everyone to 1000 and replay every match in chronological order,
     recomputing from scratch - including replaying each pairing's K-factor
     exactly as it would have been at that point in time."""
-    players = players_table.scan().get('Items', [])
+    players = _scan_all(players_table)
     current_ratings = {p['player_id']: 1000.0 for p in players}
     # XP is rebuilt from scratch alongside ratings so a correction/reorder
     # keeps it consistent. It only accumulates (never subtracts), keyed by
@@ -809,7 +867,7 @@ def recompute_all_ratings():
     game_counts = {p['player_id']: 0 for p in players}  # matches actually played
     pairing_counts = {}  # frozenset({p1,p2}) -> matches played together so far
 
-    matches = matches_table.scan().get('Items', [])
+    matches = _scan_all(matches_table)
     # The reserved events row lives in this table but isn't a match.
     matches = [m for m in matches if m.get('match_id') not in (_EVENTS_ROW_ID, _QUESTS_ROW_ID)]
     matches.sort(key=lambda m: m.get('date', ''))
@@ -1110,9 +1168,12 @@ def list_matches(event):
     top_n = int(params.get('top_n', 10))
     tournament_filter = params.get('tournament_filter', 'include')  # 'include' | 'exclude'
 
-    items = matches_table.scan().get('Items', [])
+    items = _scan_all(matches_table)
     # Reserved config rows (events) live in this table but aren't matches.
     items = [i for i in items if i.get('match_id') not in (_EVENTS_ROW_ID, _QUESTS_ROW_ID)]
+    # Privacy: omit private players from comparative outputs for everyone but a
+    # SuperAdmin (only ever identified via an authed route). No-op when off.
+    private_ids = set() if _is_super_admin(_caller_claims(event)) else _load_private_ids()
 
     if partnerships_for or radar_for:
         scoped_items = items
@@ -1121,30 +1182,32 @@ def list_matches(event):
         if tournament_filter == 'exclude':
             scoped_items = [i for i in scoped_items if not i.get('tournament_id')]
         if partnerships_for:
-            return _response(200, compute_partnerships(partnerships_for, scoped_items))
-        return _response(200, compute_partner_distribution(radar_for, scoped_items, top_n))
+            return _response(200, _scrub_private(compute_partnerships(partnerships_for, scoped_items), private_ids))
+        return _response(200, _scrub_private(compute_partner_distribution(radar_for, scoped_items, top_n), private_ids))
     if attendance:
-        return _response(200, compute_attendance(items, group_id))
+        return _response(200, _scrub_private(compute_attendance(items, group_id), private_ids))
     if hall_of_fame:
-        return _response(200, compute_hall_of_fame(items, group_id))
+        return _response(200, _scrub_private(compute_hall_of_fame(items, group_id), private_ids))
     if params.get('diversity'):
-        return _response(200, compute_diversity(items, group_id))
+        return _response(200, _scrub_private(compute_diversity(items, group_id), private_ids))
     if params.get('progress_badges'):
-        return _response(200, compute_progress_badges(items, group_id))
+        return _response(200, _scrub_private(compute_progress_badges(items, group_id), private_ids))
     if params.get('achievements_for'):
         all_tournaments = tournaments_table.scan().get('Items', [])
         return _response(200, compute_achievements(params.get('achievements_for'), items, all_tournaments))
     if params.get('profile_bundle_for'):
         player_id = params.get('profile_bundle_for')
         all_tournaments = tournaments_table.scan().get('Items', [])
+        # Scrub leaderboard/distribution parts for private players; leave the
+        # card owner's own factual history (recent_form, record) untouched.
         return _response(200, {
-            'hall_of_fame': compute_hall_of_fame(items),
-            'progress_badges': compute_progress_badges(items),
+            'hall_of_fame': _scrub_private(compute_hall_of_fame(items), private_ids),
+            'progress_badges': _scrub_private(compute_progress_badges(items), private_ids),
             'achievements': compute_achievements(player_id, items, all_tournaments),
             'recent_form': compute_recent_form(player_id, items, 10),
             'overall_record': compute_overall_record(player_id, items),
-            'top_opponents': compute_top_opponents(player_id, items, 15),
-            'attendance': compute_attendance(items)['attendance'],
+            'top_opponents': _scrub_private(compute_top_opponents(player_id, items, 15), private_ids),
+            'attendance': _scrub_private(compute_attendance(items)['attendance'], private_ids),
         })
     if params.get('progress_history'):
         scope = params.get('scope', 'global')
@@ -1159,7 +1222,7 @@ def list_matches(event):
         return _response(200, compute_recent_form(params.get('recent_form'), items, limit))
     if params.get('top_opponents_for'):
         top_n = int(params.get('top_n', 15))
-        return _response(200, compute_top_opponents(params.get('top_opponents_for'), items, top_n))
+        return _response(200, _scrub_private(compute_top_opponents(params.get('top_opponents_for'), items, top_n), private_ids))
     if params.get('overall_record_for'):
         return _response(200, compute_overall_record(params.get('overall_record_for'), items))
 
