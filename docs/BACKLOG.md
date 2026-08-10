@@ -241,6 +241,19 @@
 
 ## Done
 
+- ✅ 2026-08-08 — **Privacy P2a (frontend enforcement + controls, still dark).** index.html + app.js.
+  Reads `privacy_mode_enabled` into a `privacyModeEnabled` global (init + loadAppSettings). **Player**
+  self-toggle: a Visibility card on their own Player Card (`renderPrivacyControl`/`toggleMyPrivacy`) that
+  PUTs `/update-my-card {privacy_private}`, surfaces the 429 cooldown message, and reloads. **Reciprocity:**
+  a cloaked non-admin loses the Stats tab (hidden + bounced to Players if active) and their lookup/H2H/
+  partner selects lock to themselves (can't scout). **Public viewers:** private players are filtered out of
+  rankings (client-side, via `privateHiddenIds()` cross-referenced by id so group rankings work too) and
+  out of the lookup/opponent/partner dropdowns. **Admin:** a Private-mode enable toggle + cooldown-days
+  input in the app-settings panel (`setPrivacyMode`/`setPrivacyCooldown`); SuperAdmin bypasses all hiding.
+  Everything is gated on `privacyModeEnabled`, so P2a also ships **dark** until you flip the admin toggle.
+  **Next: P2b** — the global Elo-label strip across the ~14 pairing/match dropdowns (the bias signal),
+  the admin force-flip UI (a control on the admin player-edit that PUTs `/players/{id} {privacy_private}`),
+  and routing SuperAdmin's Stats reads through `/profile-secure` so admins see privates in HoF/diversity.
 - ✅ 2026-08-08 — **Privacy P1b (backend enforcement, still dark).** matches lambda only. Central
   scrubber (`_scrub_private` + `_load_private_ids`) omits private players from the *live* comparative
   computes — Hall of Fame, diversity, progress-badges, attendance, top-opponents (H2H distribution),

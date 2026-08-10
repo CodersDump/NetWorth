@@ -805,6 +805,7 @@
         <button type="button" onclick="openAuthModal()">Log in</button>
       </div>
       <div id="profile-content-wrapper">
+        <div id="privacy-control" style="display:none;"></div>
       <div class="card">
         <h2>Player Card</h2>
         <p class="card-sub">A single player's rating history, partnerships, and mix, all in one place. Defaults to your own card.</p>
@@ -1011,6 +1012,18 @@
             </div>
             <p class="card-sub" style="margin:6px 0 0;">Off during soft launch (admin-only preview). Flip on to reveal the whole gamification layer - level under the banner, coin balance, the Store tab, and weekly quests - to all players.</p>
             <span id="app-xp-public-status" style="font-size:12px;"></span>
+            <div class="switch-row" style="margin-top:12px;">
+              <label class="switch"><input type="checkbox" id="app-privacy-mode" onchange="setPrivacyMode(this.checked)"><span class="slider"></span></label>
+              <span>Private mode (players can cloak their stats)</span>
+            </div>
+            <p class="card-sub" style="margin:6px 0 0;">Lets a player go private: their stats drop out of rankings, Hall of Fame and head-to-heads for everyone, and in return they lose those comparative views themselves. You (admin) always see all data.</p>
+            <span id="app-privacy-mode-status" style="font-size:12px;"></span>
+            <div style="margin-top:10px;">
+              <label style="font-size:13px;">Switch cooldown (days):
+                <input type="number" id="app-privacy-cooldown" min="0" max="30" style="width:64px;margin-left:6px;" onchange="setPrivacyCooldown(this.value)">
+              </label>
+              <span id="app-privacy-cooldown-status" style="font-size:12px;margin-left:8px;"></span>
+            </div>
 
             <div class="switch-row" style="margin-top:12px;">
               <label class="switch"><input type="checkbox" id="app-voice-enabled" onchange="setVoiceEnabled(this.checked)"><span class="slider"></span></label>
