@@ -2336,6 +2336,7 @@ let userPool = null;
         // will call loadProfile() itself straight after - firing it here
         // too would double every request on a manual refresh.
         if (isFreshLoad && visible.length && !opts.keepSelection && isTabActive('profile')) ensureProfileFresh();
+        renderPrivacyControl();
       } catch (err) { /* silent - profile tab just stays empty until this succeeds */ }
     }
 
@@ -4280,6 +4281,10 @@ let userPool = null;
         loadProfileHeadToHead(playerId),
         loadProfileWithPartner(playerId)
       ]);
+      // Keep the Public/Private control in sync once the selected player is
+      // settled - updateAuthUI can render it before loadVisiblePlayers has
+      // defaulted the select, which hid it until a manual refresh.
+      renderPrivacyControl();
     }
     /** Manual reload of whoever is currently selected. Before this, the
      *  only way to see updated numbers was to select a different player

@@ -120,7 +120,7 @@ def lookup_email_for_login(identifier):
     if not identifier_norm:
         return _response(404, {'error': 'no account found for that identifier'})
 
-    items = table.scan().get('Items', [])
+    items = _scan_all(table)
     for p in items:
         email = p.get('email')
         if not email:
@@ -137,7 +137,7 @@ def lookup_email_for_login(identifier):
 
 
 def list_players():
-    items = table.scan().get('Items', [])
+    items = _scan_all(table)
     # The reserved app-settings row lives in this table but isn't a player.
     items = [i for i in items if i.get('player_id') not in (_APP_SETTINGS_ID, _STORE_CATALOG_ID)]
     players = [
@@ -274,6 +274,20 @@ def claim_player(event):
         ExpressionAttributeValues={':e': claims.get('email')}
     )
     return _response(200, {'player_id': player_id, 'name': player.get('name'), 'nickname': player.get('nickname')})
+
+
+def _scan_all(table, **kw):
+    """Full-table scan that follows LastEvaluatedKey - a bare .scan() returns
+    only the first 1 MB page (KNOWN_ISSUES #15)."""
+    items, last = [], None
+    while True:
+        if last:
+            kw['ExclusiveStartKey'] = last
+        resp = table.scan(**kw)
+        items.extend(resp.get('Items', []))
+        last = resp.get('LastEvaluatedKey')
+        if not last:
+            return items
 
 
 def _is_super_admin(claims):
@@ -416,7 +430,7 @@ def audit_claims(event):
         return _response(500, {'error': 'user pool is not configured on this stack'})
     cognito = boto3.client('cognito-idp')
 
-    players = [p for p in table.scan().get('Items', [])
+    players = [p for p in _scan_all(table)
                if not str(p.get('player_id', '')).startswith('__')]
     players_by_id = {p['player_id']: p for p in players}
     users = _cognito_users_all(cognito)
@@ -692,7 +706,7 @@ def _create_new_profile_request(claims, body):
         return _response(400, {'error': 'name is required'})
     nickname = sanitize_nickname(body.get('nickname') or '') or sanitize_nickname(name)
 
-    existing = table.scan().get('Items', [])
+    existing = _scan_all(table)
     clash = next((p for p in existing
                   if (p.get('nickname') or '').strip().lower() == nickname), None)
     if clash:
@@ -932,7 +946,7 @@ def _create_edit_name_request(claims, body):
     if name == player.get('name') and nickname == (player.get('nickname') or ''):
         return _response(400, {'error': 'that is already your name and nickname'})
 
-    others = [p for p in table.scan().get('Items', []) if p['player_id'] != player_id]
+    others = [p for p in _scan_all(table) if p['player_id'] != player_id]
     if any((p.get('nickname') or '').strip().lower() == nickname for p in others):
         return _response(400, {'error': f'nickname "{nickname}" is already taken'})
 
@@ -959,7 +973,7 @@ def _create_edit_name_request(claims, body):
 
 
 def _approve_edit_name(req, claims):
-    others = [p for p in table.scan().get('Items', []) if p['player_id'] != req['player_id']]
+    others = [p for p in _scan_all(table) if p['player_id'] != req['player_id']]
     if any((p.get('nickname') or '').strip().lower() == req['new_nickname'] for p in others):
         return _response(400, {'error': 'that nickname was taken while this request was waiting'})
     table.update_item(
@@ -978,7 +992,7 @@ def _approve_new_profile(req, claims):
     """Creates the player only at approval time, and links it to the
     requester in the same step - so nothing exists until someone said yes."""
     nickname = req.get('player_nickname')
-    existing = table.scan().get('Items', [])
+    existing = _scan_all(table)
     # Re-check at decision time: the nickname may have been taken while
     # the request sat in the queue.
     if any((p.get('nickname') or '').strip().lower() == nickname for p in existing):
@@ -1672,7 +1686,7 @@ def rename_self(event):
         return _response(400, {'error': 'nickname is required'})
     new_nickname = sanitize_nickname(new_nickname)
 
-    other_players = table.scan().get('Items', [])
+    other_players = _scan_all(table)
     if any(p['player_id'] != player_id and p.get('nickname', '').strip().lower() == new_nickname for p in other_players):
         return _response(400, {'error': f'nickname "{new_nickname}" is already taken - nicknames must be unique'})
 
@@ -1730,7 +1744,7 @@ def update_player(player_id, event):
     if not name and not skill_level and not nickname_provided:
         return _response(400, {'error': 'provide name, skill_level, and/or nickname to update'})
 
-    other_players = table.scan().get('Items', [])
+    other_players = _scan_all(table)
 
     # Real names are free-form and can duplicate - nickname is the unique
     # player identifier now, so uniqueness enforcement moved there.
