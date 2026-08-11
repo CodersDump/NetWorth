@@ -133,7 +133,7 @@
   the per-player linked-status check. Loop on `LastEvaluatedKey`. (KNOWN_ISSUES #15.)
 
 ## Next / medium
-- `[bug] M` **iOS card-share: animated video won't save.** On the animated share result panel, "Save"
+- `[bug] M` **iOS card-share: animated video won't save.** ✅ DONE 2026-08-09 (see Done). — On the animated share result panel, "Save"
   opens the clip in a viewer instead of downloading on iOS. iOS Safari ignores `<a download>` for video
   blobs — it navigates/opens the media rather than saving. The reliable iOS path to Photos is the native
   share sheet (`navigator.share({ files: [videoFile] })` → "Save Video"), not a download link. Fix:
@@ -241,6 +241,15 @@
 
 ## Done
 
+- ✅ 2026-08-09 — **Privacy/UX polish + iOS card-share save fix.** frontend only. (1) A **player-less
+  SuperAdmin can now view the Player Card tab** as a pure lookup surface (`canViewProfiles = showForms ||
+  logged-in admin) - they can pull up anyone's card; the Settings button is gated on having your *own*
+  player, so no dead button. (2) The **"Set up your player profile" modal is dismissable** again ("Maybe
+  later" + `closeCompleteProfileModal`): the persistent Players-tab notice is the retry path, so skipping
+  no longer strands a returning player - the original reason it was forced. (3) **iOS card-share Save**
+  now routes through the share sheet on iOS (`navigator.share({files})`) instead of `<a download>`, which
+  iOS ignores for video blobs (it just opened the clip in a viewer) - so "Save" reaches Photos/Files.
+  Desktop/Android keep the direct download.
 - ✅ 2026-08-09 — **Privacy P2c (admin polish) - privacy epic now functionally complete.** app.js +
   index.html. (1) **Admin see-all:** comparative reads now route through `statsFetch()` - SuperAdmins hit
   the authed `/profile-secure/matches?...` (unscrubbed), everyone else the public `/matches` (scrubbed), so

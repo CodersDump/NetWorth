@@ -886,7 +886,18 @@
     modal.appendChild(panel);
     const cleanup = () => { panel.remove(); setTimeout(() => URL.revokeObjectURL(url), 1500); };
     panel.querySelector('#nw-cs-vclose').onclick = cleanup;
-    panel.querySelector('#nw-cs-vsave').onclick = () => { try { download(blob, fname); } catch (e) {} try { window.open(url, '_blank'); } catch (e) {} };
+    panel.querySelector('#nw-cs-vsave').onclick = async () => {
+      // iOS ignores <a download> for a video blob (it just opens the clip
+      // in a viewer), so the only real save-to-Photos/Files path there is
+      // the share sheet. Everywhere else a direct download works.
+      const isIOS = /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+      const file = new File([blob], fname, { type: mime });
+      if (isIOS && navigator.canShare && navigator.canShare({ files: [file] })) {
+        try { await navigator.share({ files: [file], title: 'My NetWorth card', text: 'My badminton stats card' }); return; }
+        catch (e) { if (e && e.name === 'AbortError') return; }
+      }
+      try { download(blob, fname); } catch (e) { try { window.open(url, '_blank'); } catch (e2) {} }
+    };
     panel.querySelector('#nw-cs-vshare').onclick = async () => {   // fresh user gesture -> share is allowed
       const file = new File([blob], fname, { type: mime });
       if (navigator.canShare && navigator.canShare({ files: [file] })) {
