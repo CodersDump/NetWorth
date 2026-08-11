@@ -237,6 +237,117 @@ def _evaluate_quest(quest, player_id, week_matches, player_rating_by_id):
     return count
 
 
+# ---------- seasons (derived, soft-reset; lifetime rating never resets) ----------
+_SEASON_ROW_PREFIX = '__season__'
+
+def _season_config():
+    """Season definitions + soft-reset k live in the shared app-settings row
+    (players table), managed via /app-settings. Returns (enabled, k, [seasons])
+    with each season's window end resolved to the next season's start."""
+    s = players_table.get_item(Key={'player_id': _APP_SETTINGS_ID}).get('Item') or {}
+    enabled = bool(s.get('seasons_enabled', False))
+    try:
+        k = max(0.0, min(1.0, float(s.get('season_reset_k', 0.3))))
+    except (TypeError, ValueError):
+        k = 0.3
+    defs = [d for d in (s.get('seasons') or []) if d.get('start_date')]
+    defs.sort(key=lambda d: d['start_date'])
+    resolved = []
+    for i, d in enumerate(defs):
+        end = d.get('end_date') or (defs[i + 1]['start_date'] if i + 1 < len(defs) else '9999-12-31')
+        resolved.append({'id': d.get('id') or d['start_date'], 'name': d.get('name') or d['start_date'],
+                         'start_date': d['start_date'][:10], 'end_date': end[:10]})
+    return enabled, k, resolved
+
+def _resolve_season(resolved, which):
+    if not resolved:
+        return None
+    if not which or which == 'current':
+        today = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+        for s in resolved:
+            if s['start_date'] <= today < s['end_date']:
+                return s
+        return resolved[-1]
+    for s in resolved:
+        if s['id'] == which:
+            return s
+    return None
+
+def _ensure_season_baseline(season, k, items):
+    """Freeze, once, each player's lifetime rating as of the season start
+    (from stored ratings_after) plus the soft-reset baseline 1000+(r-1000)*k.
+    Frozen so edits to OLD matches don't move where a season started you; your
+    in-season movement still recalculates from the baseline. Sentinel row."""
+    row_id = _SEASON_ROW_PREFIX + season['id']
+    existing = matches_table.get_item(Key={'match_id': row_id}).get('Item')
+    if existing and existing.get('baseline'):
+        return existing
+    sd = season['start_date']
+    per = {}
+    for m in items:
+        d = m.get('date') or ''
+        if not d:
+            continue
+        ra = m.get('ratings_after') or {}
+        for pid in (m.get('team_a') or []) + (m.get('team_b') or []):
+            per.setdefault(pid, []).append((d, ra.get(pid)))
+    start_lifetime, baseline = {}, {}
+    for pid, rows in per.items():
+        rows.sort(key=lambda r: r[0])
+        pre = [r[1] for r in rows if r[0][:10] < sd and r[1] is not None]
+        r0 = int(pre[-1]) if pre else 1000
+        start_lifetime[pid] = r0
+        baseline[pid] = int(round(1000 + (r0 - 1000) * k))
+    row = {'match_id': row_id, 'season_id': season['id'], 'k': str(k),
+           'start_lifetime': start_lifetime, 'baseline': baseline,
+           'frozen_at': datetime.now(timezone.utc).isoformat()}
+    matches_table.put_item(Item=row)
+    return row
+
+def compute_season_leaderboard(season, items, k, min_games=5):
+    """Derived climb board: everyone starts the season at a soft-reset baseline
+    (frozen), then moves by their lifetime rating change across the window. No
+    Elo replay - reads each match's stored ratings_after."""
+    row = _ensure_season_baseline(season, k, items)
+    baseline = row.get('baseline') or {}
+    start_lifetime = row.get('start_lifetime') or {}
+    sd, ed = season['start_date'], season['end_date']
+    per = {}
+    for m in items:
+        d = m.get('date') or ''
+        if not d:
+            continue
+        ra = m.get('ratings_after') or {}
+        w = m.get('winner')
+        for pid in (m.get('team_a') or []):
+            per.setdefault(pid, []).append((d, ra.get(pid), w == 'A'))
+        for pid in (m.get('team_b') or []):
+            per.setdefault(pid, []).append((d, ra.get(pid), w == 'B'))
+    leaders = []
+    for pid, rows in per.items():
+        rows.sort(key=lambda r: r[0])
+        in_window = [r for r in rows if sd <= r[0][:10] < ed]
+        if len(in_window) < min_games:
+            continue
+        if pid in start_lifetime:
+            start_r = int(start_lifetime[pid])
+        else:
+            pre = [r[1] for r in rows if r[0][:10] < sd and r[1] is not None]
+            start_r = int(pre[-1]) if pre else 1000
+        upto = [r[1] for r in rows if r[0][:10] < ed and r[1] is not None]
+        end_r = int(upto[-1]) if upto else start_r
+        base = int(baseline.get(pid, round(1000 + (start_r - 1000) * k)))
+        score = base + (end_r - start_r)
+        wins = sum(1 for r in in_window if r[2])
+        leaders.append({'player_id': pid, 'games': len(in_window), 'wins': wins,
+                        'losses': len(in_window) - wins, 'season_start': base,
+                        'season_score': score, 'delta': score - base})
+    leaders.sort(key=lambda x: (-x['season_score'], -x['games']))
+    for i, l in enumerate(leaders):
+        l['rank'] = i + 1
+    return {'season': season, 'leaders': leaders, 'min_games': min_games}
+
+
 def list_quests(event):
     """Returns this week's quests with the caller's progress and claim state.
     Public-ish: requires a linked player to show progress, but the quest
@@ -1174,6 +1285,22 @@ def list_matches(event):
     # Privacy: omit private players from comparative outputs for everyone but a
     # SuperAdmin (only ever identified via an authed route). No-op when off.
     private_ids = set() if _is_super_admin(_caller_claims(event)) else _load_private_ids()
+    if params.get('seasons') == 'list':
+        s_enabled, s_k, s_resolved = _season_config()
+        s_cur = _resolve_season(s_resolved, 'current')
+        return _response(200, {'enabled': s_enabled, 'soft_reset_k': s_k,
+                               'current_id': s_cur['id'] if s_cur else None, 'seasons': s_resolved})
+    if params.get('season_leaderboard'):
+        s_enabled, s_k, s_resolved = _season_config()
+        if not s_enabled:
+            return _response(200, {'enabled': False, 'leaders': []})
+        season = _resolve_season(s_resolved, params.get('season_leaderboard'))
+        if not season:
+            return _response(404, {'error': 'season not found'})
+        board = compute_season_leaderboard(season, items, s_k)
+        board['leaders'] = _scrub_private(board['leaders'], private_ids)
+        board['enabled'] = True
+        return _response(200, board)
 
     if partnerships_for or radar_for:
         scoped_items = items

@@ -241,6 +241,25 @@
 
 ## Done
 
+- ✅ 2026-08-10 — **Seasons C1 (backend foundation, dark).** Design locked: **derived seasons, soft
+  reset, lifetime rating never resets.** Each season is an admin-defined window with an explicit
+  `start_date`; the board starts everyone at `1000 + (lifetime_at_start - 1000) * k` (k = soft-reset
+  retention, admin-adjustable, **default 0.3**) and then moves them by their lifetime rating change
+  across the window - so grinders re-climb to the top while a struggling player gets a fresh (non-500)
+  start each season. Chose distance-based soft reset over rank-based seeding (rank-based rewards finishing
+  low - a bias the owner flagged). **Storage:** definitions + `seasons_enabled` + `season_reset_k` live in
+  the app-settings row (managed via `/app-settings`); per-season **frozen baseline** (`start_lifetime` +
+  `baseline`) lives in a `__season__<id>` **sentinel row** in the matches table (mirrors `__quests__`) -
+  **no new table / template change.** Baseline is frozen once (from stored `ratings_after` as of the
+  start), so editing OLD matches never moves where a season started you, but in-season movement still
+  recalculates from that baseline off the recomputed `ratings_after` (exactly the owner's recompute point).
+  No Elo re-replay - reads stored `ratings_after`. **Reads (no new route):** `GET /matches?seasons=list`
+  and `?season_leaderboard=<id|current>`; season boards are privacy-scrubbed and SuperAdmin-see-all like
+  the other comparatives. Ships dark (`seasons_enabled` default off). **Next: C2** frontend (season board
+  on Stats + selector, season stats on the Player Card, admin season management UI); **C3** the rollover
+  scheduler that seals a finished season's final board + awards season badges; **C4** season-scoped tasks.
+  Testing: `POST /app-settings {key:'seasons', value:[{name,start_date}]}`, enable, then
+  `GET /matches?season_leaderboard=current`.
 - ✅ 2026-08-09 — **Privacy button race fix + `.scan()` pagination (KNOWN_ISSUES #15 closed).**
   (a) The Player Card Public/Private control was rendered by `updateAuthUI` *before* `loadVisiblePlayers`
   had defaulted the profile select, so `viewingOwn` was false and it hid until a manual refresh. Now

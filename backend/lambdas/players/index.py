@@ -786,7 +786,10 @@ def get_app_settings(event):
         'xp_public': bool(item.get('xp_public', False)),
         'voice_enabled': bool(item.get('voice_enabled', False)),
         'privacy_mode_enabled': bool(item.get('privacy_mode_enabled', False)),
-        'privacy_cooldown_days': int(item.get('privacy_cooldown_days', 7) or 0)
+        'privacy_cooldown_days': int(item.get('privacy_cooldown_days', 7) or 0),
+        'seasons_enabled': bool(item.get('seasons_enabled', False)),
+        'season_reset_k': str(item.get('season_reset_k', '0.3')),
+        'seasons': item.get('seasons') or []
     })
 
 
@@ -796,13 +799,35 @@ def set_app_setting(event):
         return _response(403, {'error': 'only a SuperAdmin can change app settings'})
     body = json.loads(event.get('body') or '{}')
     key = body.get('key')
-    if key not in ('instant_create', 'xp_public', 'voice_enabled', 'privacy_mode_enabled', 'privacy_cooldown_days'):
+    if key not in ('instant_create', 'xp_public', 'voice_enabled', 'privacy_mode_enabled', 'privacy_cooldown_days', 'seasons_enabled', 'season_reset_k', 'seasons'):
         return _response(400, {'error': 'unknown setting'})
     if key == 'privacy_cooldown_days':
         try:
             value = max(0, min(30, int(body.get('value'))))
         except (TypeError, ValueError):
             return _response(400, {'error': 'privacy_cooldown_days must be a number (0-30)'})
+    elif key == 'season_reset_k':
+        try:
+            value = str(max(0.0, min(1.0, float(body.get('value')))))
+        except (TypeError, ValueError):
+            return _response(400, {'error': 'season_reset_k must be a number 0-1'})
+    elif key == 'seasons':
+        raw = body.get('value')
+        if not isinstance(raw, list):
+            return _response(400, {'error': 'seasons must be a list'})
+        value = []
+        for sdef in raw:
+            if not isinstance(sdef, dict):
+                continue
+            nm = (sdef.get('name') or '').strip()
+            start = (sdef.get('start_date') or '').strip()[:10]
+            if not nm or not start:
+                continue
+            entry = {'id': sdef.get('id') or str(uuid.uuid4()), 'name': nm, 'start_date': start}
+            end = (sdef.get('end_date') or '').strip()[:10]
+            if end:
+                entry['end_date'] = end
+            value.append(entry)
     else:
         value = bool(body.get('value'))
     table.update_item(
