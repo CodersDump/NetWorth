@@ -361,7 +361,7 @@ let userPool = null;
     function loadStatsBundle() {
       loadRankings(); loadDiversity(); loadBadges();
       loadHistory(); loadHallOfFame(); loadAttendance();
-      loadPublicWalkins();
+      loadPublicWalkins(); loadSeasonsMeta();
     }
     /** Profile is per-selected-player and needs the roster ready, so it has
      *  its own guard: don't mark it loaded until a player is actually
@@ -498,6 +498,127 @@ let userPool = null;
         updateAuthUI();
         if (statusEl) statusEl.textContent = 'Done - set to ' + (makePrivate ? 'private' : 'public') + '. They may need to log out/in to see it.';
       } catch (e) { if (statusEl) statusEl.textContent = 'Failed: ' + e.message; }
+    }
+    // ---------- seasons (frontend, C2) ----------
+    let seasonsEnabled = false, seasonResetK = 0.3, seasonsList = [], currentSeasonId = null;
+    /** Clean Apple-Fitness-style medallion for a top-3 finisher. */
+    function seasonMedallion(rank, size) {
+      size = size || 26;
+      const pal = { 1: ['#FFE27A', '#F4B23E', '#8A5A12'], 2: ['#F2F3F6', '#C7CBD4', '#7C818C'], 3: ['#F0B98A', '#CE8A4E', '#7A4A24'] }[rank];
+      if (!pal) return '';
+      const g = 'sm' + rank;
+      return '<svg width="' + size + '" height="' + size + '" viewBox="0 0 100 100" aria-hidden="true" style="flex:none;vertical-align:middle;">'
+        + '<defs><linearGradient id="' + g + '" x1="0" y1="0" x2="0" y2="1">'
+        + '<stop offset="0" stop-color="' + pal[0] + '"/><stop offset="0.55" stop-color="' + pal[1] + '"/><stop offset="1" stop-color="' + pal[2] + '"/>'
+        + '</linearGradient></defs>'
+        + '<polygon points="30,6 70,6 94,50 70,94 30,94 6,50" fill="url(#' + g + ')"/>'
+        + '<polygon points="30,6 70,6 94,50 70,94 30,94 6,50" fill="none" stroke="rgba(255,255,255,0.55)" stroke-width="3"/>'
+        + '<text x="50" y="50" dy="0.35em" text-anchor="middle" font-size="42" font-weight="800" fill="#3a2a08">' + rank + '</text></svg>';
+    }
+    async function loadSeasonsMeta() {
+      try {
+        const res = await fetch(`${API_BASE_URL}/matches?seasons=list`);
+        const data = await res.json();
+        seasonsEnabled = !!data.enabled; seasonsList = data.seasons || [];
+        currentSeasonId = data.current_id || (seasonsList[0] && seasonsList[0].id) || null;
+        const card = document.getElementById('season-board-card');
+        if (card) card.style.display = (seasonsEnabled && seasonsList.length) ? 'block' : 'none';
+        const sel = document.getElementById('season-select');
+        if (sel) {
+          const prev = sel.value;
+          sel.innerHTML = seasonsList.slice().reverse().map(s => `<option value="${s.id}">${escapeHtml(s.name)}</option>`).join('');
+          sel.value = (prev && seasonsList.some(s => s.id === prev)) ? prev : (currentSeasonId || (seasonsList[0] && seasonsList[0].id) || '');
+          if (seasonsEnabled && seasonsList.length) loadSeasonBoard(sel.value);
+        }
+      } catch (_) { /* seasons stay hidden */ }
+    }
+    async function loadSeasonBoard(seasonId) {
+      const el = document.getElementById('season-board-result');
+      if (!el) return;
+      if (!seasonId) { el.innerHTML = '<p class="card-sub">No season selected.</p>'; return; }
+      el.textContent = 'Loading...';
+      try {
+        const res = await statsFetch(`season_leaderboard=${encodeURIComponent(seasonId)}`);
+        const data = await res.json();
+        if (!res.ok) { el.textContent = 'Error: ' + ((data && data.error) || 'could not load'); return; }
+        const leaders = data.leaders || [];
+        if (!leaders.length) { el.innerHTML = '<p class="card-sub">No qualifying players yet (need at least 5 matches this season).</p>'; return; }
+        const nameById = {}; allPlayers.forEach(p => { nameById[p.player_id] = formatPlayerLabel(p.name, p.nickname); });
+        let html = '<table style="width:100%;border-collapse:collapse;"><thead><tr>'
+          + '<th style="text-align:left;padding:4px;">#</th><th style="text-align:left;padding:4px;">Player</th>'
+          + '<th style="text-align:right;padding:4px;">Season</th><th style="text-align:right;padding:4px;">Climb</th><th style="text-align:right;padding:4px;">GP</th></tr></thead><tbody>';
+        leaders.forEach(l => {
+          const med = seasonMedallion(l.rank, 24);
+          const rankCell = med || l.rank;
+          const climb = (l.delta >= 0 ? '+' : '') + l.delta;
+          const climbColor = l.delta > 0 ? '#4caf50' : (l.delta < 0 ? '#e05252' : 'var(--text-secondary,#888)');
+          html += '<tr style="border-top:1px solid var(--border);">'
+            + '<td style="padding:6px 4px;">' + rankCell + '</td>'
+            + '<td style="padding:6px 4px;">' + escapeHtml(nameById[l.player_id] || l.player_id) + '</td>'
+            + '<td style="padding:6px 4px;text-align:right;font-weight:600;">' + l.season_score + '</td>'
+            + '<td style="padding:6px 4px;text-align:right;color:' + climbColor + ';">' + climb + '</td>'
+            + '<td style="padding:6px 4px;text-align:right;">' + l.games + '</td></tr>';
+        });
+        html += '</tbody></table>';
+        el.innerHTML = html;
+      } catch (e) { el.textContent = 'Failed: ' + e.message; }
+    }
+    function renderSeasonAdmin() {
+      const el = document.getElementById('season-admin-list');
+      if (!el) return;
+      if (!seasonsList.length) { el.innerHTML = '<span class="card-sub">No seasons yet.</span>'; return; }
+      el.innerHTML = seasonsList.slice().sort((a, b) => (a.start_date > b.start_date ? 1 : -1)).map(s =>
+        '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:3px 0;">'
+        + '<span>' + escapeHtml(s.name) + ' <span class="card-sub">(' + s.start_date + (s.end_date ? ' \u2192 ' + s.end_date : '') + ')</span></span>'
+        + '<button type="button" class="secondary" style="padding:2px 8px;font-size:12px;" onclick="deleteSeason(\'' + s.id + '\')">Remove</button></div>').join('');
+    }
+    async function saveSeasons(list, statusElId, okMsg) {
+      const statusEl = document.getElementById(statusElId);
+      if (statusEl) statusEl.textContent = 'Saving...';
+      const { res, error } = await authedFetch(`${API_BASE_URL}/app-settings`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key: 'seasons', value: list })
+      });
+      if (!res.ok) { if (statusEl) statusEl.textContent = 'Error: ' + error; return false; }
+      await loadSeasonsMeta(); renderSeasonAdmin();
+      if (statusEl) statusEl.textContent = okMsg || 'Saved.';
+      return true;
+    }
+    async function addSeason() {
+      const name = (document.getElementById('new-season-name').value || '').trim();
+      const start = document.getElementById('new-season-start').value;
+      const end = document.getElementById('new-season-end').value;
+      const statusEl = document.getElementById('new-season-status');
+      if (!name || !start) { if (statusEl) statusEl.textContent = 'Name and start date are required.'; return; }
+      const entry = { id: 's' + Date.now(), name, start_date: start };
+      if (end) entry.end_date = end;
+      if (await saveSeasons(seasonsList.concat([entry]), 'new-season-status', 'Season added.')) {
+        document.getElementById('new-season-name').value = '';
+        document.getElementById('new-season-start').value = '';
+        document.getElementById('new-season-end').value = '';
+      }
+    }
+    async function deleteSeason(id) {
+      if (!await nwConfirm('Remove this season? Its leaderboard stops showing (matches and all-time ratings are untouched).')) return;
+      await saveSeasons(seasonsList.filter(s => s.id !== id), 'new-season-status', 'Season removed.');
+    }
+    async function setSeasonsEnabled(value) {
+      const statusEl = document.getElementById('app-seasons-status');
+      if (statusEl) statusEl.textContent = 'Saving...';
+      const { res, error } = await authedFetch(`${API_BASE_URL}/app-settings`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key: 'seasons_enabled', value })
+      });
+      if (!res.ok) { if (statusEl) statusEl.textContent = 'Error: ' + error; return; }
+      seasonsEnabled = value;
+      if (statusEl) statusEl.textContent = value ? 'Seasons are ON.' : 'Seasons are OFF.';
+      loadSeasonsMeta();
+    }
+    async function setSeasonK(value) {
+      const statusEl = document.getElementById('app-season-k-status');
+      if (statusEl) statusEl.textContent = 'Saving...';
+      const { res, error } = await authedFetch(`${API_BASE_URL}/app-settings`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key: 'season_reset_k', value: Number(value) })
+      });
+      if (statusEl) statusEl.textContent = res.ok ? ('Soft-reset k set to ' + Number(value) + '.') : ('Error: ' + error);
     }
     async function loadPlayers() {
       const res = await fetch(`${API_BASE_URL}/players`);
@@ -2741,6 +2862,12 @@ let userPool = null;
         if (pcd) pcd.value = (data.privacy_cooldown_days != null ? data.privacy_cooldown_days : 7);
         applyVoiceVisibility();
         populateAdminPrivacySelect();
+        seasonsEnabled = !!data.seasons_enabled;
+        const sec = document.getElementById('app-seasons-enabled'); if (sec) sec.checked = seasonsEnabled;
+        seasonResetK = parseFloat(data.season_reset_k != null ? data.season_reset_k : 0.3);
+        const skc = document.getElementById('app-season-k'); if (skc) skc.value = seasonResetK;
+        seasonsList = data.seasons || [];
+        renderSeasonAdmin();
         if (typeof updateAuthUI === 'function') updateAuthUI();
       } catch (_) { /* leave unchecked */ }
     }

@@ -503,6 +503,15 @@
         <button id="export-matches-csv-btn" type="button" class="secondary">Export matches CSV</button>
       </div>
 
+      <div class="card" id="season-board-card" style="display:none;">
+        <h2>Season</h2>
+        <p class="card-sub">Each season everyone starts from a soft-reset baseline near 1000 and climbs from there. Your all-time rating never resets.</p>
+        <label>Season
+          <select id="season-select" onchange="loadSeasonBoard(this.value)"></select>
+        </label>
+        <div id="season-board-result" style="margin-top:12px;"></div>
+      </div>
+
       <div class="card">
         <h2>Rankings</h2>
         <p class="card-sub">Sorted by current rating.</p>
@@ -1033,6 +1042,32 @@
                 <button type="button" class="secondary" onclick="adminSetPrivacy(false)">Make public</button>
               </div>
               <span id="admin-privacy-status" style="font-size:12px;"></span>
+            </div>
+
+            <div style="margin-top:14px;border-top:1px solid var(--border);padding-top:12px;">
+              <div class="switch-row">
+                <label class="switch"><input type="checkbox" id="app-seasons-enabled" onchange="setSeasonsEnabled(this.checked)"><span class="slider"></span></label>
+                <span>Seasons (soft-reset leaderboard)</span>
+              </div>
+              <p class="card-sub" style="margin:6px 0 0;">Everyone starts each season near 1000 and climbs; all-time rating is untouched.</p>
+              <span id="app-seasons-status" style="font-size:12px;"></span>
+              <div style="margin-top:8px;">
+                <label style="font-size:13px;">Soft-reset k (0-1, higher keeps more of your lead):
+                  <input type="number" id="app-season-k" min="0" max="1" step="0.05" style="width:70px;margin-left:6px;" onchange="setSeasonK(this.value)">
+                </label>
+                <span id="app-season-k-status" style="font-size:12px;margin-left:8px;"></span>
+              </div>
+              <div style="margin-top:10px;">
+                <div style="font-size:13px;font-weight:600;margin-bottom:4px;">Seasons</div>
+                <div id="season-admin-list" style="font-size:13px;"></div>
+                <div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;align-items:flex-end;">
+                  <label style="font-size:12px;">Name<br><input type="text" id="new-season-name" placeholder="Season 1" style="width:120px;"></label>
+                  <label style="font-size:12px;">Start<br><input type="date" id="new-season-start"></label>
+                  <label style="font-size:12px;">End (optional)<br><input type="date" id="new-season-end"></label>
+                  <button type="button" class="secondary" onclick="addSeason()">Add season</button>
+                </div>
+                <span id="new-season-status" style="font-size:12px;"></span>
+              </div>
             </div>
 
             <div class="switch-row" style="margin-top:12px;">
