@@ -241,6 +241,17 @@
 
 ## Done
 
+- ✅ 2026-08-10 — **Seasons C2 (frontend, dark until enabled).** index.html + app.js. **Season board** on
+  the Stats tab: a season selector + climb leaderboard (rank, player, season score, climb delta, games),
+  reading `/matches?season_leaderboard` via `statsFetch` (privacy-scrubbed, admin see-all). Top-3 get a
+  clean **Apple-Fitness-style hexagon medallion** (`seasonMedallion` - flat hexagon, single gradient,
+  rank glyph); full season achievement badges come with C3 awarding. **Admin season management** in the
+  settings panel: enable toggle, soft-reset `k` input, season list + add/remove (name + start + optional
+  end) - writes the `seasons` list via `/app-settings`, so no more hand-POSTing JSON. Card hidden unless
+  seasons enabled + at least one season defined. **Season 0 setup:** create "Season 0" start 2026-01-01
+  (or first-match date) end 2026-09-01, then "Season 1" start 2026-09-01 - via the new admin UI. **Next:**
+  C3 rollover scheduler (seal a finished season's final board + award season badges) and season stats on
+  the Player Card; C4 season-scoped tasks.
 - ✅ 2026-08-10 — **Seasons C1 (backend foundation, dark).** Design locked: **derived seasons, soft
   reset, lifetime rating never resets.** Each season is an admin-defined window with an explicit
   `start_date`; the board starts everyone at `1000 + (lifetime_at_start - 1000) * k` (k = soft-reset
