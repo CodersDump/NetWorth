@@ -79,6 +79,9 @@ team pickers, stats, finance settlement, and each dropped player's own `hasLinke
 "no linked profile" despite a healthy Cognito link — a candidate cause in the 2026-08-07 Suren case
 before it turned out to be a stale token). **Safe move:** paginate every `.scan()` (loop on
 `LastEvaluatedKey`); grep all lambdas for bare `.scan(` — a copy-paste-prone shape. (Found 2026-08-07.)
+**RESOLVED 2026-08-09:** `_scan_all()` helper added to both lambdas; all 9 players-table scans (incl.
+`list_players`) + the matches/history/tournaments scans paginated. Only the small `claim_requests`/
+`groups` scans remain bare (low risk).
 
 ---
 

@@ -241,6 +241,15 @@
 
 ## Done
 
+- ✅ 2026-08-09 — **Privacy button race fix + `.scan()` pagination (KNOWN_ISSUES #15 closed).**
+  (a) The Player Card Public/Private control was rendered by `updateAuthUI` *before* `loadVisiblePlayers`
+  had defaulted the profile select, so `viewingOwn` was false and it hid until a manual refresh. Now
+  `renderPrivacyControl()` also fires at the end of `loadProfile` and `loadVisiblePlayers`, once the
+  selected player is settled - so it reflects correctly on first paint. (b) Finished #15: added a
+  paginated `_scan_all()` to the players lambda and swapped all **9** players-table `.scan()` sites
+  (incl. `list_players`) to it via a word-boundary regex (left the tiny `claim_requests`/`groups`
+  scans alone); in the matches lambda paginated the remaining **matches (3) + history (1) + tournaments
+  (2)** scans. Growing tables (players, matches, history, tournaments) no longer truncate at 1 MB.
 - ✅ 2026-08-09 — **Privacy/UX polish + iOS card-share save fix.** frontend only. (1) A **player-less
   SuperAdmin can now view the Player Card tab** as a pure lookup surface (`canViewProfiles = showForms ||
   logged-in admin) - they can pull up anyone's card; the Settings button is gated on having your *own*

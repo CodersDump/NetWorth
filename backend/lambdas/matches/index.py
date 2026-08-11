@@ -246,7 +246,7 @@ def list_quests(event):
     quests = _load_quests()
 
     monday, next_monday = _week_bounds_utc()
-    all_matches = [m for m in matches_table.scan().get('Items', [])
+    all_matches = [m for m in _scan_all(matches_table)
                    if m.get('match_id') not in (_EVENTS_ROW_ID, _QUESTS_ROW_ID)]
     week_matches = [m for m in all_matches
                     if monday <= (m.get('date') or '')[:10] < next_monday]
@@ -335,7 +335,7 @@ def claim_quest(event):
         return _response(404, {'error': 'quest not found'})
 
     monday, next_monday = _week_bounds_utc()
-    week_matches = [m for m in matches_table.scan().get('Items', [])
+    week_matches = [m for m in _scan_all(matches_table)
                     if m.get('match_id') not in (_EVENTS_ROW_ID, _QUESTS_ROW_ID)
                     and monday <= (m.get('date') or '')[:10] < next_monday]
     progress = _evaluate_quest(quest, pid, week_matches, {})
@@ -1045,7 +1045,7 @@ def get_pairing_count(team_ids, exclude_match_id=None):
         return 0
     pair_key = frozenset(team_ids)
     count = 0
-    items = matches_table.scan().get('Items', [])
+    items = _scan_all(matches_table)
     for m in items:
         if exclude_match_id and m.get('match_id') == exclude_match_id:
             continue
@@ -1193,11 +1193,11 @@ def list_matches(event):
     if params.get('progress_badges'):
         return _response(200, _scrub_private(compute_progress_badges(items, group_id), private_ids))
     if params.get('achievements_for'):
-        all_tournaments = tournaments_table.scan().get('Items', [])
+        all_tournaments = _scan_all(tournaments_table)
         return _response(200, compute_achievements(params.get('achievements_for'), items, all_tournaments))
     if params.get('profile_bundle_for'):
         player_id = params.get('profile_bundle_for')
-        all_tournaments = tournaments_table.scan().get('Items', [])
+        all_tournaments = _scan_all(tournaments_table)
         # Scrub leaderboard/distribution parts for private players; leave the
         # card owner's own factual history (recent_form, record) untouched.
         return _response(200, {
@@ -2063,7 +2063,7 @@ def compute_progress_history_summary(scope_label, period_name):
     streaks (consecutive periods won in a row) and lifetime holder counts
     for 'most improved' - the gamified badges built on top of history that
     can never be recomputed retroactively once it's been overwritten."""
-    items = history_table.scan().get('Items', [])
+    items = _scan_all(history_table)
     filtered = [i for i in items if i.get('scope') == scope_label and i.get('period') == period_name]
     filtered.sort(key=lambda i: i.get('period_start', ''))
 
