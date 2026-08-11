@@ -362,6 +362,29 @@ let userPool = null;
       loadRankings(); loadDiversity(); loadBadges();
       loadHistory(); loadHallOfFame(); loadAttendance();
       loadPublicWalkins(); loadSeasonsMeta();
+      makeStatsCollapsible();
+    }
+    /** Turn each Stats card into a tap-to-expand section so you don't scroll
+     *  through every one. Idempotent; preserves inner element IDs. */
+    function makeStatsCollapsible() {
+      const panel = document.getElementById('tab-stats');
+      if (!panel) return;
+      Array.prototype.forEach.call(panel.querySelectorAll('.card'), (card) => {
+        if (card.dataset.collapsible) return;
+        const h2 = card.querySelector('h2');
+        if (!h2) return;
+        card.dataset.collapsible = '1';
+        const body = document.createElement('div');
+        while (h2.nextSibling) body.appendChild(h2.nextSibling);
+        card.appendChild(body);
+        h2.style.cursor = 'pointer'; h2.style.userSelect = 'none';
+        const caret = document.createElement('span');
+        caret.style.opacity = '0.6'; caret.style.fontSize = '0.8em'; caret.style.marginLeft = '6px';
+        h2.appendChild(caret);
+        const setOpen = (open) => { body.style.display = open ? '' : 'none'; caret.textContent = open ? '\u25be' : '\u25b8'; };
+        setOpen(false);
+        h2.addEventListener('click', () => setOpen(body.style.display === 'none'));
+      });
     }
     /** Profile is per-selected-player and needs the roster ready, so it has
      *  its own guard: don't mark it loaded until a player is actually
@@ -521,14 +544,19 @@ let userPool = null;
         const data = await res.json();
         seasonsEnabled = !!data.enabled; seasonsList = data.seasons || [];
         currentSeasonId = data.current_id || (seasonsList[0] && seasonsList[0].id) || null;
+        // Only seasons that have started are shown to members (a future
+        // season sits in the admin list until its start date arrives).
+        const _today = new Date().toISOString().slice(0, 10);
+        const startedSeasons = seasonsList.filter(s => s.start_date <= _today);
         const card = document.getElementById('season-board-card');
-        if (card) card.style.display = (seasonsEnabled && seasonsList.length) ? 'block' : 'none';
+        if (card) card.style.display = (seasonsEnabled && startedSeasons.length) ? 'block' : 'none';
         const sel = document.getElementById('season-select');
         if (sel) {
           const prev = sel.value;
-          sel.innerHTML = seasonsList.slice().reverse().map(s => `<option value="${s.id}">${escapeHtml(s.name)}</option>`).join('');
-          sel.value = (prev && seasonsList.some(s => s.id === prev)) ? prev : (currentSeasonId || (seasonsList[0] && seasonsList[0].id) || '');
-          if (seasonsEnabled && seasonsList.length) loadSeasonBoard(sel.value);
+          sel.innerHTML = startedSeasons.slice().reverse().map(s => `<option value="${s.id}">${escapeHtml(s.name)}</option>`).join('');
+          const validCur = startedSeasons.some(s => s.id === currentSeasonId) ? currentSeasonId : (startedSeasons[startedSeasons.length - 1] && startedSeasons[startedSeasons.length - 1].id) || '';
+          sel.value = (prev && startedSeasons.some(s => s.id === prev)) ? prev : validCur;
+          if (seasonsEnabled && startedSeasons.length) loadSeasonBoard(sel.value);
         }
       } catch (_) { /* seasons stay hidden */ }
     }
@@ -6069,14 +6097,17 @@ let userPool = null;
       const loggedIn = isLoggedIn();
       const linked = hasLinkedPlayer();
       const showForms = loggedIn && linked;
+      // A player-less SuperAdmin can still record matches / run tournaments as
+      // a non-participant recorder - no need to give the admin a player profile.
+      const canRecord = showForms || (loggedIn && isSuperAdmin());
       document.getElementById('register-guest-notice').style.display = loggedIn ? 'none' : 'block';
       document.getElementById('register-player-card').style.display = loggedIn ? 'block' : 'none';
       document.getElementById('record-match-guest-notice').style.display = loggedIn ? 'none' : 'block';
-      document.getElementById('record-match-unlinked-notice').style.display = (loggedIn && !linked) ? 'block' : 'none';
-      document.getElementById('record-match-card').style.display = showForms ? 'block' : 'none';
-      document.getElementById('match-quick-add-player-btn').style.display = showForms ? 'inline-block' : 'none';
-      document.getElementById('create-tournament-guest-notice').style.display = showForms ? 'none' : 'block';
-      document.getElementById('create-tournament-card').style.display = showForms ? 'block' : 'none';
+      document.getElementById('record-match-unlinked-notice').style.display = (loggedIn && !linked && !isSuperAdmin()) ? 'block' : 'none';
+      document.getElementById('record-match-card').style.display = canRecord ? 'block' : 'none';
+      document.getElementById('match-quick-add-player-btn').style.display = canRecord ? 'inline-block' : 'none';
+      document.getElementById('create-tournament-guest-notice').style.display = canRecord ? 'none' : 'block';
+      document.getElementById('create-tournament-card').style.display = canRecord ? 'block' : 'none';
       // Guests see only the public UPI QR card, not even the option to
       // try entering a finance view key.
       // Don't reshow the key form if finance is already unlocked - a
