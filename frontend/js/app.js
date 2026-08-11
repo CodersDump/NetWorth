@@ -5955,9 +5955,13 @@ let userPool = null;
       if (!showForms) document.getElementById('finance-content').style.display = 'none';
       // Profile: guests see a login prompt only; logged-in users see the
       // real tab (populated from /visible-players, group-scoped server-side).
-      document.getElementById('profile-guest-notice').style.display = showForms ? 'none' : 'block';
-      document.getElementById('profile-content-wrapper').style.display = showForms ? 'block' : 'none';
-      if (showForms) loadVisiblePlayers();
+      // A player-less SuperAdmin still gets the Player Card tab as a pure
+      // viewing surface (look up anyone's card); they just have no card of
+      // their own to customize.
+      const canViewProfiles = showForms || (loggedIn && isSuperAdmin());
+      document.getElementById('profile-guest-notice').style.display = canViewProfiles ? 'none' : 'block';
+      document.getElementById('profile-content-wrapper').style.display = canViewProfiles ? 'block' : 'none';
+      if (canViewProfiles) loadVisiblePlayers();
       document.getElementById('register-group-link-label').style.display = showForms ? 'block' : 'none';
       if (authSession) {
         const linkedPlayer = allPlayers.find(p => p.player_id === myPlayerId());
@@ -5967,12 +5971,11 @@ let userPool = null;
         statusEl.textContent = identity + (isSuperAdmin() ? ' (SuperAdmin)' : '');
         loginBtn.style.display = 'none';
         logoutBtn.style.display = 'inline-block';
-        // A pure SuperAdmin account (no player of its own) still needs
-        // Settings, because claim approvals live in there. Gating this on
-        // linkedPlayer alone would lock the oversight account out of the
-        // one screen it exists to use.
+        // Settings is card customization only now (approvals moved to the
+        // Reviews & Approvals tab), so a player-less admin has nothing to
+        // edit here - gate on having your own player.
         document.getElementById('open-settings-btn').style.display =
-          (linkedPlayer || isSuperAdmin()) ? 'inline-block' : 'none';
+          linkedPlayer ? 'inline-block' : 'none';
       } else {
         statusEl.textContent = 'Guest';
         loginBtn.style.display = 'inline-block';
@@ -6053,6 +6056,10 @@ let userPool = null;
       offerPendingMatchRestore();
     }
 
+    // Dismissable now: the persistent "Finish setting up your account"
+    // notice on the Players tab is the retry path, so skipping no longer
+    // strands a returning player (the original reason it was forced).
+    function closeCompleteProfileModal() { document.getElementById('complete-profile-modal').style.display = 'none'; }
     async function openCompleteProfileModal() {
       document.getElementById('complete-profile-modal').style.display = 'flex';
       // If there's nothing to claim, the chooser is a pointless extra step -
