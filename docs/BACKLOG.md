@@ -241,6 +241,15 @@
 
 ## Done
 
+- ✅ 2026-08-10 — **Seasons C2 polish + admin-can-record (frontend).** (1) **Future seasons** no longer
+  appear in the member Season selector - only seasons whose `start_date <= today` show; a future season
+  (e.g. Season 1 starting Sep 1) stays in the admin list until it starts. (2) **Collapsible Stats sections**
+  (`makeStatsCollapsible`): every Stats card is now tap-to-expand (all start collapsed), so you don't
+  scroll through each - inner element IDs preserved, idempotent. (3) **Player-less admin can record
+  matches / run tournaments** as a non-participant recorder (`canRecord = showForms || logged-in admin`),
+  and the 'account not linked' notice is hidden for admins - so the admin needs **no** player profile
+  (nothing to hide from rankings). If a profile is ever wanted for card testing, the privacy `private`
+  flag already hides it from comparatives. **Next: C3** (rollover seal + season badges + card season line).
 - ✅ 2026-08-10 — **Seasons C2 (frontend, dark until enabled).** index.html + app.js. **Season board** on
   the Stats tab: a season selector + climb leaderboard (rank, player, season score, climb delta, games),
   reading `/matches?season_leaderboard` via `statsFetch` (privacy-scrubbed, admin see-all). Top-3 get a
