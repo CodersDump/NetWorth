@@ -348,6 +348,64 @@ def compute_season_leaderboard(season, items, k, min_games=5):
     return {'season': season, 'leaders': leaders, 'min_games': min_games}
 
 
+def _season_board_leaders(season, items, k):
+    """Leaders for a season: sealed (frozen) if it has ended, else live."""
+    today = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+    row_id = _SEASON_ROW_PREFIX + season['id']
+    if season['end_date'] <= today:
+        row = matches_table.get_item(Key={'match_id': row_id}).get('Item') or {}
+        if row.get('sealed_leaders') is not None:
+            return row['sealed_leaders'], True
+        board = compute_season_leaderboard(season, items, k)
+        try:
+            matches_table.update_item(Key={'match_id': row_id},
+                UpdateExpression='SET sealed_leaders = :l, sealed_at = :t',
+                ExpressionAttributeValues={':l': board['leaders'], ':t': today})
+        except Exception:
+            pass
+        return board['leaders'], True
+    return compute_season_leaderboard(season, items, k)['leaders'], False
+
+def _season_badges_for(player_id, leaders):
+    """A player's standing + earned badges on one season board."""
+    me = next((l for l in leaders if l.get('player_id') == player_id), None)
+    if not me:
+        return None
+    badges = []
+    if me.get('rank') in (1, 2, 3):
+        badges.append({'kind': 'podium', 'rank': me['rank']})
+    if leaders:
+        top_improved = max(leaders, key=lambda l: l.get('delta', -10**9))
+        top_iron = max(leaders, key=lambda l: l.get('games', 0))
+        if top_improved.get('player_id') == player_id and me.get('delta', 0) > 0:
+            badges.append({'kind': 'most_improved'})
+        if top_iron.get('player_id') == player_id:
+            badges.append({'kind': 'iron'})
+    badges.append({'kind': 'participation'})
+    return {'rank': me.get('rank'), 'season_score': me.get('season_score'),
+            'delta': me.get('delta'), 'games': me.get('games'), 'badges': badges}
+
+def compute_player_season_summary(player_id, items):
+    """Per-season standing + badges for one player, across started seasons."""
+    enabled, k, resolved = _season_config()
+    if not enabled:
+        return {'enabled': False, 'seasons': []}
+    today = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+    out = []
+    for s in resolved:
+        if s['start_date'] > today:
+            continue
+        leaders, sealed = _season_board_leaders(s, items, k)
+        info = _season_badges_for(player_id, leaders)
+        if not info:
+            continue
+        info['season'] = s
+        info['sealed'] = sealed
+        out.append(info)
+    out.reverse()
+    return {'enabled': True, 'seasons': out}
+
+
 def list_quests(event):
     """Returns this week's quests with the caller's progress and claim state.
     Public-ish: requires a linked player to show progress, but the quest
@@ -1285,6 +1343,11 @@ def list_matches(event):
     # Privacy: omit private players from comparative outputs for everyone but a
     # SuperAdmin (only ever identified via an authed route). No-op when off.
     private_ids = set() if _is_super_admin(_caller_claims(event)) else _load_private_ids()
+    if params.get('player_season_summary'):
+        _pss = params.get('player_season_summary')
+        if _pss in private_ids:
+            return _response(200, {'enabled': True, 'seasons': [], 'private': True})
+        return _response(200, compute_player_season_summary(_pss, items))
     if params.get('seasons') == 'list':
         s_enabled, s_k, s_resolved = _season_config()
         s_cur = _resolve_season(s_resolved, 'current')
