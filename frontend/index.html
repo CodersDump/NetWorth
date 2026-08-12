@@ -156,6 +156,18 @@
   <!-- Settings: cosmetic profile editing lives here, separate from Player
        Card, which stays a pure viewing surface. Changes made here show up
        on your own Player Card immediately. -->
+  <div id="achievements-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:1000; align-items:flex-start; justify-content:center; padding-top:60px;">
+    <div class="card" style="max-width:560px; width:92%; max-height:85vh; overflow-y:auto;">
+      <div style="display:flex; justify-content:space-between; align-items:center;">
+        <h2 style="margin:0;">Achievements</h2>
+        <button class="secondary" onclick="closeAchievementsModal()" type="button">&#10005;</button>
+      </div>
+      <p class="card-sub" style="margin-top:4px;">Records and badges <span id="achievements-modal-who">this player</span> currently holds.</p>
+      <p id="profile-streak-line" style="font-size:14px; margin:0 0 12px;"></p>
+      <div id="profile-achievements-result" class="achievement-grid"></div>
+    </div>
+  </div>
+
   <div id="settings-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:1000; align-items:flex-start; justify-content:center; padding-top:60px;">
     <div class="card" style="max-width:420px; width:90%; max-height:85vh; overflow-y:auto;">
       <div style="display:flex; justify-content:space-between; align-items:center;">
@@ -827,6 +839,8 @@
                   style="margin:0; padding:8px 12px; font-size:16px; line-height:1;" onclick="refreshProfile()">&#8635;</button>
           <button type="button" id="open-settings-btn" title="Customize my card &amp; account settings"
                   style="margin:0; padding:8px 14px; font-size:13px; line-height:1; display:none;" onclick="openSettingsModal()">&#9881; Settings</button>
+          <button type="button" id="open-achievements-btn" title="This player's records &amp; badges"
+                  style="margin:0; padding:8px 14px; font-size:13px; line-height:1;" onclick="openAchievementsModal()">&#127942; Achievements</button>
           <button type="button" id="profile-share-btn" title="Customize &amp; share your card"
                   style="margin:0; padding:8px 14px; font-size:13px; line-height:1;" onclick="openCardShare()">Share card</button>
         </div>
@@ -955,12 +969,6 @@
         <svg id="profile-radar-svg" viewBox="0 0 600 600" style="width:100%; max-width:600px; height:auto; display:block; margin:12px auto 0;"></svg>
       </div>
 
-      <div class="card">
-        <h2>Achievements</h2>
-        <p class="card-sub">Records and badges this player currently holds.</p>
-        <p id="profile-streak-line" style="font-size:14px; margin:0 0 12px;"></p>
-        <div id="profile-achievements-result" class="achievement-grid"></div>
-      </div>
       </div>
     </div>
 

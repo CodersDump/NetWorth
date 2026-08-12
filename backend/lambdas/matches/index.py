@@ -1297,6 +1297,29 @@ def list_matches(event):
         season = _resolve_season(s_resolved, params.get('season_leaderboard'))
         if not season:
             return _response(404, {'error': 'season not found'})
+        s_today = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+        s_row_id = _SEASON_ROW_PREFIX + season['id']
+        if season['end_date'] <= s_today:
+            # Season has ended -> SEAL it: freeze the final board once so past
+            # seasons are immutable (later match edits recompute lifetime but no
+            # longer reshuffle a finished season).
+            s_row = matches_table.get_item(Key={'match_id': s_row_id}).get('Item') or {}
+            if s_row.get('sealed_leaders') is not None:
+                return _response(200, {'season': season, 'enabled': True, 'sealed': True,
+                                       'min_games': 5,
+                                       'leaders': _scrub_private(s_row['sealed_leaders'], private_ids)})
+            board = compute_season_leaderboard(season, items, s_k)
+            try:
+                matches_table.update_item(Key={'match_id': s_row_id},
+                    UpdateExpression='SET sealed_leaders = :l, sealed_at = :t',
+                    ExpressionAttributeValues={':l': board['leaders'], ':t': s_today})
+            except Exception:
+                pass
+            board['sealed'] = True
+            board['enabled'] = True
+            board['leaders'] = _scrub_private(board['leaders'], private_ids)
+            return _response(200, board)
+        # Ongoing season -> compute live (recalculates from the frozen baseline).
         board = compute_season_leaderboard(season, items, s_k)
         board['leaders'] = _scrub_private(board['leaders'], private_ids)
         board['enabled'] = True
