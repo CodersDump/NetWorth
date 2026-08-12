@@ -241,6 +241,15 @@
 
 ## Done
 
+- ✅ 2026-08-10 — **Player Card header reflow + card-share MP4.** (1) The five squished controls on the
+  Player Card header reflowed to 3 rows: **dropdown + refresh** (row 1, so the player select gets full
+  width), **Achievements** full-width (row 2), **Settings + Share card** side-by-side (row 3). (2)
+  card-share now offers **more MP4/H.264 mime candidates** (`avc1.640028`, `avc1.42E01E`, `avc1`, `h264`,
+  plain `video/mp4`) before WebM, so iOS records a shareable **MP4** (WebM won't post to WhatsApp/Instagram).
+  **Open (needs owner call):** exported card is 1080x1350 (4:5, IG-feed standard) while the in-app preview
+  is ~296x406 (0.73) - the export looks wider. Either make the export match the preview's taller ratio, or
+  the preview match the 4:5 export (WYSIWYG). Deferred pending owner's choice (visual, can't verify blind).
+  **Next:** season-scoped achievements in the achievements grid; then C4 season tasks.
 - ✅ 2026-08-10 — **Seasons C3b (season badges + standing on the Player Card).** **Backend:**
   `player_season_summary=<player_id>` returns a player's per-season standing (rank, season score, climb,
   games) + earned badges across all started seasons, using the shared `_season_board_leaders` (sealed if

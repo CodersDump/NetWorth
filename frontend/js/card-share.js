@@ -842,7 +842,7 @@
     const ctx = canvas.getContext('2d');
     if (document.fonts && document.fonts.ready) { try { await document.fonts.ready; } catch (e) {} }
     await preloadAssets(cur);
-    const mimes = ['video/mp4;codecs=h264', 'video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm'];
+    const mimes = ['video/mp4;codecs=avc1.640028', 'video/mp4;codecs=avc1.42E01E', 'video/mp4;codecs=avc1', 'video/mp4;codecs=h264', 'video/mp4', 'video/webm;codecs=h264', 'video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm'];
     let mime = ''; for (const m of mimes) { if (window.MediaRecorder && MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(m)) { mime = m; break; } }
     if (!canvas.captureStream || !window.MediaRecorder || !mime) return null;   // unsupported -> caller falls back to PNG
     let rec;
