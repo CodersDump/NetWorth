@@ -241,6 +241,17 @@
 
 ## Done
 
+- ✅ 2026-08-10 — **Seasons C3b (season badges + standing on the Player Card).** **Backend:**
+  `player_season_summary=<player_id>` returns a player's per-season standing (rank, season score, climb,
+  games) + earned badges across all started seasons, using the shared `_season_board_leaders` (sealed if
+  ended, live otherwise). Badges per season: **podium** (1/2/3), **most_improved** (biggest positive
+  delta), **iron** (most games), **participation** (qualified). Privacy-guarded (returns empty for a
+  private target to a non-admin). **Frontend:** a 'Seasons' card on the Player Card lists each season with
+  standing + badges rendered as **format-doc SVG medallions** (`seasonBadgeSvg`: hexagon + one gradient +
+  one glyph - gold/silver/bronze podium, emerald up-arrow = most improved, slate dumbbell = iron, blue
+  check = participation), loaded on profile view. These are drop-in until you sketch custom glyphs per
+  `docs/BADGE_FORMAT.md`. **Next:** more season-scoped *achievements* (fold into the achievements grid),
+  then C4 season-scoped tasks; optional deterministic rollover scheduler seal.
 - ✅ 2026-08-10 — **Seasons C3a (season sealing) + Achievements popup + badge format.** (1) **Lazy
   season sealing** (matches lambda): when an ended season's board is first requested it's frozen once into
   `sealed_leaders` on the `__season__<id>` row, so past seasons become immutable - later match edits

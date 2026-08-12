@@ -538,6 +538,50 @@ let userPool = null;
         + '<polygon points="30,6 70,6 94,50 70,94 30,94 6,50" fill="none" stroke="rgba(255,255,255,0.55)" stroke-width="3"/>'
         + '<text x="50" y="50" dy="0.35em" text-anchor="middle" font-size="42" font-weight="800" fill="#3a2a08">' + rank + '</text></svg>';
     }
+    /** Format-doc badge (hexagon + one gradient + one glyph). Podium reuses the medallion. */
+    function seasonBadgeSvg(kind, rank, size) {
+      size = size || 30;
+      if (kind === 'podium') return seasonMedallion(rank, size);
+      const spec = {
+        most_improved: { pal: ['#8CE0B0', '#37B87C', '#126B45'], glyph: '<path d="M50 28 L68 54 H57 V72 H43 V54 H32 Z" fill="#0c3a24"/>' },
+        iron: { pal: ['#F2F3F6', '#C7CBD4', '#7C818C'], glyph: '<rect x="32" y="45" width="36" height="10" rx="3" fill="#2b2f36"/><rect x="26" y="38" width="8" height="24" rx="2" fill="#2b2f36"/><rect x="66" y="38" width="8" height="24" rx="2" fill="#2b2f36"/>' },
+        participation: { pal: ['#8FC7FF', '#3E8EF4', '#144F9E'], glyph: '<path d="M35 52 L46 63 L67 39" fill="none" stroke="#0b2f5e" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/>' }
+      }[kind];
+      if (!spec) return '';
+      const g = 'sb_' + kind;
+      return '<svg width="' + size + '" height="' + size + '" viewBox="0 0 100 100" aria-hidden="true" style="flex:none;vertical-align:middle;">'
+        + '<defs><linearGradient id="' + g + '" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="' + spec.pal[0] + '"/><stop offset="0.55" stop-color="' + spec.pal[1] + '"/><stop offset="1" stop-color="' + spec.pal[2] + '"/></linearGradient></defs>'
+        + '<polygon points="30,6 70,6 94,50 70,94 30,94 6,50" fill="url(#' + g + ')"/>'
+        + '<polygon points="30,6 70,6 94,50 70,94 30,94 6,50" fill="none" stroke="rgba(255,255,255,0.55)" stroke-width="3"/>'
+        + spec.glyph + '</svg>';
+    }
+    async function loadPlayerSeasons(playerId) {
+      const el = document.getElementById('profile-seasons');
+      if (!el) return;
+      if (!seasonsEnabled || !playerId) { el.style.display = 'none'; el.innerHTML = ''; return; }
+      try {
+        const res = await statsFetch(`player_season_summary=${encodeURIComponent(playerId)}`);
+        const data = await res.json();
+        const seasons = (data && data.seasons) || [];
+        if (!data.enabled || !seasons.length) { el.style.display = 'none'; el.innerHTML = ''; return; }
+        const label = { most_improved: 'Most improved', iron: 'Iron player', participation: 'Played' };
+        let html = '<h2>Seasons</h2>';
+        seasons.forEach(s => {
+          const climb = (s.delta >= 0 ? '+' : '') + s.delta;
+          const badges = (s.badges || []).map(b => {
+            const svg = seasonBadgeSvg(b.kind, b.rank, 34);
+            const lbl = b.kind === 'podium' ? (['', '1st', '2nd', '3rd'][b.rank] || 'Podium') : (label[b.kind] || b.kind);
+            return '<span title="' + lbl + '" style="display:inline-flex;flex-direction:column;align-items:center;width:58px;text-align:center;gap:2px;">' + svg + '<span style="font-size:10px;opacity:0.75;">' + lbl + '</span></span>';
+          }).join('');
+          html += '<div style="border-top:1px solid var(--border);padding:10px 0;">'
+            + '<div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px;">'
+            + '<strong>' + escapeHtml(s.season.name) + '</strong>'
+            + '<span class="card-sub">Rank #' + s.rank + ' \u00b7 ' + s.season_score + ' (' + climb + ') \u00b7 ' + s.games + ' GP' + (s.sealed ? '' : ' \u00b7 live') + '</span></div>'
+            + '<div style="display:flex;flex-wrap:wrap;gap:12px;margin-top:8px;">' + badges + '</div></div>';
+        });
+        el.innerHTML = html; el.style.display = 'block';
+      } catch (_) { el.style.display = 'none'; }
+    }
     async function loadSeasonsMeta() {
       try {
         const res = await fetch(`${API_BASE_URL}/matches?seasons=list`);
@@ -4440,6 +4484,7 @@ let userPool = null;
       // settled - updateAuthUI can render it before loadVisiblePlayers has
       // defaulted the select, which hid it until a manual refresh.
       renderPrivacyControl();
+      loadPlayerSeasons(playerId);
     }
     /** Manual reload of whoever is currently selected. Before this, the
      *  only way to see updated numbers was to select a different player
