@@ -377,7 +377,11 @@ def _season_badges_for(player_id, leaders):
     if leaders:
         top_improved = max(leaders, key=lambda l: l.get('delta', -10**9))
         top_iron = max(leaders, key=lambda l: l.get('games', 0))
-        if top_improved.get('player_id') == player_id and me.get('delta', 0) > 0:
+        champ_id = leaders[0].get('player_id')
+        # Most-improved only if it isn't the champion - otherwise it's redundant
+        # (in a uniform-baseline season like Season 0 the winner is always the
+        # biggest climber, so the two badges would always coincide).
+        if top_improved.get('player_id') == player_id and player_id != champ_id and me.get('delta', 0) > 0:
             badges.append({'kind': 'most_improved'})
         if top_iron.get('player_id') == player_id:
             badges.append({'kind': 'iron'})
@@ -1999,6 +2003,8 @@ def compute_achievements(player_id, matches, tournaments):
     _season_wins = _season_podiums = _season_improved = _season_iron = _seasons_played = 0
     try:
         for _s in (compute_player_season_summary(player_id, matches).get('seasons') or []):
+            if not _s.get('sealed'):
+                continue
             _seasons_played += 1
             if _s.get('rank') == 1:
                 _season_wins += 1
