@@ -2996,7 +2996,7 @@ let userPool = null;
         if (!res.ok) { el.innerHTML = '<p class="card-sub">Could not load quests.</p>'; return; }
         const quests = data.quests || [];
         if (!quests.length) { el.innerHTML = '<p class="card-sub" style="margin:0;">No quests right now.</p>'; return; }
-        el.innerHTML = quests.map(q => {
+        const _renderQuestRow = (q) => {
           const pct = Math.min(100, Math.round((q.progress / q.target) * 100));
           const rewards = [];
           if (q.reward_xp) rewards.push(`${q.reward_xp} XP`);
@@ -3008,7 +3008,7 @@ let userPool = null;
           else action = `<span style="font-size:12px; opacity:0.6;">Reward: ${rewards.join(' + ')}</span>`;
           return `<div style="padding:10px 0; border-bottom:1px solid var(--border);">
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
-              <span style="font-weight:600;">${escapeHtml(q.label)}${q.period ? ' <span style="font-weight:500;font-size:11px;opacity:0.6;">\u00b7 ' + escapeHtml(q.period) + '</span>' : ''}</span>${action}
+              <span style="font-weight:600;">${escapeHtml(q.label)}</span>${action}
             </div>
             <div style="display:flex; align-items:center; gap:8px;">
               <div style="flex:1; height:8px; background:var(--surface-2); border-radius:4px; overflow:hidden;">
@@ -3017,7 +3017,14 @@ let userPool = null;
               <span style="font-size:12px; opacity:0.7;">${q.progress}/${q.target}</span>
             </div>
           </div>`;
-        }).join('');
+        };
+        const _weekly = quests.filter(q => (q.scope || 'weekly') !== 'season');
+        const _season = quests.filter(q => q.scope === 'season');
+        const _hdr = (t) => `<div class="card-sub" style="font-weight:600;margin:4px 0 2px;text-transform:uppercase;font-size:12px;letter-spacing:0.03em;">${escapeHtml(t)}</div>`;
+        let _html = '';
+        if (_weekly.length) _html += _hdr('This week') + _weekly.map(_renderQuestRow).join('');
+        if (_season.length) _html += _hdr((_season[0].period) || 'Season') + _season.map(_renderQuestRow).join('');
+        el.innerHTML = _html || '<p class="card-sub" style="margin:0;">No quests right now.</p>';
       } catch (e) { el.innerHTML = '<p class="card-sub">Could not load quests.</p>'; }
     }
 

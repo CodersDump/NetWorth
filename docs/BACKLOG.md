@@ -241,6 +241,14 @@
 
 ## Done
 
+- ✅ 2026-08-11 — **3 more share-card templates + season tasks split out.** card-share now has **11**
+  stat layouts: added **Everything** (dense 6-stat grid + trend: W-L, win rate, games, peak, streak, best),
+  **Head-to-head** (record vs your most-played opponent, from the bundle's top_opponents), and **Best
+  partner** (record with your most-played partner - one extra `partnerships_for` fetch). Both new preview
+  + export renders each; opponent/partner names come from the computes (`opponent_name`/`partner_name`).
+  Quests list now **groups by scope**: a 'This week' section and a separate season section (headed by the
+  season name) - season tasks are no longer listed under weekly. **Next:** badge SVG asset wiring; more
+  templates if wanted; optional rollover scheduler.
 - ✅ 2026-08-11 — **Seasons C4 (season-scoped tasks).** Quests can now reset **per season** instead of
   weekly. Backend: a shared `_quest_period(quest)` returns (window bounds, claim-key prefix, label) by
   scope - season quests use the current season's window + `season:<id>` claim namespace (so they reset at
