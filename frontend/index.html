@@ -838,12 +838,14 @@
           </label>
           <button type="button" class="secondary" id="profile-refresh-btn" title="Reload this player's stats"
                   style="margin:0; padding:8px 12px; font-size:16px; line-height:1;" onclick="refreshProfile()">&#8635;</button>
+        </div>
+        <button type="button" id="open-achievements-btn" title="This player's records &amp; badges"
+                style="width:100%; margin:8px 0 0; padding:10px 14px; font-size:14px; line-height:1;" onclick="openAchievementsModal()">&#127942; Achievements</button>
+        <div style="display:flex; gap:8px; margin-top:8px;">
           <button type="button" id="open-settings-btn" title="Customize my card &amp; account settings"
-                  style="margin:0; padding:8px 14px; font-size:13px; line-height:1; display:none;" onclick="openSettingsModal()">&#9881; Settings</button>
-          <button type="button" id="open-achievements-btn" title="This player's records &amp; badges"
-                  style="margin:0; padding:8px 14px; font-size:13px; line-height:1;" onclick="openAchievementsModal()">&#127942; Achievements</button>
+                  style="flex:1; margin:0; padding:10px 14px; font-size:14px; line-height:1; display:none;" onclick="openSettingsModal()">&#9881; Settings</button>
           <button type="button" id="profile-share-btn" title="Customize &amp; share your card"
-                  style="margin:0; padding:8px 14px; font-size:13px; line-height:1;" onclick="openCardShare()">Share card</button>
+                  style="flex:1; margin:0; padding:10px 14px; font-size:14px; line-height:1;" onclick="openCardShare()">Share card</button>
         </div>
         <div id="profile-stale-notice" style="display:none; font-size:12px; margin-top:6px; color:var(--shuttle);">
           New matches have been recorded - tap &#8635; to refresh.
