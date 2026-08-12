@@ -241,6 +241,15 @@
 
 ## Done
 
+- ✅ 2026-08-10 — **Season-scoped achievements (folded into the achievements grid).** `compute_achievements`
+  now aggregates the player's season history (via `compute_player_season_summary`) into cumulative counts:
+  season wins (#1 finishes), podiums (top-3), most-improved seasons, iron-player seasons, seasons played.
+  Frontend adds five tiered tiles - Season Champion / Season Podiums / Season Riser / Season Grinder /
+  Seasoned - shown only when Seasons are enabled, sitting alongside the existing achievements in the
+  Achievements popup. (Note: adds a season pass to the profile bundle; cheap since ended seasons read the
+  sealed row and only the live season recomputes - fold the summary into the bundle later if it needs
+  trimming.) **Next:** C4 season-scoped tasks; the card-width choice (A taller export vs B 4:5 preview) when
+  the owner decides.
 - ✅ 2026-08-10 — **Player Card header reflow + card-share MP4.** (1) The five squished controls on the
   Player Card header reflowed to 3 rows: **dropdown + refresh** (row 1, so the player select gets full
   width), **Achievements** full-width (row 2), **Settings + Share card** side-by-side (row 3). (2)
