@@ -241,6 +241,14 @@
 
 ## Done
 
+- ✅ 2026-08-11 — **4 new share-card stat templates + bigger season badges.** card-share now has **8**
+  stat layouts (was 4): added **Peak rating** (highest Elo reached, gold), **Streaks** (current + best
+  streak), **Win record** (big W-L + win-rate + games), **Last 10** (recent W/L result pills) - each with
+  both the live HTML preview and the canvas export render, all free. Enriched the card `stats` object with
+  `peak` (peak_rating), `bestStreak` (personal_best_streak), and `form10` (last-10 results) from the
+  profile bundle. Season badges on the Player Card enlarged 34->60px (Apple-Watch-ish presence; the small
+  ones looked diminishing). **Note:** new templates are best-effort blind renders - eyeball and I'll nudge
+  any spacing. **Next:** more templates if wanted, badge SVG asset wiring, C4 season tasks.
 - ✅ 2026-08-11 — **Season fixes + card-share width.** (1) **Most-improved** season badge now only awards
   to a non-champion - in a uniform-baseline season (Season 0 starts at the beginning, everyone at 1000) the
   winner is always the biggest climber, so the two collided; now it only fires for a genuine over-performer
@@ -249,9 +257,10 @@
   (3) **Season section moved below** the player dropdown (was above it). (4) **Season race fixed:**
   `seasonsEnabled` now loads with the initial app-settings fetch (not only when Stats opens), and
   `loadPlayerSeasons` relies on the response's `enabled` instead of the global - so the card's Seasons
-  section shows first paint, no reload needed. (5) **Card-share export** height 1350->1480 (1080x1480 ≈
-  the in-app preview's 296:406), so the shared card matches what you see instead of looking wider; bg/frame
-  scale with H, content is top-anchored (eyeball bottom spacing - easy vertical-center nudge if needed).
+  section shows first paint, no reload needed. (5) **Card-share width: reverted the naive fix** - the
+  exported card's footer is bottom-pinned (H-pad) while stats/trend are top-anchored, so making the canvas
+  taller only widens the content->footer gap. Kept 1080x1350; the real fix is re-flowing the stats layout
+  to fill the card (iterative, needs screenshots).
 - ✅ 2026-08-10 — **Season-scoped achievements (folded into the achievements grid).** `compute_achievements`
   now aggregates the player's season history (via `compute_player_season_summary`) into cumulative counts:
   season wins (#1 finishes), podiums (top-3), most-improved seasons, iron-player seasons, seasons played.
