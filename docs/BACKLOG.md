@@ -241,6 +241,19 @@
 
 ## Done
 
+- ✅ 2026-08-10 — **Seasons C3a (season sealing) + Achievements popup + badge format.** (1) **Lazy
+  season sealing** (matches lambda): when an ended season's board is first requested it's frozen once into
+  `sealed_leaders` on the `__season__<id>` row, so past seasons become immutable - later match edits
+  recompute lifetime but no longer reshuffle a finished season (the current season still recalculates live
+  from its frozen baseline). (2) **Achievements popup:** the Player Card 'Achievements' section moved out of
+  the long scroll into a Settings-style modal opened by a header button (`openAchievementsModal`); inner IDs
+  preserved so the profile bundle still populates it. (3) **Badge format doc** (`docs/BADGE_FORMAT.md`): the
+  Apple-Fitness recipe (one shape, one vertical gradient, one centered glyph, thin inner highlight), tier
+  palette, and a drop-in SVG template so new badges can be sketched consistently; `seasonMedallion` is the
+  working example. **Next: C3b** — award/display per-season badges on the Player Card (podium, most-improved,
+  iron-player, participation) from the sealed board, a season stat line on the card, and more season-scoped
+  achievements; then C4 season tasks. The deterministic rollover *scheduler* seal (vs lazy) is optional
+  polish since lazy sealing already freezes correctly on first post-end view.
 - ✅ 2026-08-10 — **Seasons C2 polish + admin-can-record (frontend).** (1) **Future seasons** no longer
   appear in the member Season selector - only seasons whose `start_date <= today` show; a future season
   (e.g. Season 1 starting Sep 1) stays in the admin list until it starts. (2) **Collapsible Stats sections**

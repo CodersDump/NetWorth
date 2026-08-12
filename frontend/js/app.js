@@ -6192,6 +6192,16 @@ let userPool = null;
       });
     }
 
+    function openAchievementsModal() {
+      const who = document.getElementById('achievements-modal-who');
+      const sel = document.getElementById('profile_player_select');
+      if (who) {
+        const p = allPlayers.find(x => x.player_id === (sel && sel.value));
+        who.textContent = p ? formatPlayerLabel(p.name, p.nickname) : 'this player';
+      }
+      document.getElementById('achievements-modal').style.display = 'flex';
+    }
+    function closeAchievementsModal() { document.getElementById('achievements-modal').style.display = 'none'; }
     function openAuthModal() { document.getElementById('auth-modal').style.display = 'flex'; showAuthView('login'); }
     function closeAuthModal() { document.getElementById('auth-modal').style.display = 'none'; }
     function showAuthView(view) {
