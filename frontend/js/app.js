@@ -4123,6 +4123,13 @@ let userPool = null;
         // Grit / consolation - reward showing up and battling, win or lose.
         renderTieredCard('🧱', 'Battle-Hardened', 'matches played through defeat (total losses)', [10, 50, 100, 250], milestones.total_losses || 0);
         renderTieredCard('💗', 'Never Say Die', 'kept playing through a losing streak', [3, 5, 8, 12], milestones.worst_loss_streak || 0);
+        if (seasonsEnabled) {
+          renderTieredCard('👑', 'Season Champion', 'seasons finished #1', [1, 3, 5, 10], milestones.season_wins || 0);
+          renderTieredCard('🥉', 'Season Podiums', 'top-3 season finishes', [1, 3, 5, 10, 20], milestones.season_podiums || 0);
+          renderTieredCard('🚀', 'Season Riser', 'most-improved in a season', [1, 2, 5], milestones.season_most_improved || 0);
+          renderTieredCard('🏋️', 'Season Grinder', 'iron-player in a season', [1, 2, 5], milestones.season_iron || 0);
+          renderTieredCard('🗓️', 'Seasoned', 'seasons played', [1, 3, 6, 12], milestones.seasons_played || 0);
+        }
 
         renderBinaryCard('🥇', 'Longest win streak', 'Overall record holder', hof.longest_win_streak && hof.longest_win_streak.player_id === playerId);
         renderBinaryCard('📈', 'Peak performer', 'Highest peak rating ever', hof.peak_ratings && hof.peak_ratings[0] && hof.peak_ratings[0].player_id === playerId);

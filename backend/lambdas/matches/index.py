@@ -1995,6 +1995,22 @@ def compute_achievements(player_id, matches, tournaments):
         run = run + 1 if day in attended else 0
         best_attendance = max(best_attendance, run)
 
+    # Season achievements: cumulative across every season this player qualified in.
+    _season_wins = _season_podiums = _season_improved = _season_iron = _seasons_played = 0
+    try:
+        for _s in (compute_player_season_summary(player_id, matches).get('seasons') or []):
+            _seasons_played += 1
+            if _s.get('rank') == 1:
+                _season_wins += 1
+            if _s.get('rank') in (1, 2, 3):
+                _season_podiums += 1
+            for _b in (_s.get('badges') or []):
+                if _b.get('kind') == 'most_improved':
+                    _season_improved += 1
+                elif _b.get('kind') == 'iron':
+                    _season_iron += 1
+    except Exception:
+        pass
     return {
         'player_id': player_id,
         'total_matches': total_matches,
@@ -2010,7 +2026,12 @@ def compute_achievements(player_id, matches, tournaments):
         'peak_rating': peak,
         'total_wins': total_wins,
         'total_losses': total_losses,
-        'worst_loss_streak': worst_loss_streak
+        'worst_loss_streak': worst_loss_streak,
+        'season_wins': _season_wins,
+        'season_podiums': _season_podiums,
+        'season_most_improved': _season_improved,
+        'season_iron': _season_iron,
+        'seasons_played': _seasons_played
     }
 
 
