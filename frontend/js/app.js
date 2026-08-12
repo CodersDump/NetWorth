@@ -2995,7 +2995,7 @@ let userPool = null;
         const { res, data } = await authedFetch(`${API_BASE_URL}/quests`);
         if (!res.ok) { el.innerHTML = '<p class="card-sub">Could not load quests.</p>'; return; }
         const quests = data.quests || [];
-        if (!quests.length) { el.innerHTML = '<p class="card-sub" style="margin:0;">No quests this week.</p>'; return; }
+        if (!quests.length) { el.innerHTML = '<p class="card-sub" style="margin:0;">No quests right now.</p>'; return; }
         el.innerHTML = quests.map(q => {
           const pct = Math.min(100, Math.round((q.progress / q.target) * 100));
           const rewards = [];
@@ -3008,7 +3008,7 @@ let userPool = null;
           else action = `<span style="font-size:12px; opacity:0.6;">Reward: ${rewards.join(' + ')}</span>`;
           return `<div style="padding:10px 0; border-bottom:1px solid var(--border);">
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
-              <span style="font-weight:600;">${escapeHtml(q.label)}</span>${action}
+              <span style="font-weight:600;">${escapeHtml(q.label)}${q.period ? ' <span style="font-weight:500;font-size:11px;opacity:0.6;">\u00b7 ' + escapeHtml(q.period) + '</span>' : ''}</span>${action}
             </div>
             <div style="display:flex; align-items:center; gap:8px;">
               <div style="flex:1; height:8px; background:var(--surface-2); border-radius:4px; overflow:hidden;">
@@ -3065,7 +3065,8 @@ let userPool = null;
         target: parseInt(document.getElementById('quest-target').value, 10),
         reward_xp: parseInt(document.getElementById('quest-xp').value, 10) || 0,
         reward_coins: parseInt(document.getElementById('quest-coins').value, 10) || 0,
-        reward_cosmetic_id: document.getElementById('quest-cosmetic').value || null
+        reward_cosmetic_id: document.getElementById('quest-cosmetic').value || null,
+        scope: (document.getElementById('quest-scope') || {}).value || 'weekly'
       };
       if (isNaN(body.target) || body.target < 1) { statusEl.textContent = 'Target must be at least 1.'; return; }
       statusEl.textContent = 'Saving...';
