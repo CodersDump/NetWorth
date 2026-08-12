@@ -93,6 +93,9 @@
     { id: 'streak',  name: 'Streaks',      free: true },
     { id: 'record',  name: 'Win record',   free: true },
     { id: 'form',    name: 'Last 10',      free: true },
+    { id: 'stuffed', name: 'Everything',   free: true },
+    { id: 'vs',      name: 'Head-to-head', free: true },
+    { id: 'partner', name: 'Best partner', free: true },
     { id: 'curve',   name: 'Rating curve', free: false },
     { id: 'donut',   name: 'Season donut', free: false }
   ];
@@ -447,7 +450,7 @@
       games: p ? (Number(p.games_played) || 0) : 0,
       avatarUrl: (p && p.avatar_url) ? srcOf(p.avatar_url) : null,
       wins: null, losses: null, pct: null, streak: null, trend: null,
-      peak: null, bestStreak: 0, form10: []
+      peak: null, bestStreak: 0, form10: [], topOpponent: null, topPartner: null
     };
     const id = meId(); if (!id) return;
     try {
@@ -470,6 +473,12 @@
       stats.peak = Math.round(Number(ach.peak_rating) || stats.rating);
       stats.bestStreak = Number(ach.personal_best_streak) || 0;
       stats.form10 = form.slice(-10).map(f => f.result);
+      stats.topOpponent = (b.top_opponents && b.top_opponents.opponents && b.top_opponents.opponents[0]) || null;
+      try {
+        const pr = await fetch(`${api()}/profile-secure/matches?partnerships_for=${id}`, { headers: authHeaders() });
+        const pd = await pr.json();
+        stats.topPartner = (pd.partnerships && pd.partnerships[0]) || null;
+      } catch (e2) { /* partner card just hides */ }
     } catch (e) { /* rating/level/games only */ }
   }
 
@@ -548,6 +557,27 @@
         + `<div class="nw-cs-name" style="text-align:left;margin-top:10px;font-size:19px">${esc(s.name)}</div>`
         + pills + `<div class="nw-cs-cap" style="text-align:center;margin-top:8px">LAST ${(s.form10 || []).length} RESULTS</div>`
         + (s.wins != null ? `<div class="nw-cs-rec" style="font-size:14px;margin-top:10px">${s.wins}&#8211;${s.losses} &middot; ${s.pct}% &middot; &#128293; ${s.streak || 0}</div>` : '') + foot;
+    }
+    if (layout === 'stuffed') {
+      return `<div class="nw-cs-rt"><div><div class="nw-cs-rating">${s.rating}</div><div class="nw-cs-cap">RATING &middot; ${rankTxt} &middot; LVL ${s.level}</div></div>${avatarHtml(s)}</div>`
+        + `<div class="nw-cs-name">${esc(s.name)}</div><div class="nw-cs-handle">${s.nickname ? '@' + esc(s.nickname) : ''}</div><div class="nw-cs-div"></div>`
+        + `<div class="nw-cs-grid"><div><div class="v">${s.wins != null ? s.wins + '&#8211;' + s.losses : '&#8211;'}</div><div class="nw-cs-cap">W&#8211;L</div></div>`
+        + `<div><div class="v">${s.pct != null ? s.pct + '%' : '&#8211;'}</div><div class="nw-cs-cap">WIN RATE</div></div>`
+        + `<div><div class="v">${s.games}</div><div class="nw-cs-cap">GAMES</div></div>`
+        + `<div><div class="v">${s.peak || s.rating}</div><div class="nw-cs-cap">PEAK</div></div>`
+        + `<div><div class="v">&#128293; ${s.streak || 0}</div><div class="nw-cs-cap">STREAK</div></div>`
+        + `<div><div class="v">&#127942; ${s.bestStreak || 0}</div><div class="nw-cs-cap">BEST</div></div></div>`
+        + (s.trend && s.trend.length ? trendBars(40, s.trend) + `<div class="nw-cs-cap" style="text-align:center">RATING TREND</div>` : '') + foot;
+    }
+    if (layout === 'vs') {
+      const o = s.topOpponent;
+      return `<div class="nw-cs-rt"><div class="nw-cs-name" style="text-align:left;margin:2px 0 0;font-size:20px">${esc(s.name)}<div class="nw-cs-handle" style="text-align:left">${s.nickname ? '@' + esc(s.nickname) : ''}</div></div>${avatarHtml(s)}</div>`
+        + (o ? `<div class="nw-cs-cap" style="text-align:center;margin-top:18px">HEAD-TO-HEAD vs</div><div class="nw-cs-name" style="margin-top:4px">${esc(o.opponent_name)}</div><div class="nw-cs-big" style="margin-top:10px">${o.wins}&#8211;${o.losses}</div><div class="nw-cs-cap" style="text-align:center">${o.win_rate}% &middot; ${o.matches} matches</div>` : `<div class="nw-cs-strk" style="margin:24px 0">Not enough matches for a rivalry yet.</div>`) + foot;
+    }
+    if (layout === 'partner') {
+      const pt = s.topPartner;
+      return `<div class="nw-cs-rt"><div class="nw-cs-name" style="text-align:left;margin:2px 0 0;font-size:20px">${esc(s.name)}<div class="nw-cs-handle" style="text-align:left">${s.nickname ? '@' + esc(s.nickname) : ''}</div></div>${avatarHtml(s)}</div>`
+        + (pt ? `<div class="nw-cs-cap" style="text-align:center;margin-top:18px">BEST PARTNER</div><div class="nw-cs-name" style="margin-top:4px">${esc(pt.partner_name)}</div><div class="nw-cs-big" style="margin-top:10px">${pt.wins}&#8211;${pt.losses}</div><div class="nw-cs-cap" style="text-align:center">${pt.win_rate}% together &middot; ${pt.matches} matches</div>` : `<div class="nw-cs-strk" style="margin:24px 0">No partnership data yet.</div>`) + foot;
     }
     // full (default)
     const rec = (s.wins != null)
@@ -836,6 +866,50 @@
         });
         ctx.fillStyle = '#93a89e'; ctx.font = "600 26px system-ui"; ctx.fillText('LAST ' + n + ' RESULTS', W / 2, ry + size + 60); ctx.textAlign = 'left';
       } else { ctx.fillStyle = '#9fb3a8'; ctx.font = "500 30px system-ui"; ctx.fillText('No recent matches yet.', pad, pad + 420); }
+      foot(); return;
+    }
+    if (id === 'stuffed') {
+      ctx.fillStyle = '#7fd8a8'; ctx.font = "800 120px 'Rajdhani', system-ui"; ctx.fillText(String(s.rating), pad, pad + 104);
+      ctx.fillStyle = '#93a89e'; ctx.font = "600 26px system-ui"; ctx.fillText('RATING \u00b7 ' + (s.rank ? '#' + s.rank : '\u2014') + ' \u00b7 LVL ' + s.level, pad + 4, pad + 146);
+      avatar(s._av);
+      ctx.fillStyle = '#fff'; ctx.font = "700 50px system-ui"; ctx.fillText(s.name, pad, pad + 250);
+      const sc = [[s.wins != null ? s.wins + '\u2013' + s.losses : '\u2013', 'W\u2013L'], [s.pct != null ? s.pct + '%' : '\u2013', 'WIN RATE'], [String(s.games), 'GAMES'], [String(s.peak || s.rating), 'PEAK'], ['\ud83d\udd25 ' + (s.streak || 0), 'STREAK'], ['\ud83c\udfc6 ' + (s.bestStreak || 0), 'BEST']];
+      const scx = [pad, W / 2 + 10]; let sy = pad + 320;
+      sc.forEach(function (c, i) { const x = scx[i % 2], cy = sy + Math.floor(i / 2) * 130;
+        ctx.fillStyle = '#fff'; ctx.font = "700 56px 'Rajdhani', system-ui"; ctx.fillText(c[0], x, cy + 44);
+        ctx.fillStyle = '#93a89e'; ctx.font = "600 24px system-ui"; ctx.fillText(c[1], x, cy + 82); });
+      sy += 3 * 130 + 30;
+      if (s.trend && s.trend.length > 1) { drawSpark(ctx, pad, sy, W - pad * 2, 220, s.trend); }
+      foot(); return;
+    }
+    if (id === 'vs') {
+      ctx.textAlign = 'left'; ctx.fillStyle = '#fff'; ctx.font = "700 52px system-ui"; ctx.fillText(s.name, pad, pad + 44);
+      ctx.fillStyle = '#8fa39a'; ctx.font = "500 28px system-ui"; ctx.fillText((s.nickname ? '@' + s.nickname : '') + ' \u00b7 LVL ' + s.level, pad, pad + 84);
+      avatar(s._av);
+      const rec = s.topOpponent;
+      if (rec) {
+        ctx.textAlign = 'center';
+        ctx.fillStyle = '#93a89e'; ctx.font = "600 30px system-ui"; ctx.fillText('HEAD-TO-HEAD vs', W / 2, pad + 340);
+        ctx.fillStyle = '#fff'; ctx.font = "700 60px system-ui"; ctx.fillText(rec.opponent_name, W / 2, pad + 410);
+        ctx.fillStyle = '#7fd8a8'; ctx.font = "800 150px 'Rajdhani', system-ui"; ctx.fillText(rec.wins + '\u2013' + rec.losses, W / 2, pad + 560);
+        ctx.fillStyle = '#93a89e'; ctx.font = "600 30px system-ui"; ctx.fillText(rec.win_rate + '%  \u00b7 ' + rec.matches + ' matches', W / 2, pad + 620);
+        ctx.textAlign = 'left';
+      } else { ctx.fillStyle = '#9fb3a8'; ctx.font = "500 32px system-ui"; ctx.textAlign = 'center'; ctx.fillText('Not enough matches yet.', W / 2, pad + 420); ctx.textAlign = 'left'; }
+      foot(); return;
+    }
+    if (id === 'partner') {
+      ctx.textAlign = 'left'; ctx.fillStyle = '#fff'; ctx.font = "700 52px system-ui"; ctx.fillText(s.name, pad, pad + 44);
+      ctx.fillStyle = '#8fa39a'; ctx.font = "500 28px system-ui"; ctx.fillText((s.nickname ? '@' + s.nickname : '') + ' \u00b7 LVL ' + s.level, pad, pad + 84);
+      avatar(s._av);
+      const rec = s.topPartner;
+      if (rec) {
+        ctx.textAlign = 'center';
+        ctx.fillStyle = '#93a89e'; ctx.font = "600 30px system-ui"; ctx.fillText('BEST PARTNER', W / 2, pad + 340);
+        ctx.fillStyle = '#fff'; ctx.font = "700 60px system-ui"; ctx.fillText(rec.partner_name, W / 2, pad + 410);
+        ctx.fillStyle = '#7fd8a8'; ctx.font = "800 150px 'Rajdhani', system-ui"; ctx.fillText(rec.wins + '\u2013' + rec.losses, W / 2, pad + 560);
+        ctx.fillStyle = '#93a89e'; ctx.font = "600 30px system-ui"; ctx.fillText(rec.win_rate + '% together \u00b7 ' + rec.matches + ' matches', W / 2, pad + 620);
+        ctx.textAlign = 'left';
+      } else { ctx.fillStyle = '#9fb3a8'; ctx.font = "500 32px system-ui"; ctx.textAlign = 'center'; ctx.fillText('Not enough matches yet.', W / 2, pad + 420); ctx.textAlign = 'left'; }
       foot(); return;
     }
     // full (default)
