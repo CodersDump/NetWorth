@@ -89,6 +89,10 @@
   const STATS_PRESETS = [
     { id: 'full',    name: 'Full profile', free: true },
     { id: 'compact', name: 'Compact',      free: true },
+    { id: 'peak',    name: 'Peak rating',  free: true },
+    { id: 'streak',  name: 'Streaks',      free: true },
+    { id: 'record',  name: 'Win record',   free: true },
+    { id: 'form',    name: 'Last 10',      free: true },
     { id: 'curve',   name: 'Rating curve', free: false },
     { id: 'donut',   name: 'Season donut', free: false }
   ];
@@ -442,7 +446,8 @@
       level: levelFromXp(p && p.xp), rank: rankOf(p),
       games: p ? (Number(p.games_played) || 0) : 0,
       avatarUrl: (p && p.avatar_url) ? srcOf(p.avatar_url) : null,
-      wins: null, losses: null, pct: null, streak: null, trend: null
+      wins: null, losses: null, pct: null, streak: null, trend: null,
+      peak: null, bestStreak: 0, form10: []
     };
     const id = meId(); if (!id) return;
     try {
@@ -461,6 +466,10 @@
         for (let i = last.length - 1; i >= 0; i--) { pts.unshift(r); r -= Math.round(Number(last[i].delta) || 0); }
         stats.trend = pts;
       }
+      const ach = b.achievements || {};
+      stats.peak = Math.round(Number(ach.peak_rating) || stats.rating);
+      stats.bestStreak = Number(ach.personal_best_streak) || 0;
+      stats.form10 = form.slice(-10).map(f => f.result);
     } catch (e) { /* rating/level/games only */ }
   }
 
@@ -513,6 +522,32 @@
         + `<div style="display:flex; align-items:center; gap:14px; margin-top:14px;"><div>${donutSvg(s.pct)}</div><div><div class="nw-cs-rating" style="font-size:40px">${s.rating}</div><div class="nw-cs-cap">RATING &middot; RANK ${rankTxt}</div>`
         + `<div class="nw-cs-lr" style="margin-top:10px"><b>${s.wins != null ? s.wins + '&#8211;' + s.losses : '&#8211;'}</b> <span class="m">W&#8211;L</span></div><div class="nw-cs-lr"><b>${s.games}</b> <span class="m">GAMES &middot; &#128293;${s.streak || 0}</span></div></div></div>`
         + `<div class="nw-cs-div"></div><div class="nw-cs-cap" style="text-align:center">SEASON SUMMARY</div>` + foot;
+    }
+    if (layout === 'peak') {
+      return `<div style="display:flex;justify-content:center;margin-top:6px">${avatarHtml(s)}</div>`
+        + `<div class="nw-cs-name" style="margin-top:12px">${esc(s.name)}</div><div class="nw-cs-handle">${s.nickname ? '@' + esc(s.nickname) : ''}</div>`
+        + `<div class="nw-cs-big" style="margin-top:16px;color:#ffd24a">${s.peak || s.rating}</div><div class="nw-cs-cap" style="text-align:center;margin-top:2px">PEAK RATING</div>`
+        + `<div class="nw-cs-rec">Now ${s.rating} &middot; Rank ${rankTxt} &middot; LVL ${s.level}</div>` + foot;
+    }
+    if (layout === 'streak') {
+      return `<div class="nw-cs-rt"><div><div class="nw-cs-rating" style="font-size:44px">${s.rating}</div><div class="nw-cs-cap">RATING &middot; ${rankTxt}</div></div>${avatarHtml(s)}</div>`
+        + `<div class="nw-cs-name" style="text-align:left;margin-top:10px;font-size:19px">${esc(s.name)}</div>`
+        + `<div class="nw-cs-grid" style="margin-top:16px"><div><div class="v">&#128293; ${s.streak || 0}</div><div class="nw-cs-cap">CURRENT STREAK</div></div><div><div class="v">&#127942; ${s.bestStreak || 0}</div><div class="nw-cs-cap">BEST STREAK</div></div></div>`
+        + `<div class="nw-cs-div"></div><div class="nw-cs-rec" style="font-size:14px">${s.wins != null ? s.wins + '&#8211;' + s.losses + ' &middot; ' + s.pct + '% win rate' : s.games + ' games'}</div>` + foot;
+    }
+    if (layout === 'record') {
+      return `<div class="nw-cs-rt"><div class="nw-cs-name" style="text-align:left;margin:2px 0 0;font-size:20px">${esc(s.name)}<div class="nw-cs-handle" style="text-align:left">${s.nickname ? '@' + esc(s.nickname) : ''}</div></div>${avatarHtml(s)}</div>`
+        + `<div class="nw-cs-big" style="margin-top:14px">${s.wins != null ? s.wins + '&#8211;' + s.losses : '&#8211;'}</div><div class="nw-cs-cap" style="text-align:center">WIN &#8211; LOSS</div>`
+        + `<div class="nw-cs-grid" style="margin-top:14px"><div><div class="v">${s.pct != null ? s.pct + '%' : '&#8211;'}</div><div class="nw-cs-cap">WIN RATE</div></div><div><div class="v">${s.games}</div><div class="nw-cs-cap">GAMES</div></div></div>` + foot;
+    }
+    if (layout === 'form') {
+      const pills = (s.form10 && s.form10.length)
+        ? '<div style="display:flex;gap:5px;justify-content:center;flex-wrap:wrap;margin-top:16px">' + s.form10.map(r => `<span style="width:26px;height:26px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font:700 12px Inter;color:#08120d;background:${r === 'W' ? '#7fd8a8' : '#e0725f'}">${r}</span>`).join('') + '</div>'
+        : '<div class="nw-cs-strk" style="margin:18px 0">No recent matches yet.</div>';
+      return `<div class="nw-cs-rt"><div><div class="nw-cs-rating" style="font-size:44px">${s.rating}</div><div class="nw-cs-cap">RATING &middot; ${rankTxt}</div></div>${avatarHtml(s)}</div>`
+        + `<div class="nw-cs-name" style="text-align:left;margin-top:10px;font-size:19px">${esc(s.name)}</div>`
+        + pills + `<div class="nw-cs-cap" style="text-align:center;margin-top:8px">LAST ${(s.form10 || []).length} RESULTS</div>`
+        + (s.wins != null ? `<div class="nw-cs-rec" style="font-size:14px;margin-top:10px">${s.wins}&#8211;${s.losses} &middot; ${s.pct}% &middot; &#128293; ${s.streak || 0}</div>` : '') + foot;
     }
     // full (default)
     const rec = (s.wins != null)
@@ -746,6 +781,63 @@
       ctx.textAlign = 'left'; foot(); return;
     }
 
+    if (id === 'peak') {
+      const cxr = W / 2;
+      ctx.save(); ctx.beginPath(); ctx.arc(cxr, pad + 90, 88, 0, Math.PI * 2); ctx.lineWidth = 5; ctx.strokeStyle = 'rgba(127,216,168,.6)'; ctx.stroke(); ctx.clip();
+      if (s._av) ctx.drawImage(s._av, cxr - 88, pad + 2, 176, 176);
+      else { ctx.fillStyle = '#0e1a14'; ctx.fillRect(cxr - 88, pad + 2, 176, 176); ctx.fillStyle = '#7fd8a8'; ctx.font = "800 60px 'Rajdhani', system-ui"; ctx.textAlign = 'center'; ctx.fillText(initials(s.name), cxr, pad + 108); }
+      ctx.restore(); ctx.textAlign = 'center';
+      ctx.fillStyle = '#fff'; ctx.font = "700 54px system-ui"; ctx.fillText(s.name, cxr, pad + 250);
+      ctx.fillStyle = '#ffd24a'; ctx.font = "800 150px 'Rajdhani', system-ui"; ctx.fillText(String(s.peak || s.rating), cxr, pad + 448);
+      ctx.fillStyle = '#93a89e'; ctx.font = "600 28px system-ui"; ctx.fillText('PEAK RATING', cxr, pad + 494);
+      ctx.fillStyle = '#dfece5'; ctx.font = "600 34px system-ui"; ctx.fillText('Now ' + s.rating + ' \u00b7 Rank ' + (s.rank ? '#' + s.rank : '\u2014') + ' \u00b7 LVL ' + s.level, cxr, pad + 566);
+      ctx.textAlign = 'left'; foot(); return;
+    }
+    if (id === 'streak') {
+      ctx.fillStyle = '#7fd8a8'; ctx.font = "800 110px 'Rajdhani', system-ui"; ctx.fillText(String(s.rating), pad, pad + 96);
+      ctx.fillStyle = '#93a89e'; ctx.font = "600 26px system-ui"; ctx.fillText('RATING \u00b7 ' + (s.rank ? '#' + s.rank : '\u2014'), pad + 4, pad + 138);
+      avatar(s._av);
+      ctx.fillStyle = '#fff'; ctx.font = "700 46px system-ui"; ctx.fillText(s.name, pad, pad + 250);
+      const yy = pad + 330;
+      ctx.fillStyle = '#fff'; ctx.font = "800 96px 'Rajdhani', system-ui"; ctx.fillText('\ud83d\udd25 ' + (s.streak || 0), pad, yy + 40);
+      ctx.fillStyle = '#93a89e'; ctx.font = "600 26px system-ui"; ctx.fillText('CURRENT STREAK', pad + 4, yy + 88);
+      ctx.fillStyle = '#fff'; ctx.font = "800 96px 'Rajdhani', system-ui"; ctx.fillText('\ud83c\udfc6 ' + (s.bestStreak || 0), pad, yy + 220);
+      ctx.fillStyle = '#93a89e'; ctx.font = "600 26px system-ui"; ctx.fillText('BEST STREAK', pad + 4, yy + 268);
+      if (s.wins != null) { ctx.fillStyle = '#dfece5'; ctx.font = "600 32px system-ui"; ctx.fillText(s.wins + '\u2013' + s.losses + ' \u00b7 ' + s.pct + '% win rate', pad, yy + 370); }
+      foot(); return;
+    }
+    if (id === 'record') {
+      ctx.textAlign = 'left';
+      ctx.fillStyle = '#fff'; ctx.font = "700 52px system-ui"; ctx.fillText(s.name, pad, pad + 44);
+      ctx.fillStyle = '#8fa39a'; ctx.font = "500 28px system-ui"; ctx.fillText((s.nickname ? '@' + s.nickname : '') + ' \u00b7 LVL ' + s.level, pad, pad + 84);
+      avatar(s._av); ctx.textAlign = 'center';
+      ctx.fillStyle = '#7fd8a8'; ctx.font = "800 150px 'Rajdhani', system-ui"; ctx.fillText(s.wins != null ? s.wins + '\u2013' + s.losses : '\u2013', W / 2, pad + 370);
+      ctx.fillStyle = '#93a89e'; ctx.font = "600 28px system-ui"; ctx.fillText('WIN \u2013 LOSS', W / 2, pad + 418);
+      const rc = [[(s.pct != null ? s.pct + '%' : '\u2013'), 'WIN RATE'], [String(s.games), 'GAMES']];
+      const rcx = [W / 2 - 220, W / 2 + 220];
+      rc.forEach(function (c, i) { ctx.fillStyle = '#fff'; ctx.font = "800 72px 'Rajdhani', system-ui"; ctx.fillText(c[0], rcx[i], pad + 560); ctx.fillStyle = '#93a89e'; ctx.font = "600 26px system-ui"; ctx.fillText(c[1], rcx[i], pad + 600); });
+      ctx.textAlign = 'left'; foot(); return;
+    }
+    if (id === 'form') {
+      ctx.fillStyle = '#7fd8a8'; ctx.font = "800 110px 'Rajdhani', system-ui"; ctx.fillText(String(s.rating), pad, pad + 96);
+      ctx.fillStyle = '#93a89e'; ctx.font = "600 26px system-ui"; ctx.fillText('RATING \u00b7 ' + (s.rank ? '#' + s.rank : '\u2014'), pad + 4, pad + 138);
+      avatar(s._av);
+      ctx.fillStyle = '#fff'; ctx.font = "700 46px system-ui"; ctx.fillText(s.name, pad, pad + 250);
+      const fr = s.form10 || [];
+      if (fr.length) {
+        const n = fr.length, gap = 20, size = Math.min(112, Math.floor((W - pad * 2 - gap * (n - 1)) / n));
+        const totalW = n * size + (n - 1) * gap, startX = (W - totalW) / 2, ry = pad + 380;
+        ctx.textAlign = 'center';
+        fr.forEach(function (r, i) {
+          const x = startX + i * (size + gap);
+          ctx.fillStyle = r === 'W' ? '#7fd8a8' : '#e0725f';
+          ctx.beginPath(); ctx.arc(x + size / 2, ry + size / 2, size / 2, 0, Math.PI * 2); ctx.fill();
+          ctx.fillStyle = '#08120d'; ctx.font = "800 " + Math.floor(size * 0.5) + "px 'Rajdhani', system-ui"; ctx.fillText(r, x + size / 2, ry + size / 2 + size * 0.18);
+        });
+        ctx.fillStyle = '#93a89e'; ctx.font = "600 26px system-ui"; ctx.fillText('LAST ' + n + ' RESULTS', W / 2, ry + size + 60); ctx.textAlign = 'left';
+      } else { ctx.fillStyle = '#9fb3a8'; ctx.font = "500 30px system-ui"; ctx.fillText('No recent matches yet.', pad, pad + 420); }
+      foot(); return;
+    }
     // full (default)
     ctx.fillStyle = '#7fd8a8'; ctx.font = "800 150px 'Rajdhani', system-ui"; ctx.fillText(String(s.rating), pad, pad + 128);
     ctx.fillStyle = '#93a89e'; ctx.font = "600 26px system-ui"; ctx.fillText('RATING', pad + 4, pad + 170);
@@ -827,7 +919,7 @@
   }
 
   async function renderExport() {
-    const cur = sel(0), W = 1080, H = 1480, pad = 72;
+    const cur = sel(0), W = 1080, H = 1350, pad = 72;
     const canvas = document.createElement('canvas'); canvas.width = W; canvas.height = H;
     const ctx = canvas.getContext('2d');
     if (document.fonts && document.fonts.ready) { try { await document.fonts.ready; } catch (e) {} }
@@ -837,7 +929,7 @@
   }
 
   async function renderAnimatedExport() {
-    const cur = sel(0), W = 1080, H = 1480, pad = 72;
+    const cur = sel(0), W = 1080, H = 1350, pad = 72;
     const canvas = document.createElement('canvas'); canvas.width = W; canvas.height = H;
     const ctx = canvas.getContext('2d');
     if (document.fonts && document.fonts.ready) { try { await document.fonts.ready; } catch (e) {} }

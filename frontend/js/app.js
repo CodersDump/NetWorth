@@ -569,15 +569,15 @@ let userPool = null;
         seasons.forEach(s => {
           const climb = (s.delta >= 0 ? '+' : '') + s.delta;
           const badges = (s.badges || []).map(b => {
-            const svg = seasonBadgeSvg(b.kind, b.rank, 34);
+            const svg = seasonBadgeSvg(b.kind, b.rank, 60);
             const lbl = b.kind === 'podium' ? (['', '1st', '2nd', '3rd'][b.rank] || 'Podium') : (label[b.kind] || b.kind);
-            return '<span title="' + lbl + '" style="display:inline-flex;flex-direction:column;align-items:center;width:58px;text-align:center;gap:2px;">' + svg + '<span style="font-size:10px;opacity:0.75;">' + lbl + '</span></span>';
+            return '<span title="' + lbl + '" style="display:inline-flex;flex-direction:column;align-items:center;width:84px;text-align:center;gap:4px;">' + svg + '<span style="font-size:12px;opacity:0.8;">' + lbl + '</span></span>';
           }).join('');
           html += '<div style="border-top:1px solid var(--border);padding:10px 0;">'
             + '<div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px;">'
             + '<strong>' + escapeHtml(s.season.name) + '</strong>'
             + '<span class="card-sub">Rank #' + s.rank + ' \u00b7 ' + s.season_score + ' (' + climb + ') \u00b7 ' + s.games + ' GP' + (s.sealed ? '' : ' \u00b7 live') + '</span></div>'
-            + '<div style="display:flex;flex-wrap:wrap;gap:12px;margin-top:8px;">' + badges + '</div></div>';
+            + '<div style="display:flex;flex-wrap:wrap;gap:16px;margin-top:10px;">' + badges + '</div></div>';
         });
         el.innerHTML = html; el.style.display = 'block';
       } catch (_) { el.style.display = 'none'; }
