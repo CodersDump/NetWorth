@@ -558,7 +558,7 @@ let userPool = null;
     async function loadPlayerSeasons(playerId) {
       const el = document.getElementById('profile-seasons');
       if (!el) return;
-      if (!seasonsEnabled || !playerId) { el.style.display = 'none'; el.innerHTML = ''; return; }
+      if (!playerId) { el.style.display = 'none'; el.innerHTML = ''; return; }
       try {
         const res = await statsFetch(`player_season_summary=${encodeURIComponent(playerId)}`);
         const data = await res.json();
@@ -6795,7 +6795,7 @@ let userPool = null;
       // non-admins see levels/coins/store/quests when it's enabled.
       try {
         const asRes = await fetch(`${API_BASE_URL}/app-settings`);
-        if (asRes.ok) { const _as = await asRes.json(); xpPublic = !!_as.xp_public; voiceEnabled = !!_as.voice_enabled; privacyModeEnabled = !!_as.privacy_mode_enabled; if (typeof applyVoiceVisibility === 'function') applyVoiceVisibility(); }
+        if (asRes.ok) { const _as = await asRes.json(); xpPublic = !!_as.xp_public; voiceEnabled = !!_as.voice_enabled; privacyModeEnabled = !!_as.privacy_mode_enabled; seasonsEnabled = !!_as.seasons_enabled; if (typeof applyVoiceVisibility === 'function') applyVoiceVisibility(); }
       } catch (_) {}
       if (typeof updateAuthUI === 'function') updateAuthUI();
       // Build B: per-tab data now loads lazily on first open (tab handler

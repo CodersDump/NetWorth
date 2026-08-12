@@ -827,7 +827,7 @@
   }
 
   async function renderExport() {
-    const cur = sel(0), W = 1080, H = 1350, pad = 72;
+    const cur = sel(0), W = 1080, H = 1480, pad = 72;
     const canvas = document.createElement('canvas'); canvas.width = W; canvas.height = H;
     const ctx = canvas.getContext('2d');
     if (document.fonts && document.fonts.ready) { try { await document.fonts.ready; } catch (e) {} }
@@ -837,7 +837,7 @@
   }
 
   async function renderAnimatedExport() {
-    const cur = sel(0), W = 1080, H = 1350, pad = 72;
+    const cur = sel(0), W = 1080, H = 1480, pad = 72;
     const canvas = document.createElement('canvas'); canvas.width = W; canvas.height = H;
     const ctx = canvas.getContext('2d');
     if (document.fonts && document.fonts.ready) { try { await document.fonts.ready; } catch (e) {} }

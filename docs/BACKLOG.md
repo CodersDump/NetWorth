@@ -241,6 +241,17 @@
 
 ## Done
 
+- ✅ 2026-08-11 — **Season fixes + card-share width.** (1) **Most-improved** season badge now only awards
+  to a non-champion - in a uniform-baseline season (Season 0 starts at the beginning, everyone at 1000) the
+  winner is always the biggest climber, so the two collided; now it only fires for a genuine over-performer
+  who didn't win (meaningful from Season 1 on). (2) **Season achievements count only SEALED (completed)
+  seasons** - so they're permanent milestones; the current Season 0 contributes once it ends Aug 31.
+  (3) **Season section moved below** the player dropdown (was above it). (4) **Season race fixed:**
+  `seasonsEnabled` now loads with the initial app-settings fetch (not only when Stats opens), and
+  `loadPlayerSeasons` relies on the response's `enabled` instead of the global - so the card's Seasons
+  section shows first paint, no reload needed. (5) **Card-share export** height 1350->1480 (1080x1480 ≈
+  the in-app preview's 296:406), so the shared card matches what you see instead of looking wider; bg/frame
+  scale with H, content is top-anchored (eyeball bottom spacing - easy vertical-center nudge if needed).
 - ✅ 2026-08-10 — **Season-scoped achievements (folded into the achievements grid).** `compute_achievements`
   now aggregates the player's season history (via `compute_player_season_summary`) into cumulative counts:
   season wins (#1 finishes), podiums (top-3), most-improved seasons, iron-player seasons, seasons played.
