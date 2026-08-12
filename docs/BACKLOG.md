@@ -241,6 +241,15 @@
 
 ## Done
 
+- ✅ 2026-08-11 — **Seasons C4 (season-scoped tasks).** Quests can now reset **per season** instead of
+  weekly. Backend: a shared `_quest_period(quest)` returns (window bounds, claim-key prefix, label) by
+  scope - season quests use the current season's window + `season:<id>` claim namespace (so they reset at
+  rollover), weekly quests use the Monday week as before. Wired into `list_quests`, `claim_quest`, and
+  `save_quest` (which now stores `scope`, default 'weekly' = backward-compatible). A season-scoped quest
+  with no active season is hidden. Weekly vs season claim keys never collide, so the two reset
+  independently (verified). Frontend: a **Resets: Weekly / Per season** selector in the admin quest form,
+  and each quest now shows its period (· This week / · Season 0) in the Quests list. **Season epic C1-C4
+  complete.** Optional later: deterministic rollover scheduler seal; badge SVG assets; more card templates.
 - ✅ 2026-08-11 — **4 new share-card stat templates + bigger season badges.** card-share now has **8**
   stat layouts (was 4): added **Peak rating** (highest Elo reached, gold), **Streaks** (current + best
   streak), **Win record** (big W-L + win-rate + games), **Last 10** (recent W/L result pills) - each with

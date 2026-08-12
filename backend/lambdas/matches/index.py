@@ -410,6 +410,21 @@ def compute_player_season_summary(player_id, items):
     return {'enabled': True, 'seasons': out}
 
 
+def _quest_period(quest):
+    """(bounds, claim_prefix, label) for a quest by scope. Season-scoped quests
+    use the current season's window + id (so they reset at rollover); weekly
+    quests use the current week. Returns (None, None, None) for a season quest
+    when no season is active."""
+    if quest.get('scope') == 'season':
+        enabled, _k, resolved = _season_config()
+        cur = _resolve_season(resolved, 'current') if enabled else None
+        if not cur:
+            return None, None, None
+        return (cur['start_date'], cur['end_date']), 'season:' + cur['id'], cur['name']
+    monday, next_monday = _week_bounds_utc()
+    return (monday, next_monday), monday, 'This week'
+
+
 def list_quests(event):
     """Returns this week's quests with the caller's progress and claim state.
     Public-ish: requires a linked player to show progress, but the quest
@@ -418,23 +433,24 @@ def list_quests(event):
     pid = claims.get('custom:player_id')
     quests = _load_quests()
 
-    monday, next_monday = _week_bounds_utc()
     all_matches = [m for m in _scan_all(matches_table)
                    if m.get('match_id') not in (_EVENTS_ROW_ID, _QUESTS_ROW_ID)]
-    week_matches = [m for m in all_matches
-                    if monday <= (m.get('date') or '')[:10] < next_monday]
-
+    monday, _nm = _week_bounds_utc()
     player = players_table.get_item(Key={'player_id': pid}).get('Item') if pid else None
     rating_by_id = {}  # lazy - only needed for beat_higher fallback
     claimed = (player or {}).get('quest_claims', {}) if player else {}
-    week_key = monday  # claims are namespaced by week so they reset weekly
 
     out = []
     for q in quests:
+        bounds, prefix, period = _quest_period(q)
+        if bounds is None:
+            continue  # season-scoped quest with no active season - hide it
+        lo, hi = bounds
+        q_matches = [m for m in all_matches if lo <= (m.get('date') or '')[:10] < hi]
         target = int(q.get('target', 1))
-        progress = _evaluate_quest(q, pid, week_matches, rating_by_id) if pid else 0
+        progress = _evaluate_quest(q, pid, q_matches, rating_by_id) if pid else 0
         done = progress >= target
-        already = bool(claimed.get(f"{week_key}:{q.get('quest_id')}"))
+        already = bool(claimed.get(f"{prefix}:{q.get('quest_id')}"))
         out.append({
             'quest_id': q.get('quest_id'),
             'type': q.get('type'),
@@ -443,6 +459,8 @@ def list_quests(event):
             'reward_xp': int(q.get('reward_xp', 0)),
             'reward_coins': int(q.get('reward_coins', 0)),
             'reward_cosmetic_id': q.get('reward_cosmetic_id') or None,
+            'scope': q.get('scope', 'weekly'),
+            'period': period,
             'progress': min(progress, target),
             'complete': done,
             'claimed': already,
@@ -472,6 +490,7 @@ def save_quest(event):
         'reward_xp': int(body.get('reward_xp', 0) or 0),
         'reward_coins': int(body.get('reward_coins', 0) or 0),
         'reward_cosmetic_id': body.get('reward_cosmetic_id') or None,
+        'scope': body.get('scope') if body.get('scope') in ('weekly', 'season') else 'weekly',
     }
     quests = [q for q in quests if q.get('quest_id') != qid]
     quests.append(row)
@@ -507,19 +526,22 @@ def claim_quest(event):
     if not quest:
         return _response(404, {'error': 'quest not found'})
 
-    monday, next_monday = _week_bounds_utc()
-    week_matches = [m for m in _scan_all(matches_table)
-                    if m.get('match_id') not in (_EVENTS_ROW_ID, _QUESTS_ROW_ID)
-                    and monday <= (m.get('date') or '')[:10] < next_monday]
-    progress = _evaluate_quest(quest, pid, week_matches, {})
+    bounds, prefix, _period = _quest_period(quest)
+    if bounds is None:
+        return _response(400, {'error': 'this season quest is not active right now'})
+    lo, hi = bounds
+    q_matches = [m for m in _scan_all(matches_table)
+                 if m.get('match_id') not in (_EVENTS_ROW_ID, _QUESTS_ROW_ID)
+                 and lo <= (m.get('date') or '')[:10] < hi]
+    progress = _evaluate_quest(quest, pid, q_matches, {})
     if progress < int(quest.get('target', 1)):
         return _response(400, {'error': 'quest not complete yet'})
 
     player = players_table.get_item(Key={'player_id': pid}).get('Item') or {}
     claimed = player.get('quest_claims') or {}
-    claim_key = f"{monday}:{qid}"
+    claim_key = f"{prefix}:{qid}"
     if claimed.get(claim_key):
-        return _response(400, {'error': 'already claimed this week'})
+        return _response(400, {'error': 'already claimed'})
 
     # Grant rewards. XP is added on top of match-earned XP (and survives
     # recompute because we bump a separate quest_xp field the recompute adds
