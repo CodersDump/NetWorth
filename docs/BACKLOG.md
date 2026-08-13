@@ -241,6 +241,14 @@
 
 ## Done
 
+- ✅ 2026-08-11 — **Quest naming + season section + event banner (from v1.31 testing).** (1) The card was
+  still titled **'Weekly quests'** even though it now holds season tasks too - renamed to **'Quests'**
+  (player + admin) with descriptions that explain both reset rules (weekly = Monday, season = rollover).
+  (2) In the Quests list the season section now reads with a **gold accent + trophy** header vs the plain
+  weekly header, so the two are clearly distinct. (3) The **event banner already existed and works** - it
+  just wasn't showing because the test event (Freedom frenzy, Aug 15) is in the future; now it also
+  **announces upcoming events within 14 days** ('X coming Aug 15'), so admins/players see it before it
+  goes live, then it switches to the 'is live' message during the window. Banner is public, top of page.
 - ✅ 2026-08-11 — **Stats-tab fan-out consolidation (mitigates concurrency throttling, KI #16).** Opening
   Stats used to fire the 4 matches-derived sections (Hall of Fame, diversity, progress-badges, attendance)
   as **4 concurrent `/matches` calls, each doing its own full-table `_scan_all`** - a big chunk of the

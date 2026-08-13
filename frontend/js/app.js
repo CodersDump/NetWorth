@@ -3032,10 +3032,10 @@ let userPool = null;
         };
         const _weekly = quests.filter(q => (q.scope || 'weekly') !== 'season');
         const _season = quests.filter(q => q.scope === 'season');
-        const _hdr = (t) => `<div class="card-sub" style="font-weight:600;margin:4px 0 2px;text-transform:uppercase;font-size:12px;letter-spacing:0.03em;">${escapeHtml(t)}</div>`;
+        const _hdr = (t, icon, color) => `<div style="font-weight:700;margin:10px 0 4px;text-transform:uppercase;font-size:12px;letter-spacing:0.04em;color:${color || 'var(--text-secondary,#8a8f8c)'};">${icon || ''} ${escapeHtml(t)}</div>`;
         let _html = '';
-        if (_weekly.length) _html += _hdr('This week') + _weekly.map(_renderQuestRow).join('');
-        if (_season.length) _html += _hdr((_season[0].period) || 'Season') + _season.map(_renderQuestRow).join('');
+        if (_weekly.length) _html += _hdr('This week', '🗓️') + _weekly.map(_renderQuestRow).join('');
+        if (_season.length) _html += _hdr((_season[0].period) || 'Season', '🏆', '#ffd24a') + _season.map(_renderQuestRow).join('');
         el.innerHTML = _html || '<p class="card-sub" style="margin:0;">No quests right now.</p>';
       } catch (e) { el.innerHTML = '<p class="card-sub">Could not load quests.</p>'; }
     }
@@ -3401,9 +3401,15 @@ let userPool = null;
         const res = await fetch(`${API_BASE_URL}/events`);
         const data = await res.json();
         const today = new Date().toLocaleDateString('en-CA');
-        const active = (data.events || []).find(e => e.start_date <= today && today <= e.end_date);
+        const evs = data.events || [];
+        const active = evs.find(e => e.start_date <= today && today <= e.end_date);
+        const soon = evs.filter(e => e.start_date > today).sort((a, b) => a.start_date < b.start_date ? -1 : 1)[0];
+        const daysTo = soon ? Math.ceil((new Date(soon.start_date) - new Date(today)) / 86400000) : 999;
         if (active) {
           bar.innerHTML = `🎉 <strong>${escapeHtml(active.name)}</strong> is live — ${active.xp_multiplier}× XP on every match until ${active.end_date}!`;
+          bar.style.display = 'block';
+        } else if (soon && daysTo <= 14) {
+          bar.innerHTML = `🗓️ <strong>${escapeHtml(soon.name)}</strong> — ${soon.xp_multiplier}× XP coming ${soon.start_date}${soon.start_date === soon.end_date ? '' : ' to ' + soon.end_date}`;
           bar.style.display = 'block';
         } else { bar.style.display = 'none'; }
       } catch (_) { bar.style.display = 'none'; }
