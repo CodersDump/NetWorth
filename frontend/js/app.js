@@ -358,11 +358,23 @@ let userPool = null;
       loader();
     }
     /** Everything the Stats tab shows - loaded/refreshed as a unit. */
-    function loadStatsBundle() {
-      loadRankings(); loadDiversity(); loadBadges();
-      loadHistory(); loadHallOfFame(); loadAttendance();
-      loadPublicWalkins(); loadSeasonsMeta();
+    async function loadStatsBundle() {
+      loadRankings(); loadHistory(); loadPublicWalkins(); loadSeasonsMeta();
       makeStatsCollapsible();
+      // Hall of Fame + diversity + badges + attendance in ONE call (was 4
+      // concurrent full-table scans). Group-filter changes still use the
+      // individual loaders. Falls back to those if the bundle call fails.
+      try {
+        const res = await statsFetch('stats_bundle=true');
+        const data = await res.json();
+        if (!res.ok || !data) throw new Error('bundle failed');
+        if (data.hall_of_fame) { lastHofData = data.hall_of_fame; renderHallOfFame(data.hall_of_fame); }
+        if (data.diversity) renderDiversity(data.diversity);
+        if (data.progress_badges) renderBadges(data.progress_badges);
+        if (data.attendance) renderAttendance(data.attendance);
+      } catch (e) {
+        loadHallOfFame(); loadDiversity(); loadBadges(); loadAttendance();
+      }
     }
     /** Turn each Stats card into a tap-to-expand section so you don't scroll
      *  through every one. Idempotent; preserves inner element IDs. */

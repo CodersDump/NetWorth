@@ -241,6 +241,15 @@
 
 ## Done
 
+- ✅ 2026-08-11 — **Stats-tab fan-out consolidation (mitigates concurrency throttling, KI #16).** Opening
+  Stats used to fire the 4 matches-derived sections (Hall of Fame, diversity, progress-badges, attendance)
+  as **4 concurrent `/matches` calls, each doing its own full-table `_scan_all`** - a big chunk of the
+  Lambda-concurrency pressure (account cap = 10) and 4x the DynamoDB RCU. New `stats_bundle=true` endpoint
+  computes all four from a **single scan** and returns them together; `loadStatsBundle` makes one call and
+  distributes to the existing `renderX` functions, falling back to the individual loaders if it fails.
+  Group-filter changes still use the per-section loaders. Net: Stats matches-scans 4->1, fewer concurrent
+  invocations. **Still the #1 reliability action (owner):** request a Service Quotas increase for Lambda
+  'Concurrent executions' (10 -> 1000) - that's the real fix for burst 500s during busy sessions.
 - ✅ 2026-08-11 — **3 more share-card templates + season tasks split out.** card-share now has **11**
   stat layouts: added **Everything** (dense 6-stat grid + trend: W-L, win rate, games, peak, streak, best),
   **Head-to-head** (record vs your most-played opponent, from the bundle's top_opponents), and **Best
