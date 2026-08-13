@@ -105,6 +105,9 @@ but shows on the `Throttles` CloudWatch metric. **Safe move:** (a) request a Ser
 Lambda "Concurrent executions"; (b) cut the load-time fan-out (lazy-load per tab + one bundle endpoint
 + cached preflights) so first paint needs 2–3 invocations, not ~15. (BACKLOG Now/high; found 2026-08-07.)
 
+**MITIGATED 2026-08-11 (partial):** Stats tab now uses a single `stats_bundle` call (4 concurrent
+scans -> 1). The account quota increase is still the real fix.
+
 ### 9. Website bucket == uploads bucket  · sev: high if `--delete` used
 User cosmetics live under `uploads/` in the same S3 bucket that serves the site. A
 `aws s3 sync --delete` would wipe them. **Safe move:** deploy uses explicit `aws s3 cp` per path;

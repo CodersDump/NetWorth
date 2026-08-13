@@ -1369,6 +1369,16 @@ def list_matches(event):
     # Privacy: omit private players from comparative outputs for everyone but a
     # SuperAdmin (only ever identified via an authed route). No-op when off.
     private_ids = set() if _is_super_admin(_caller_claims(event)) else _load_private_ids()
+    if params.get('stats_bundle'):
+        # One call, one scan -> the 4 matches-derived Stats sections. Previously
+        # 4 concurrent /matches calls, each doing its own full-table scan (a
+        # big chunk of the Lambda-concurrency + DynamoDB-RCU pressure).
+        return _response(200, {
+            'hall_of_fame': _scrub_private(compute_hall_of_fame(items), private_ids),
+            'diversity': _scrub_private(compute_diversity(items), private_ids),
+            'progress_badges': _scrub_private(compute_progress_badges(items), private_ids),
+            'attendance': _scrub_private(compute_attendance(items), private_ids),
+        })
     if params.get('player_season_summary'):
         _pss = params.get('player_season_summary')
         if _pss in private_ids:
