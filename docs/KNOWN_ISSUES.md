@@ -25,11 +25,17 @@ open. The risk is drift: it's easy to add a *write* under a `NONE` parent by acc
 when adding a route, decide auth explicitly and mirror the closest sibling; writes should be COGNITO
 unless there's a real reason (and then gated in-code).
 
-### 3. Committed AWS account ID in policy JSONs  · sev: low
-`current-policy.json` and `networth-deploy-policy.json` contain the 12-digit account id
-`593579469110`. Account IDs aren't secret-secret, but they don't belong in a public repo.
-**Safe move:** parameterize with a placeholder or move these out of the repo; scrub history if the
-repo is/will be public.
+### 3. Committed AWS account ID in policy JSONs  · sev: low, RESOLVED 2026-08-20
+`current-policy.json` and `networth-deploy-policy.json` contained the 12-digit account id
+`593579469110`, once each, in the same `events:*` ARN (`arn:aws:events:*:593579469110:rule/
+networth-*`). Neither file is read by any script or workflow (grepped `.github/workflows/`, `.sh`,
+`.py` - only referenced from docs), so they're static reference copies, not live deploy input;
+account IDs aren't secret-secret either, but they don't belong in a public repo. Fixed by replacing
+the account id with `*`, matching every other ARN's `*:*` wildcard already used in both files -
+identical effect (IAM already scopes to the calling account's own resources; a wildcard account
+segment doesn't grant cross-account access), zero behavior change, both files still valid JSON.
+**Not yet done, if the repo goes public:** scrub git history (the id was in prior commits before this
+fix; this only fixes the current file contents going forward).
 
 ### 4. Self-signup ≠ membership, enforced only by `_requires_linked_member`  · sev: low
 A Cognito account can exist with no linked player. Every write path relies on
@@ -121,9 +127,26 @@ team pickers, stats, finance settlement, and each dropped player's own `hasLinke
 "no linked profile" despite a healthy Cognito link — a candidate cause in the 2026-08-07 Suren case
 before it turned out to be a stale token). **Safe move:** paginate every `.scan()` (loop on
 `LastEvaluatedKey`); grep all lambdas for bare `.scan(` — a copy-paste-prone shape. (Found 2026-08-07.)
-**RESOLVED 2026-08-09:** `_scan_all()` helper added to both lambdas; all 9 players-table scans (incl.
-`list_players`) + the matches/history/tournaments scans paginated. Only the small `claim_requests`/
-`groups` scans remain bare (low risk).
+**PARTIALLY RESOLVED 2026-08-09, actually completed 2026-08-20:** the 2026-08-09 fix only reached the
+matches and players lambdas - `_scan_all()` was added there and `list_players` + the matches/history/
+tournaments-recompute scans *inside those two files* were paginated. But `tournaments/index.py` itself
+(a separate Lambda) had no `_scan_all` at all and 5 fully bare scans over `tournaments_table`,
+`players_table`, and `matches_table` - exactly the risk this item describes, silently missed because
+the "matches/history/tournaments scans paginated" note only ever meant the copies living inside the
+matches lambda. Same gap in `finance/index.py` (4 bare scans over `groups_table`/`finance_table`/
+`matches_table`), `groups/index.py` (5 bare scans over `players_table`/`groups_table`),
+`progress_scheduler/index.py` (2, over `matches_table`/`groups_table`), and `register_player/index.py`
+(1, over the players table for nickname-uniqueness). The "only the small claim_requests/groups scans
+remain bare (low risk)" line was also only true for `players/index.py` - it undersold the total gap
+across the other five lambdas. Found and fixed 2026-08-20 while auditing for other left-over backlog
+items: `_scan_all()` copied into all five remaining lambdas (`finance`, `groups`, `tournaments`,
+`progress_scheduler`, `register_player`) and every bare `.scan()` in the whole codebase - including
+`players/index.py`'s own remaining `claim_requests_table`/`groups_table` calls - now routed through it.
+Verified with a fixture `PagingFakeTable` (2 items/page, unlike the other tests' single-page fake) that
+actually exercises the `LastEvaluatedKey` loop across all 6 lambdas. **Safe move going forward:** when
+adding a new Lambda that scans a table expected to grow, copy `_scan_all` in from day one - this is the
+second time a bare `.scan()` crept in per-file despite the pattern being established elsewhere
+(KNOWN_ISSUES #6 - this helper is a prime candidate for the shared-layer de-dup, not just a copy-paste).
 
 ---
 
@@ -150,10 +173,16 @@ Lambda "Concurrent executions"; (b) cut the load-time fan-out (lazy-load per tab
 **MITIGATED 2026-08-11 (partial):** Stats tab now uses a single `stats_bundle` call (4 concurrent
 scans -> 1). The account quota increase is still the real fix.
 
-### 9. Website bucket == uploads bucket  · sev: high if `--delete` used
+### 9. Website bucket == uploads bucket  · sev: high if `--delete` used, guardrail added 2026-08-20
 User cosmetics live under `uploads/` in the same S3 bucket that serves the site. A
 `aws s3 sync --delete` would wipe them. **Safe move:** deploy uses explicit `aws s3 cp` per path;
-never introduce a `sync --delete`.
+never introduce a `sync --delete`. **CI guard added 2026-08-20:** both `deploy.yml` and
+`deploy-staging.yml` now run a check immediately after checkout, before any AWS credentials are even
+configured, that fails the run if a destructive sync ever appears in `.github/workflows/*.yml` -
+catches a future regression at CI time instead of relying on someone remembering this note. (The
+check builds its two search terms from concatenated string parts rather than one literal token, on
+purpose - written naively it would trip on its own source, since the very comment describing the
+danger contains the danger's own text.)
 
 ### 10. Frontend config lives in `index.html`, not `app.js`  · sev: low
 `API_BASE_URL`, `COGNITO_USER_POOL_ID`, `COGNITO_CLIENT_ID`, UPI/finance placeholders are declared

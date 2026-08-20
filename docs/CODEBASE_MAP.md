@@ -145,15 +145,16 @@ _NetWorth - Epic 4 verification only: GET /whoami_
 | `handler` | event, context | 20 | — |
 | `_response` | status_code, body_dict | 46 | — |
 
-#### `register_player` — 98 LOC
+#### `register_player` — 116 LOC
 _NetWorth - register_player Lambda_
 
 | Function | Args | Line | What it does |
 |---|---|---|---|
-| `sanitize_nickname` | raw | 23 | Hard format rule: lowercase, alphanumeric + underscore only. |
-| `_caller_claims` | event | 32 | — |
-| `handler` | event, context | 36 | — |
-| `_response` | status_code, body_dict | 89 | — |
+| `_scan_all` | table | 23 | Full-table scan that follows LastEvaluatedKey - a bare .scan() returns |
+| `sanitize_nickname` | raw | 41 | Hard format rule: lowercase, alphanumeric + underscore only. |
+| `_caller_claims` | event | 50 | — |
+| `handler` | event, context | 54 | — |
+| `_response` | status_code, body_dict | 107 | — |
 
 #### `players` — 1907 LOC
 _NetWorth - players Lambda (list all, update one, delete one)_
@@ -214,7 +215,7 @@ _NetWorth - players Lambda (list all, update one, delete one)_
 | `_cognito_username_for_email` | cognito, email | 1890 | The username is not always the email, so it has to be looked up. |
 | `_response` | status_code, body_dict | 1898 | — |
 
-#### `groups` — 763 LOC
+#### `groups` — 781 LOC
 _NetWorth - groups Lambda_
 
 **Module constants:** `CONFIRMATION_CODE`, `VALID_ROLES`, `FINANCE_ROLE_LEVELS`
@@ -222,29 +223,30 @@ _NetWorth - groups Lambda_
 | Function | Args | Line | What it does |
 |---|---|---|---|
 | `sanitize_nickname` | raw | 42 | Same rule as register_player's version (duplicated - separate |
-| `handler` | event, context | 53 | — |
-| `_authorize_group_action` | group_id, claims | 119 | Shared check for Epic 4's group-scoped write actions: SuperAdmin, or |
-| `delete_group_enforced` | group_id, event | 135 | Dual-gated (Epic 4 increment 3): a valid Cognito identity that's |
-| `remove_player_enforced` | group_id, player_id, event | 147 | Same dual-gate as delete_group_enforced, for member removal. |
-| `_requires_linked_member` | claims | 155 | Signing up is not the same as being a member. Cognito self-signup is |
-| `register_and_join` | event | 178 | Combined 'register a friend' + 'quick-add during match setup' |
-| `add_player_enforced` | group_id, event | 262 | Requires SuperAdmin, or already owner/admin of THIS group - reuses |
-| `create_group_enforced` | event | 271 | Requires a valid Cognito login (any authenticated account - no |
-| `_consume_extra_group_perk` | player_id | 305 | Spend one extra_group token if the player owns one. Mirrors the |
-| `visible_players_for_caller` | event | 329 | For populating the Profile tab's player picker: SuperAdmin gets |
-| `create_group` | event | 388 | — |
-| `list_groups` |  | 412 | — |
-| `get_group` | group_id | 431 | — |
-| `update_group_defaults` | group_id, event | 457 | Save a group's default tournament creation settings (format, points, |
-| `set_group_slots` | group_id, event | 478 | Owner/admin group settings via the Cognito-authorized PUT |
-| `delete_group` | group_id, event | 580 | Deletes only the group record itself. Player records are never |
-| `add_player` | group_id, event | 594 | — |
-| `remove_player` | group_id, player_id, event | 636 | — |
-| `_caller_claims` | event | 658 | Claims API Gateway's Cognito Authorizer attaches to the request. |
-| `_is_super_admin` | claims | 666 | — |
-| `set_role` | group_id, player_id, event | 671 | Set (or change) a member's role within this group. |
-| `set_finance_role` | group_id, player_id, event | 714 | Set a member's per-group FINANCE role (none/view/write/delete) in this |
-| `_response` | status_code, body_dict | 754 | — |
+| `_scan_all` | table | 53 | Full-table scan that follows LastEvaluatedKey - a bare .scan() returns |
+| `handler` | event, context | 71 | — |
+| `_authorize_group_action` | group_id, claims | 137 | Shared check for Epic 4's group-scoped write actions: SuperAdmin, or |
+| `delete_group_enforced` | group_id, event | 153 | Dual-gated (Epic 4 increment 3): a valid Cognito identity that's |
+| `remove_player_enforced` | group_id, player_id, event | 165 | Same dual-gate as delete_group_enforced, for member removal. |
+| `_requires_linked_member` | claims | 173 | Signing up is not the same as being a member. Cognito self-signup is |
+| `register_and_join` | event | 196 | Combined 'register a friend' + 'quick-add during match setup' |
+| `add_player_enforced` | group_id, event | 280 | Requires SuperAdmin, or already owner/admin of THIS group - reuses |
+| `create_group_enforced` | event | 289 | Requires a valid Cognito login (any authenticated account - no |
+| `_consume_extra_group_perk` | player_id | 323 | Spend one extra_group token if the player owns one. Mirrors the |
+| `visible_players_for_caller` | event | 347 | For populating the Profile tab's player picker: SuperAdmin gets |
+| `create_group` | event | 406 | — |
+| `list_groups` |  | 430 | — |
+| `get_group` | group_id | 449 | — |
+| `update_group_defaults` | group_id, event | 475 | Save a group's default tournament creation settings (format, points, |
+| `set_group_slots` | group_id, event | 496 | Owner/admin group settings via the Cognito-authorized PUT |
+| `delete_group` | group_id, event | 598 | Deletes only the group record itself. Player records are never |
+| `add_player` | group_id, event | 612 | — |
+| `remove_player` | group_id, player_id, event | 654 | — |
+| `_caller_claims` | event | 676 | Claims API Gateway's Cognito Authorizer attaches to the request. |
+| `_is_super_admin` | claims | 684 | — |
+| `set_role` | group_id, player_id, event | 689 | Set (or change) a member's role within this group. |
+| `set_finance_role` | group_id, player_id, event | 732 | Set a member's per-group FINANCE role (none/view/write/delete) in this |
+| `_response` | status_code, body_dict | 772 | — |
 
 #### `matches` — 2592 LOC
 _NetWorth - matches Lambda (singles + doubles)_
@@ -318,101 +320,104 @@ _NetWorth - matches Lambda (singles + doubles)_
 | `compute_partner_distribution` | player_id, items, top_n | 2536 | For the radar/spider chart: one player's doubles partners, sorted by |
 | `_response` | status_code, body_dict | 2583 | — |
 
-#### `tournaments` — 1059 LOC
+#### `tournaments` — 1078 LOC
 _NetWorth - tournaments Lambda (singles or doubles)_
 
 **Module constants:** `K_FACTOR`, `COMEBACK_BONUS_THRESHOLD`, `COMEBACK_BONUS_PER_POINT`, `COMEBACK_BONUS_CAP`, `CONFIRMATION_CODE`
 
 | Function | Args | Line | What it does |
 |---|---|---|---|
-| `compute_comeback_bonus` | momentum | 46 | Extra rating-point bonus for the winning side, on top of the |
-| `compute_momentum_stats` | point_log, winner | 58 | Longest scoring streak per team, and how big a deficit the winner overcame. |
-| `_is_valid_completed_game` | score_a, score_b, target | 106 | Same BWF-style rule as the standalone matches Lambda: win by 2 at |
-| `_caller_claims` | event | 120 | Same pattern as matches lambda - see that file's comment for |
-| `create_tournament_enforced` | event | 126 | — |
-| `handler` | event, context | 132 | — |
-| `seeded_order` | players | 173 | Sort by current rating, descending. New players just use their |
-| `pair_for_balance` | ordered_players | 183 | Given a skill-ordered list, pair strongest with weakest (snake |
-| `create_tournament` | event | 198 | — |
-| `build_round_robin` | entities | 340 | — |
-| `build_knockout_round` | entities | 357 | — |
-| `_bye_match` | entity | 392 | — |
-| `list_tournaments` | event | 408 | — |
-| `get_tournament` | tournament_id | 432 | — |
-| `recompute_all_ratings` |  | 441 | Elo is path-dependent - each match's rating change depends on the |
-| `delete_tournament` | tournament_id, event | 519 | Deletes this tournament AND every match record tagged with its |
-| `compute_standings` | fixtures, entities | 553 | — |
-| `compute_all_standings` | item | 585 | — |
-| `_submit_game` | fixture, score_a, score_b, best_of, target, o | 591 | Append one game's score to a fixture/match. Returns True if the match is now decided. |
-| `record_group_score` | tournament_id, event | 620 | — |
-| `inject_tiebreakers_if_needed` | item | 674 | Checks each subgroup for a genuine tie (same wins AND point_diff) at |
-| `advance_to_knockout` | item | 725 | — |
-| `record_knockout_score` | tournament_id, event | 750 | — |
-| `compute_adaptive_k` | pairing_count | 861 | Higher K for a fresh/novel doubles pairing (each match together is |
-| `get_pairing_count` | team_ids | 875 | How many prior doubles matches has this exact 2-player team played |
-| `update_elo_and_log` | match_type, entity_a, entity_b, score_a, scor | 893 | — |
-| `substitute_player` | tournament_id, event | 971 | Swap a player out of a team for all of that team's FUTURE (unplayed) |
-| `_response` | status_code, body_dict | 1050 | — |
+| `_scan_all` | table | 41 | Full-table scan that follows LastEvaluatedKey - a bare .scan() returns |
+| `compute_comeback_bonus` | momentum | 65 | Extra rating-point bonus for the winning side, on top of the |
+| `compute_momentum_stats` | point_log, winner | 77 | Longest scoring streak per team, and how big a deficit the winner overcame. |
+| `_is_valid_completed_game` | score_a, score_b, target | 125 | Same BWF-style rule as the standalone matches Lambda: win by 2 at |
+| `_caller_claims` | event | 139 | Same pattern as matches lambda - see that file's comment for |
+| `create_tournament_enforced` | event | 145 | — |
+| `handler` | event, context | 151 | — |
+| `seeded_order` | players | 192 | Sort by current rating, descending. New players just use their |
+| `pair_for_balance` | ordered_players | 202 | Given a skill-ordered list, pair strongest with weakest (snake |
+| `create_tournament` | event | 217 | — |
+| `build_round_robin` | entities | 359 | — |
+| `build_knockout_round` | entities | 376 | — |
+| `_bye_match` | entity | 411 | — |
+| `list_tournaments` | event | 427 | — |
+| `get_tournament` | tournament_id | 451 | — |
+| `recompute_all_ratings` |  | 460 | Elo is path-dependent - each match's rating change depends on the |
+| `delete_tournament` | tournament_id, event | 538 | Deletes this tournament AND every match record tagged with its |
+| `compute_standings` | fixtures, entities | 572 | — |
+| `compute_all_standings` | item | 604 | — |
+| `_submit_game` | fixture, score_a, score_b, best_of, target, o | 610 | Append one game's score to a fixture/match. Returns True if the match is now decided. |
+| `record_group_score` | tournament_id, event | 639 | — |
+| `inject_tiebreakers_if_needed` | item | 693 | Checks each subgroup for a genuine tie (same wins AND point_diff) at |
+| `advance_to_knockout` | item | 744 | — |
+| `record_knockout_score` | tournament_id, event | 769 | — |
+| `compute_adaptive_k` | pairing_count | 880 | Higher K for a fresh/novel doubles pairing (each match together is |
+| `get_pairing_count` | team_ids | 894 | How many prior doubles matches has this exact 2-player team played |
+| `update_elo_and_log` | match_type, entity_a, entity_b, score_a, scor | 912 | — |
+| `substitute_player` | tournament_id, event | 990 | Swap a player out of a team for all of that team's FUTURE (unplayed) |
+| `_response` | status_code, body_dict | 1069 | — |
 
-#### `finance` — 1552 LOC
+#### `finance` — 1571 LOC
 _NetWorth - finance Lambda_
 
 **Module constants:** `GROUPS_TABLE`, `DEFAULT_GROUP_NAME`, `GROUP_SLOT`, `VIEW_KEY`, `CONFIRMATION_CODE`, `MONTHS`, `FINANCE_LEVELS`, `ALLOWED_FIELDS`, `NUMERIC_FIELDS`, `REQUIRED_FIELDS`, `DEFAULT_CLUB_UTC_OFFSET_MINUTES`, `AVG_GAMES_PER_SESSION`, `SESSION_RATE`, `ACTIVE_DAYS_THRESHOLD`, `SLOT_GRACE_MINUTES`, `ASSUMED_MINUTES_PER_GAME`, `DEFAULT_ASSUMED_MINUTES_PER_GAME`, `DENSITY_FLAG_RATIO`, `_SLOT_LABEL_RE`
 
 | Function | Args | Line | What it does |
 |---|---|---|---|
-| `_caller_claims` | event | 85 | Claims API Gateway's Cognito Authorizer attaches to the request. |
-| `_is_super_admin` | claims | 93 | — |
-| `_finance_role` | claims | 107 | — |
-| `_finance_level` | claims | 123 | — |
-| `_has_finance_access` | claims | 127 | View or better - the gate for reading finance at all. |
-| `_default_group_id` |  | 132 | The group_id of the 'Club (default)' group that the pre-migration |
-| `_group_for_request` | params, body | 148 | The group_id this finance op targets. Falls back to the default group |
-| `_group_finance_level` | claims, group_id | 155 | A caller's finance level (0-3) FOR A SPECIFIC GROUP. |
-| `_slot_key` | slot | 181 | Normalize a record's slot for bucketing/comparison: a missing/blank |
-| `_member_assigned_slots` | pid, group | 188 | The set of slots (raw, already-normalized strings) a player is |
-| `_view_scope_slots` | claims, group_id, level | 197 | Stage 4c: a plain 'view'-level grant only sees their own assigned |
-| `_has_any_group_finance` | claims | 223 | True if the caller has finance access in ANY group (owner/admin, or a |
-| `_effective_finance_role` | claims, group_id | 238 | The role name to REPORT to the frontend for button visibility: the |
-| `finance_key_for_caller` | event | 263 | Hands the shared view key to any caller with finance access - global |
-| `set_finance_access` | event | 280 | SuperAdmin sets a player's finance role directly. |
-| `handler` | event, context | 304 | — |
-| `_scan_type` | record_type, group_id | 422 | — |
-| `_num` | v, default | 433 | — |
-| `_clean` | record_type, data | 456 | — |
-| `_resolve_name` | pid_cache, player_id | 468 | — |
-| `_prev_period` | month, year | 479 | — |
-| `_next_period` | month, year | 484 | — |
-| `_member_relief` | settlement, memberships, ident, month, year,  | 489 | Relief a member gets in (month, year): the previous month's residual. |
-| `list_records` | record_type, params, group_id, scope_slots | 512 | — |
-| `create_records` | record_type, body, group_id | 574 | — |
-| `update_record` | record_type, record_id, body, group_id | 596 | — |
-| `delete_record_enforced` | record_type, record_id, event | 659 | Triple-gated: SuperAdmin identity + FINANCE_VIEW_KEY + the existing |
-| `delete_record` | record_type, record_id, body, group_id | 682 | — |
-| `get_settings` |  | 699 | — |
-| `put_settings` | body | 727 | — |
-| `public_upi` |  | 756 | The pay card is shown to guests (they pay walk-in fees), so the UPI |
-| `my_settlement` | claims, group_id | 764 | A single member's own dues in a group: for every (month, slot) where |
-| `public_walkins` |  | 894 | — |
-| `_settlement_rows` | group_id | 914 | Per (month, year, slot): the exact math from the Calculations sheet. |
-| `summary` | group_id, scope_slots | 1078 | — |
-| `_parse_slot_window` | label | 1119 | Best-effort parse of a free-form slot label ('7AM-8AM', '19:00-20:00', |
-| `_local_minutes_of_day` | iso_ts, offset_minutes | 1155 | Convert a stored ISO-8601 UTC match timestamp to local minute-of-day |
-| `_minute_in_window` | minute, window, grace_minutes | 1175 | Whether `minute` (local minute-of-day) falls inside `window` (start, |
-| `_timing_checks` | matches, group, offset_minutes, target_ym | 1188 | Best-effort, non-authoritative diagnostics only (see module note |
-| `insights` | group_id | 1268 | Per-member monthly economics, ghosts, and walk-in conversion. |
-| `_response` | status_code, body_dict | 1543 | — |
+| `_scan_all` | table | 76 | Full-table scan that follows LastEvaluatedKey - a bare .scan() returns |
+| `_caller_claims` | event | 104 | Claims API Gateway's Cognito Authorizer attaches to the request. |
+| `_is_super_admin` | claims | 112 | — |
+| `_finance_role` | claims | 126 | — |
+| `_finance_level` | claims | 142 | — |
+| `_has_finance_access` | claims | 146 | View or better - the gate for reading finance at all. |
+| `_default_group_id` |  | 151 | The group_id of the 'Club (default)' group that the pre-migration |
+| `_group_for_request` | params, body | 167 | The group_id this finance op targets. Falls back to the default group |
+| `_group_finance_level` | claims, group_id | 174 | A caller's finance level (0-3) FOR A SPECIFIC GROUP. |
+| `_slot_key` | slot | 200 | Normalize a record's slot for bucketing/comparison: a missing/blank |
+| `_member_assigned_slots` | pid, group | 207 | The set of slots (raw, already-normalized strings) a player is |
+| `_view_scope_slots` | claims, group_id, level | 216 | Stage 4c: a plain 'view'-level grant only sees their own assigned |
+| `_has_any_group_finance` | claims | 242 | True if the caller has finance access in ANY group (owner/admin, or a |
+| `_effective_finance_role` | claims, group_id | 257 | The role name to REPORT to the frontend for button visibility: the |
+| `finance_key_for_caller` | event | 282 | Hands the shared view key to any caller with finance access - global |
+| `set_finance_access` | event | 299 | SuperAdmin sets a player's finance role directly. |
+| `handler` | event, context | 323 | — |
+| `_scan_type` | record_type, group_id | 441 | — |
+| `_num` | v, default | 452 | — |
+| `_clean` | record_type, data | 475 | — |
+| `_resolve_name` | pid_cache, player_id | 487 | — |
+| `_prev_period` | month, year | 498 | — |
+| `_next_period` | month, year | 503 | — |
+| `_member_relief` | settlement, memberships, ident, month, year,  | 508 | Relief a member gets in (month, year): the previous month's residual. |
+| `list_records` | record_type, params, group_id, scope_slots | 531 | — |
+| `create_records` | record_type, body, group_id | 593 | — |
+| `update_record` | record_type, record_id, body, group_id | 615 | — |
+| `delete_record_enforced` | record_type, record_id, event | 678 | Triple-gated: SuperAdmin identity + FINANCE_VIEW_KEY + the existing |
+| `delete_record` | record_type, record_id, body, group_id | 701 | — |
+| `get_settings` |  | 718 | — |
+| `put_settings` | body | 746 | — |
+| `public_upi` |  | 775 | The pay card is shown to guests (they pay walk-in fees), so the UPI |
+| `my_settlement` | claims, group_id | 783 | A single member's own dues in a group: for every (month, slot) where |
+| `public_walkins` |  | 913 | — |
+| `_settlement_rows` | group_id | 933 | Per (month, year, slot): the exact math from the Calculations sheet. |
+| `summary` | group_id, scope_slots | 1097 | — |
+| `_parse_slot_window` | label | 1138 | Best-effort parse of a free-form slot label ('7AM-8AM', '19:00-20:00', |
+| `_local_minutes_of_day` | iso_ts, offset_minutes | 1174 | Convert a stored ISO-8601 UTC match timestamp to local minute-of-day |
+| `_minute_in_window` | minute, window, grace_minutes | 1194 | Whether `minute` (local minute-of-day) falls inside `window` (start, |
+| `_timing_checks` | matches, group, offset_minutes, target_ym | 1207 | Best-effort, non-authoritative diagnostics only (see module note |
+| `insights` | group_id | 1287 | Per-member monthly economics, ghosts, and walk-in conversion. |
+| `_response` | status_code, body_dict | 1562 | — |
 
-#### `progress_scheduler` — 220 LOC
+#### `progress_scheduler` — 238 LOC
 _NetWorth - progress_scheduler Lambda_
 
 | Function | Args | Line | What it does |
 |---|---|---|---|
-| `get_group_member_ids` | group_id | 33 | The set of player_ids belonging to a group - used to decide WHO is |
-| `_approve_closed_week_matches` | matches, today | 42 | Marks every match whose week has fully closed as approved=True. |
-| `handler` | event, context | 74 | — |
-| `compute_period_snapshot` | matches, period_start_dt, period_end_dt, memb | 121 | Rating change and match count for every player within a fixed, |
-| `write_history_entry` | scope_label, group_id, period_name, period_st | 181 | — |
+| `_scan_all` | table | 33 | Full-table scan that follows LastEvaluatedKey - a bare .scan() returns |
+| `get_group_member_ids` | group_id | 51 | The set of player_ids belonging to a group - used to decide WHO is |
+| `_approve_closed_week_matches` | matches, today | 60 | Marks every match whose week has fully closed as approved=True. |
+| `handler` | event, context | 92 | — |
+| `compute_period_snapshot` | matches, period_start_dt, period_end_dt, memb | 139 | Rating change and match count for every player within a fixed, |
+| `write_history_entry` | scope_label, group_id, period_name, period_st | 199 | — |
 <!-- AUTOGEN:BACKEND END -->
 
 ---

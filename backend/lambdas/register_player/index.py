@@ -20,6 +20,24 @@ dynamodb = boto3.resource('dynamodb')
 table = dynamodb.Table(os.environ['PLAYERS_TABLE'])
 
 
+def _scan_all(table, **kw):
+    """Full-table scan that follows LastEvaluatedKey - a bare .scan() returns
+    only the first 1 MB page (KNOWN_ISSUES #15). Used here to check nickname
+    uniqueness across every player - a truncated page would silently let a
+    duplicate nickname through instead of catching it. Copied from
+    matches/players lambdas (KNOWN_ISSUES #6 - not shared, keep every copy
+    in sync)."""
+    items, last = [], None
+    while True:
+        if last:
+            kw['ExclusiveStartKey'] = last
+        resp = table.scan(**kw)
+        items.extend(resp.get('Items', []))
+        last = resp.get('LastEvaluatedKey')
+        if not last:
+            return items
+
+
 def sanitize_nickname(raw):
     """Hard format rule: lowercase, alphanumeric + underscore only.
     Applied uniformly whether the nickname was auto-derived from a real
@@ -51,7 +69,7 @@ def handler(event, context):
         if not name:
             return _response(400, {'error': 'name is required'})
 
-        existing_players = table.scan().get('Items', [])
+        existing_players = _scan_all(table)
         existing_nicknames = {p.get('nickname', '').strip().lower() for p in existing_players if p.get('nickname')}
 
         # Nickname format is a hard rule regardless of source (auto-derived

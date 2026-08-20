@@ -30,6 +30,24 @@ groups_table = dynamodb.Table(os.environ['GROUPS_TABLE'])
 history_table = dynamodb.Table(os.environ['PROGRESS_HISTORY_TABLE'])
 
 
+def _scan_all(table, **kw):
+    """Full-table scan that follows LastEvaluatedKey - a bare .scan() returns
+    only the first 1 MB page (KNOWN_ISSUES #15). This is a scheduled backfill
+    job that reads the whole matches/groups tables - a truncated page here
+    would silently skip players/groups from the weekly approval backfill
+    with no error. Copied from matches/players lambdas (KNOWN_ISSUES #6 -
+    not shared, keep every copy in sync)."""
+    items, last = [], None
+    while True:
+        if last:
+            kw['ExclusiveStartKey'] = last
+        resp = table.scan(**kw)
+        items.extend(resp.get('Items', []))
+        last = resp.get('LastEvaluatedKey')
+        if not last:
+            return items
+
+
 def get_group_member_ids(group_id):
     """The set of player_ids belonging to a group - used to decide WHO is
     eligible to win a group's badge, not to restrict which matches count.
@@ -73,9 +91,9 @@ def _approve_closed_week_matches(matches, today):
 
 def handler(event, context):
     today = datetime.now(timezone.utc).date()
-    matches = matches_table.scan().get('Items', [])
+    matches = _scan_all(matches_table)
     matches.sort(key=lambda m: m.get('date', ''))
-    groups = groups_table.scan().get('Items', [])
+    groups = _scan_all(groups_table)
 
     # Freeze closed weeks: any match older than this week's Monday is settled
     # and gets flagged approved. Self-healing and idempotent, so it runs on

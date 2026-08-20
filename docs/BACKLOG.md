@@ -116,7 +116,8 @@
   `get_pairing_count`, `_is_valid_completed_game`, `_caller_claims`, `_is_super_admin`, `_response`.
   Prioritize the nickname sanitizer — it also has a 4th copy in `app.js`. (KNOWN_ISSUES #6)
 - `[security] S` Remove committed AWS account id from `current-policy.json` /
-  `networth-deploy-policy.json`; parameterize. (KNOWN_ISSUES #3)
+  `networth-deploy-policy.json`; parameterize. **DONE 2026-08-20** (see Done — replaced with the
+  same `*` wildcard already used by every other ARN in both files). (KNOWN_ISSUES #3)
 
 - `[feat] L` **Privacy / "cloak" mode (reciprocity visibility filter) — admin-gated, ships dark.**
   A player can go *private*: they drop out of everyone's comparative views (rankings, Hall of Fame, H2H
@@ -144,7 +145,9 @@
   headroom for the throttling above while Build B lands. (KNOWN_ISSUES #16.)
 - `[bug] M` **Paginate `table.scan()`.** `list_players` (and any sibling bare `.scan(`) reads only the
   first 1 MB page; players past it silently vanish from `/players` → `allPlayers` → every dropdown and
-  the per-player linked-status check. Loop on `LastEvaluatedKey`. (KNOWN_ISSUES #15.)
+  the per-player linked-status check. Loop on `LastEvaluatedKey`. **DONE 2026-08-20** (see Done — this
+  was previously marked resolved for players/matches only; the other 5 lambdas were still fully
+  unpaginated). (KNOWN_ISSUES #15.)
 
 ## Next / medium
 - `[bug] M` **iOS card-share: animated video won't save.** ✅ DONE 2026-08-09 (see Done). — On the animated share result panel, "Save"
@@ -160,7 +163,7 @@
 - `[bug] S` Validate live-scoring `point_log` on write so bogus momentum can't be stored
   (replace the reactive `clear_bogus_momentum.py` script). (KNOWN_ISSUES #7)
 - `[ops] S` Add a CI guard that fails the build if any `s3 sync --delete` appears in a workflow.
-  (KNOWN_ISSUES #9)
+  **DONE 2026-08-20** (see Done). (KNOWN_ISSUES #9)
 - `[ops] S` Stop tracking `__pycache__/*.pyc` in git. (KNOWN_ISSUES #14)
 
 ## Later / ideas
@@ -255,6 +258,44 @@
 
 ## Done
 
+- ✅ 2026-08-20 (v1.43.0) — **Backlog/defect sweep: finished the scan-pagination fix everywhere,
+  scrubbed the committed AWS account id, added a CI guard against a destructive frontend sync
+  (Owner asked to pick up whatever was left off/in the backlog/a defect).**
+  (1) **`table.scan()` pagination (KNOWN_ISSUES #15) was NOT actually finished club-wide.** The
+  2026-08-09 "RESOLVED" note only ever covered the matches and players lambdas - `_scan_all()` existed
+  in those two files only. Auditing every lambda for a bare `.scan(` (the same grep the original fix
+  recommended, never actually re-run afterward) turned up 17 more unpaginated full-table scans: 4 in
+  `finance/index.py` (`groups_table` x2, `finance_table`, `matches_table`), 5 in `groups/index.py`
+  (`players_table` x2, `groups_table` x3), 5 in `tournaments/index.py` (`tournaments_table`,
+  `players_table`, `matches_table` x3 - the one with the least bounded, fastest-growing table of any
+  lambda), 2 in `progress_scheduler/index.py` (`matches_table`, `groups_table`), 1 in
+  `register_player/index.py` (nickname-uniqueness check), plus 9 still-bare `claim_requests_table`/
+  `groups_table` calls left in `players/index.py` itself that the 2026-08-09 fix's own "only the small
+  claim_requests/groups scans remain bare" note had flagged but never closed. Copied `_scan_all()` into
+  all 5 lambdas that lacked it and routed every one of those 17 scans (plus the 9 in `players/index.py`)
+  through it - every full-table scan in the codebase is now paginated. Verified with a fixture
+  `PagingFakeTable` (2 items/page, unlike every other test's single-page fake, so the
+  `LastEvaluatedKey` loop is actually exercised) confirming correct pagination across all 6 lambdas.
+  (2) **Committed AWS account id (KNOWN_ISSUES #3).** `current-policy.json` / `networth-deploy-policy.json`
+  each had one ARN hardcoding the account id where every other ARN in the same files already used a
+  `*:*` wildcard; replaced to match (same effect, zero behavior change - IAM doesn't need the account
+  segment when scoping to the calling account's own resources). Neither file is read by any script or
+  workflow, confirmed by grepping `.github/workflows/`, so this was a pure cleanup, not a live-config
+  risk.
+  (3) **CI guard against a destructive frontend sync (KNOWN_ISSUES #9).** Both `deploy.yml` and
+  `deploy-staging.yml` gained a step, right after checkout and before AWS credentials are even
+  configured, that fails the run if `.github/workflows/*.yml` ever combines an s3 sync with the
+  destructive removal flag - the bucket also serves user-uploaded cosmetics under `uploads/`, and every
+  deploy step already deliberately uses `aws s3 cp` instead. Written so the check's own two search terms
+  are built from concatenated string parts rather than one literal token - a first pass written the
+  naive way tripped on its own step name/comments, since describing the danger in prose necessarily
+  contains the same text the grep was searching for. Verified the guard is silent against the current
+  repo and does fire against a deliberately-injected offending line in a throwaway copy.
+  Files: `backend/lambdas/finance/index.py`, `backend/lambdas/groups/index.py`,
+  `backend/lambdas/tournaments/index.py`, `backend/lambdas/progress_scheduler/index.py`,
+  `backend/lambdas/register_player/index.py`, `backend/lambdas/players/index.py`,
+  `current-policy.json`, `networth-deploy-policy.json`, `.github/workflows/deploy.yml`,
+  `.github/workflows/deploy-staging.yml`.
 - ✅ 2026-08-20 — **Non-members table was invisible to anyone with no walk-in fee record
   (Owner-reported: played with us, isn't a slot member, doesn't show up).**
   `insights()`'s guest table was built ENTIRELY from `walkins` records - a player who's played
