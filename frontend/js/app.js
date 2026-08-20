@@ -5159,7 +5159,7 @@ let userPool = null;
       // action, so it hides for view-only users; delete needs the delete
       // tier. Called again at the end of each list render so newly-drawn
       // rows obey the role too.
-      document.querySelectorAll('.fin-edit-exp, .fin-edit').forEach(el => {
+      document.querySelectorAll('.fin-edit-exp, .fin-edit-walkin, .fin-edit').forEach(el => {
         el.style.display = lvl >= FIN_LEVEL.write ? '' : 'none';
       });
       document.querySelectorAll('.fin-del').forEach(el => {
@@ -5556,10 +5556,22 @@ let userPool = null;
           : `${r.cost_per_head}<br><span style="font-size:11px;opacity:0.65;">${r.estimated_total}÷${r.player_count}</span>`;
         const status = r.collection_status === 'settled' ? 'Settled ✓'
           : r.collection_status === 'collecting' ? `Collecting ${r.confirmed_count}/${r.player_count}` : '-';
+        // "(whole group)" rows split two ways now (Owner-requested
+        // 2026-08-20): the expense side (residual_per_head) is still one
+        // even share for everyone, but the walk-in side (walkin_total) is
+        // weighted by how many of the month's slots each member plays -
+        // there's no single "residual/head" number for that part, so show
+        // both pieces instead of one misleading average.
+        const isGroupWide = r.slot === '(whole group)';
+        const residualCell = r.residual_per_head === null ? 'pending'
+          : isGroupWide
+            ? `${r.residual_per_head} even (expense)` +
+              (r.walkin_total ? `<br><span style="font-size:11px;opacity:0.65;">+ ₹${r.walkin_total} walk-in, split by slot-count across ${r.walkin_denominator} slot-enrollments</span>` : '')
+            : r.residual_per_head;
         html += `<tr><td>${r.month} ${r.year}</td><td>${r.slot}</td><td>${r.estimated_total}</td><td>${r.actual_total}</td>` +
           `<td>${r.extra_collected}</td><td>${r.player_count}</td>` +
           `<td>${perHead}</td>` +
-          `<td>${r.residual_per_head === null ? 'pending' : r.residual_per_head}</td><td>${status}</td></tr>`;
+          `<td>${residualCell}</td><td>${status}</td></tr>`;
       });
       el.innerHTML = html + '</table>';
     }
@@ -5837,6 +5849,18 @@ let userPool = null;
       loadFinanceMembers(); loadFinanceSummary();
     }
 
+    let editingWalkinId = null;
+    let lastWalkins = [];
+
+    function resetWalkinEdit() {
+      editingWalkinId = null;
+      document.getElementById('finance-add-walkin-btn').textContent = 'Add walk-in';
+      document.getElementById('finance-cancel-walkin-edit-btn').style.display = 'none';
+      document.getElementById('fwalk_name').value = '';
+      document.getElementById('fwalk_note').value = '';
+      document.getElementById('fwalk_player').value = '';
+    }
+
     async function loadFinanceWalkins() {
       const el = document.getElementById('finance-walkins-result');
       el.textContent = 'Loading...';
@@ -5848,6 +5872,7 @@ let userPool = null;
       const data = await res.json();
       if (!res.ok) { el.textContent = `Error: ${data.error}`; return; }
       if (!data.walkins.length) { el.textContent = 'No walk-ins for this period.'; return; }
+      lastWalkins = data.walkins;
       let html = '<table><tr><th>Date</th><th>Slot</th><th>Name</th><th>Fee</th><th>Skill</th><th>Recruit?</th><th></th></tr>';
       data.walkins.forEach(w => {
         // Linked to a roster player -> show their CURRENT name/nickname,
@@ -5858,9 +5883,29 @@ let userPool = null;
         html += `<tr><td>${w.date}</td><td>${w.slot}</td>` +
           `<td>${label}${w.player_id ? '' : ' <span style="opacity:0.6;">(guest)</span>'}${w.note ? ` <span title="${String(w.note).replace(/"/g, '&quot;')}" onclick="nwAlert('${String(w.note).replace(/'/g, "\\'").replace(/"/g, '&quot;')}')">📝</span>` : ''}</td>` +
           `<td>${w.fee}</td><td>${w.skill || ''}</td><td>${w.recruit_verdict || ''}</td>` +
-          `<td><button type="button" class="secondary fin-del" data-kind="walkins" data-id="${w.record_id}">Delete</button></td></tr>`;
+          `<td><button type="button" class="secondary fin-edit-walkin" data-id="${w.record_id}">Edit</button> ` +
+          `<button type="button" class="secondary fin-del" data-kind="walkins" data-id="${w.record_id}">Delete</button></td></tr>`;
       });
       el.innerHTML = html + '</table>';
+      // Editable/deletable so a mis-clicked duplicate entry (Owner-reported
+      // 2026-08-20: "i added a few accidentally multiple times") can be
+      // fixed in place instead of only deletable-then-re-add.
+      el.querySelectorAll('.fin-edit-walkin').forEach(btn => btn.addEventListener('click', () => {
+        const w = lastWalkins.find(x => x.record_id === btn.dataset.id);
+        if (!w) return;
+        editingWalkinId = w.record_id;
+        document.getElementById('fwalk_date').value = w.date || '';
+        document.getElementById('fwalk_slot').value = w.slot || '';
+        document.getElementById('fwalk_player').value = w.player_id || '';
+        document.getElementById('fwalk_name').value = w.player_id ? '' : (w.display_name || '');
+        document.getElementById('fwalk_fee').value = w.fee ?? '';
+        document.getElementById('fwalk_skill').value = w.skill || '';
+        document.getElementById('fwalk_recruit').value = w.recruit_verdict || '';
+        document.getElementById('fwalk_note').value = w.note || '';
+        document.getElementById('finance-add-walkin-btn').textContent = 'Save changes';
+        document.getElementById('finance-cancel-walkin-edit-btn').style.display = 'inline-block';
+        document.getElementById('fwalk_date').scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }));
       applyFinanceRoleVisibility();
     }
 
@@ -5880,23 +5925,16 @@ let userPool = null;
         note: document.getElementById('fwalk_note').value.trim(),
       };
       if (chosen) body.player_id = pid;
-      const { ok, data } = await finPost('walkins', 'POST', body);
+      const { ok, data } = editingWalkinId
+        ? await finPost(`walkins/${editingWalkinId}`, 'PUT', body)
+        : await finPost('walkins', 'POST', body);
       if (!ok || (data.errors && data.errors.length)) { nwAlert('Error: ' + JSON.stringify(data.errors || data.error)); return; }
-      document.getElementById('fwalk_name').value = '';
-      document.getElementById('fwalk_note').value = '';
-      // Prepend the new row locally instead of re-fetching the whole table;
-      // the settlement refresh happens quietly in the background.
-      const tbl = document.querySelector('#finance-walkins-result table');
-      if (tbl && data.created && data.created.length) {
-        const tr = document.createElement('tr');
-        tr.innerHTML = `<td>${body.date}</td><td>${body.slot}</td>` +
-          `<td>${body.display_name}${body.player_id ? '' : ' <span style="opacity:0.6;">(guest)</span>'}</td>` +
-          `<td>${body.fee}</td><td>${body.skill || ''}</td><td>${body.recruit_verdict || ''}</td>` +
-          `<td><button type="button" class="secondary fin-del" data-kind="walkins" data-id="${data.created[0]}">Delete</button></td>`;
-        tbl.insertBefore(tr, tbl.rows[1] || null);
-      } else {
-        loadFinanceWalkins();
-      }
+      resetWalkinEdit();
+      // Always reload the table rather than patching the DOM locally - the
+      // Edit button on any hand-built row would need its own listener
+      // re-wired (loadFinanceWalkins does that via querySelectorAll), and a
+      // reload is simple and correct for both the add and edit paths.
+      loadFinanceWalkins();
       loadFinanceSummary();
     }
 
@@ -6137,6 +6175,7 @@ let userPool = null;
         document.getElementById(id).addEventListener('change', loadFinanceWalkins));
     })();
     document.getElementById('finance-add-walkin-btn').addEventListener('click', addFinanceWalkin);
+    document.getElementById('finance-cancel-walkin-edit-btn').addEventListener('click', resetWalkinEdit);
     document.getElementById('finance-load-walkins-btn').addEventListener('click', loadFinanceWalkins);
     (function initInsightsFilter() {
       const now = new Date();
