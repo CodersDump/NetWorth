@@ -383,10 +383,13 @@ let userPool = null;
         loadHallOfFame(); loadDiversity(); loadBadges(); loadAttendance();
       }
     }
-    /** Turn each Stats card into a tap-to-expand section so you don't scroll
-     *  through every one. Idempotent; preserves inner element IDs. */
-    function makeStatsCollapsible() {
-      const panel = document.getElementById('tab-stats');
+    /** Turn each .card inside the given container into a tap-to-expand
+     *  section so you don't scroll through every one. Idempotent; preserves
+     *  inner element IDs. Originally Stats-only; generalized (2026-08-20,
+     *  Owner-requested) so Finance can reuse the exact same pattern instead
+     *  of a second implementation. */
+    function makeCardsCollapsible(containerId) {
+      const panel = document.getElementById(containerId);
       if (!panel) return;
       Array.prototype.forEach.call(panel.querySelectorAll('.card'), (card) => {
         if (card.dataset.collapsible) return;
@@ -405,6 +408,14 @@ let userPool = null;
         h2.addEventListener('click', () => setOpen(body.style.display === 'none'));
       });
     }
+    function makeStatsCollapsible() { makeCardsCollapsible('tab-stats'); }
+    /** Finance's own cards (Monthly settlement, Expenses, Memberships,
+     *  Walk-ins, Insights, Finance settings) live inside #finance-content,
+     *  separate from the lock/unlock card and the always-visible "My dues"
+     *  card above it - those two stay as-is, only the unlocked ledger
+     *  content collapses (Owner-requested 2026-08-20: "make the finance
+     *  section also with collapsible section like that in stats"). */
+    function makeFinanceCollapsible() { makeCardsCollapsible('finance-content'); }
     /** Profile is per-selected-player and needs the roster ready, so it has
      *  its own guard: don't mark it loaded until a player is actually
      *  selected (the select is populated by loadVisiblePlayers, which only
@@ -5282,12 +5293,14 @@ let userPool = null;
         sessionStorage.setItem('nw_finance_key', financeKey);
         document.getElementById('finance-content').style.display = 'block';
         document.getElementById('finance-lock-card').style.display = 'none';
+        makeFinanceCollapsible();
         applyFinanceRoleVisibility();
         populateFinanceGroups();
         const s = await (await fetch(`${financeBaseUrl()}/settings?${finQS()}`, { headers: getAuthHeaders() })).json();
         document.getElementById('finance_walkins_public').checked = !!s.walkins_public;
         document.getElementById('finance_upi_id').value = s.upi_id || '';
         document.getElementById('finance_upi_name').value = s.upi_name || '';
+        document.getElementById('finance_default_walkin_fee').value = s.default_walkin_fee ?? '';
         loadFinanceSummary(); loadFinanceExpenses(); loadFinanceMembers();
         const lock = document.getElementById('finance-lock-status');
         if (lock) lock.textContent = 'Unlocked ✓ (you have finance access)';
@@ -5492,6 +5505,7 @@ let userPool = null;
         statusEl.textContent = 'Unlocked ✓';
         document.getElementById('finance-content').style.display = 'block';
         document.getElementById('finance-lock-card').style.display = 'none';
+        makeFinanceCollapsible();
         // Someone unlocking with the raw key has full rights (the key was
         // always all-or-nothing); a logged-in user's role, if any, is
         // fetched to hide controls they shouldn't see.
@@ -5504,6 +5518,7 @@ let userPool = null;
         document.getElementById('finance_walkins_public').checked = !!settings.walkins_public;
         document.getElementById('finance_upi_id').value = settings.upi_id || '';
         document.getElementById('finance_upi_name').value = settings.upi_name || '';
+        document.getElementById('finance_default_walkin_fee').value = settings.default_walkin_fee ?? '';
         loadFinanceSummary();
         loadFinanceExpenses();
         loadFinanceMembers();
@@ -5997,11 +6012,28 @@ let userPool = null;
 
       if (data.conversion) {
         const c = data.conversion;
-        html += `<h4>🎯 Walk-in conversion</h4><p style="font-size:13px;">${c.became_members} of ${c.total_guests} guests became monthly members.</p>`;
+        html += `<h4>🎯 Non-members: attendance, fees &amp; conversion</h4><p style="font-size:13px;">${c.became_members} of ${c.total_guests} guests became monthly members.</p>`;
+        // Days attended comes from the match log (same source the cost-per-
+        // member table above uses) - only possible for a guest linked to a
+        // roster player_id; a free-text guest name with no player record
+        // never appears in a match, so their column shows "-". Expected/
+        // pending only appear once a default walk-in fee is set (Finance
+        // settings, below) - otherwise we'd be guessing at a rate no one
+        // configured (Owner-requested 2026-08-20).
+        if (!c.default_walkin_fee) {
+          html += '<p style="font-size:12px; color:var(--text-secondary); margin:2px 0 8px;">Set a default walk-in fee under Finance settings to see expected/pending amounts here - showing attendance and fees collected only for now.</p>';
+        }
         if (c.guests && c.guests.length) {
-          html += '<table><tr><th>Guest</th><th>Sessions</th><th>Fees paid</th><th>Verdict</th><th>Member now?</th></tr>';
+          html += '<table><tr><th>Guest</th><th>Days attended</th><th>Sessions paid</th><th>Fees paid</th>'
+                + (c.default_walkin_fee ? '<th>Expected</th><th>Pending</th>' : '')
+                + '<th>Verdict</th><th>Member now?</th></tr>';
           c.guests.forEach(g => {
-            html += `<tr><td>${g.display_name}</td><td>${g.sessions}</td><td>${g.fees_paid}</td>` +
+            const pendingCell = g.pending == null ? ''
+              : g.pending > 0.005 ? `<strong style="color:var(--court,#2fa968);">₹${g.pending}</strong>`
+              : g.pending < -0.005 ? `<span style="opacity:0.7;">overpaid ₹${Math.abs(g.pending)}</span>`
+              : 'settled';
+            html += `<tr><td>${g.display_name}</td><td>${g.days_attended ?? '-'}</td><td>${g.sessions}</td><td>${g.fees_paid}</td>` +
+              (c.default_walkin_fee ? `<td>${g.expected_amount ?? '-'}</td><td>${pendingCell}</td>` : '') +
               `<td>${g.recruit_verdict || ''}</td><td>${g.became_member ? '✓' : ''}</td></tr>`;
           });
           html += '</table>';
@@ -6020,10 +6052,12 @@ let userPool = null;
 
     async function saveFinanceSettings() {
       const statusEl = document.getElementById('finance-settings-status');
+      const feeRaw = document.getElementById('finance_default_walkin_fee').value.trim();
       const { ok, data } = await finPost('settings', 'PUT', {
         walkins_public: document.getElementById('finance_walkins_public').checked,
         upi_id: document.getElementById('finance_upi_id').value.trim(),
-        upi_name: document.getElementById('finance_upi_name').value.trim()
+        upi_name: document.getElementById('finance_upi_name').value.trim(),
+        default_walkin_fee: feeRaw === '' ? null : parseFloat(feeRaw)
       });
       statusEl.textContent = ok ? 'Saved ✓' : `Error: ${data.error}`;
       // Reflect a changed UPI ID on the pay card immediately.

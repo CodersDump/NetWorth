@@ -664,10 +664,21 @@ def delete_record(record_type, record_id, body, group_id=None):
 
 def get_settings():
     item = finance_table.get_item(Key={'record_id': 'settings'}).get('Item') or {}
+    dwf = item.get('default_walkin_fee')
     return _response(200, {
         'walkins_public': bool(item.get('walkins_public', False)),
         'upi_id': item.get('upi_id', ''),
-        'upi_name': item.get('upi_name', '')
+        'upi_name': item.get('upi_name', ''),
+        # Club-wide expected per-visit fee for non-members - used only to
+        # compute the "expected"/"pending" columns in insights()' guest
+        # table (Owner-requested 2026-08-20). Optional and unset by default:
+        # with no rate on file we show attendance/fees-collected only,
+        # rather than guess at a number. Same single-record settings row as
+        # walkins_public/upi_* (club-wide, not per-group - matches how those
+        # already work; the add-walk-in form's own fee field already
+        # defaults to 80 as a starting point, this makes that number a real
+        # saved setting instead of just a form placeholder).
+        'default_walkin_fee': float(dwf) if dwf is not None else None
     })
 
 
@@ -681,9 +692,19 @@ def put_settings(body):
         'upi_id': (body.get('upi_id') if 'upi_id' in body else existing.get('upi_id', '')) or '',
         'upi_name': (body.get('upi_name') if 'upi_name' in body else existing.get('upi_name', '')) or ''
     }
+    if 'default_walkin_fee' in body:
+        dwf = body.get('default_walkin_fee')
+        if dwf not in (None, ''):
+            item['default_walkin_fee'] = Decimal(str(dwf))
+        # else: caller explicitly cleared it - leave unset (omitted, not
+        # stored as a DynamoDB null) so get_settings reports None again.
+    elif existing.get('default_walkin_fee') is not None:
+        item['default_walkin_fee'] = existing['default_walkin_fee']
     finance_table.put_item(Item=item)
+    resp_dwf = item.get('default_walkin_fee')
     return _response(200, {'walkins_public': item['walkins_public'],
-                           'upi_id': item['upi_id'], 'upi_name': item['upi_name']})
+                           'upi_id': item['upi_id'], 'upi_name': item['upi_name'],
+                           'default_walkin_fee': float(resp_dwf) if resp_dwf is not None else None})
 
 
 def public_upi():
@@ -1169,11 +1190,47 @@ def insights(group_id=None):
             g['became_member'] = w['player_id'] in member_pids
         else:
             g['became_member'] = w.get('display_name') in unlinked_member_names
+
+    # Attendance vs. fees collected, for non-members (Owner-requested
+    # 2026-08-20: "how many days they came and how much they owe, and a
+    # difference maintained for them"). `active_days` (built above from the
+    # match log, same source cost_rows already uses for members) only ever
+    # keys off player_id - a walk-in typed in as a free-text name with no
+    # roster player never appears in a match, so their attendance can't be
+    # cross-checked this way and days_attended stays None for them (still
+    # get sessions/fees_paid from their walk-in records, same as before).
+    # "Days attended" is lifetime (all months in the match log), matching
+    # this guest table's existing lifetime scope - it was never filtered by
+    # the fins_month/fins_year picker above (that only scopes ghosts/
+    # cost_rows), so summing across every (pid, ym) here keeps it consistent
+    # rather than silently only covering one month.
+    settings_item = finance_table.get_item(Key={'record_id': 'settings'}).get('Item') or {}
+    default_fee = settings_item.get('default_walkin_fee')
+    default_fee = float(default_fee) if default_fee is not None else None
+    for gkey, g in guests.items():
+        pid = None
+        for w in walkins:
+            if (w.get('player_id') or f"name:{w.get('display_name')}") == gkey and w.get('player_id'):
+                pid = w['player_id']
+                break
+        days_attended = None
+        if pid:
+            days_attended = sum(len(days) for (p, _ym), days in active_days.items() if p == pid)
+        g['days_attended'] = days_attended
+        if days_attended is not None and default_fee is not None:
+            expected = round(days_attended * default_fee, 2)
+            g['expected_amount'] = expected
+            g['pending'] = round(expected - g['fees_paid'], 2)
+        else:
+            g['expected_amount'] = None
+            g['pending'] = None
+
     guest_rows = sorted(guests.values(), key=lambda g: (-g['became_member'], -g['sessions']))
     conversion = {
         'total_guests': len(guest_rows),
         'became_members': sum(1 for g in guest_rows if g['became_member']),
         'guests': guest_rows,
+        'default_walkin_fee': default_fee,
     }
 
     return _response(200, {'ghosts': ghosts, 'noted_attended': noted_attended,

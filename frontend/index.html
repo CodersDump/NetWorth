@@ -797,6 +797,11 @@
             <label>UPI ID <input type="text" id="finance_upi_id" placeholder="yourname@okhdfcbank"></label>
             <label>Display name <input type="text" id="finance_upi_name" placeholder="Matchpoint Badminton"></label>
           </div>
+          <div data-fin-min="write" style="margin-top:14px; border-top:1px solid var(--border); padding-top:12px;">
+            <p style="font-size:13px; font-weight:600; margin:0 0 4px;">Default walk-in fee</p>
+            <p class="card-sub" style="margin:0 0 8px;">Expected per-visit fee for non-members. Set this to see an "expected" and "pending" figure in Insights' walk-in table (days attended, from the match log, × this fee); leave blank to see attendance and fees collected only, with no guessed amount.</p>
+            <label>Fee per visit <input type="number" id="finance_default_walkin_fee" step="0.01" placeholder="80"></label>
+          </div>
           <button id="finance-save-settings-btn" data-fin-min="write" type="button" class="secondary" style="margin-top:8px;">Save settings</button>
           <span id="finance-settings-status" style="font-size:13px; margin-left:8px;"></span>
         </div>
