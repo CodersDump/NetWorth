@@ -1240,8 +1240,15 @@ def decide_claim_request(event):
     elif action == 'approve' and req.get('type') in ('match_edit', 'match_delete'):
         # Run the real change through the matches function so its rating
         # recompute happens exactly as it would for a direct admin edit -
-        # no duplicated logic here. The confirmation code is supplied
-        # server-side; the requester never sees or needs it.
+        # no duplicated logic here. This is a direct Lambda-to-Lambda
+        # invoke (bypasses API Gateway entirely), so the forged
+        # requestContext.authorizer.claims below is what matches lambda's
+        # _caller_may_edit_match checks against - the deciding user's own
+        # claims, already vetted by _owner_may_decide above. (Until
+        # 2026-08-20 this also carried a 'confirm': CONFIRMATION_CODE -
+        # matches lambda's PUT/DELETE routes have since moved to real
+        # Cognito auth + a SuperAdmin-or-group-owner/admin check, so the
+        # shared code is gone from both sides.)
         import os as _os
         fn = _os.environ.get('MATCHES_FUNCTION')
         if not fn:
@@ -1250,7 +1257,7 @@ def decide_claim_request(event):
             payload = {
                 'resource': '/matches/{match_id}', 'httpMethod': 'DELETE',
                 'pathParameters': {'match_id': req['match_id']},
-                'body': json.dumps({'confirm': CONFIRMATION_CODE}),
+                'body': json.dumps({}),
                 'requestContext': {'authorizer': {'claims': claims}}
             }
         else:
@@ -1259,8 +1266,7 @@ def decide_claim_request(event):
             payload = {
                 'resource': '/matches/{match_id}', 'httpMethod': 'PUT',
                 'pathParameters': {'match_id': req['match_id']},
-                'body': json.dumps({'score_a': int(req['new_score_a']), 'score_b': int(req['new_score_b']),
-                                    'confirm': CONFIRMATION_CODE}),
+                'body': json.dumps({'score_a': int(req['new_score_a']), 'score_b': int(req['new_score_b'])}),
                 'requestContext': {'authorizer': {'claims': claims}}
             }
         resp = boto3.client('lambda').invoke(

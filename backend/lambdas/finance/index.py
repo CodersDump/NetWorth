@@ -450,6 +450,11 @@ def _prev_period(month, year):
     return (MONTHS[i - 1], year - 1 if i == 0 else year)
 
 
+def _next_period(month, year):
+    i = MONTHS.index(month)
+    return (MONTHS[(i + 1) % 12], year + 1 if i == 11 else year)
+
+
 def _member_relief(settlement, memberships, ident, month, year, slot=None):
     """Relief a member gets in (month, year): the previous month's residual.
     If `slot` is given, ONLY that slot's relief (used for the per-slot member
@@ -740,12 +745,41 @@ def my_settlement(claims, group_id):
         # A member who forfeited this period's refund gets nothing back; their
         # share was redistributed to the others (reflected in rph for them).
         owed_back = 0.0 if m.get('forfeit_residual') else (rph or 0.0)
+        # This residual isn't a standing cash balance sitting separately from
+        # what's "you owe" above - it's auto-applied as relief AGAINST the
+        # very next month's bill (see `effective` a few lines up, and
+        # _member_relief). Once that's happened the money has already
+        # changed hands (as a smaller bill, not a refund), so showing it
+        # again here as "the club owes you X" double-counts it - the total
+        # would claim credit for money that's already been spent. Net out
+        # whatever the following month's Yes membership (same slot, not
+        # itself forfeited) already consumed, capped at what that month
+        # actually needed (relief beyond that month's cost isn't carried
+        # further today - _member_relief only ever looks one month back).
+        # (Owner-reported 2026-08-20: "already adjusted in this month's
+        # amount, so it should be 0 as of now".)
+        if owed_back > 0:
+            nmonth, nyear = _next_period(b['month'], b['year'])
+            has_next = any(mm.get('player_id') == pid and str(mm.get('slot')) == str(b['slot'])
+                           and str(mm.get('month')) == nmonth and int(_num(mm.get('year'))) == nyear
+                           and mm.get('status') == 'Yes'
+                           for mm in memberships)
+            if has_next:
+                next_row = rows.get((nmonth, nyear, str(b['slot'])))
+                next_cph = next_row.get('cost_per_head') if next_row else None
+                consumed = min(owed_back, next_cph) if next_cph is not None else 0.0
+                owed_back = round(owed_back - consumed, 2)
         owe_total += owe
         owed_back_total += owed_back
         lines.append({
             'month': b['month'], 'year': b['year'], 'slot': b['slot'],
             'expected_per_head': cph,
             'you_paid': paid,
+            # The amount actually confirmed as paid (post-relief) - the
+            # frontend showed a bare "paid" with no figure before; now it
+            # can show what was paid, not just that it was (Owner-requested
+            # 2026-08-20).
+            'you_paid_amount': effective if paid else None,
             'you_owe': round(owe, 2),
             'owed_back_to_you': round(owed_back, 2),
             'collection_status': b.get('collection_status'),

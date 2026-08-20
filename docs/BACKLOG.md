@@ -255,6 +255,42 @@
 
 ## Done
 
+- ✅ 2026-08-20 — **Match edit/delete: real Cognito auth (was code-only) + relief double-counting
+  fix in My Dues + paid amount shown + match-count-per-group metric (all Owner-raised).**
+  (1) **`PUT`/`DELETE /matches/{match_id}` moved off the shared confirmation code onto real auth**
+  (Owner asked why matches still needed the code "like profile/group deletion" - turned out the code
+  wasn't just friction, it was the ONLY gate: both routes were `AuthorizationType: NONE`, no Cognito
+  identity checked at all - see KNOWN_ISSUES #17 for the full writeup). Routes are now
+  `COGNITO_USER_POOLS`; `matches/index.py` gained `_caller_may_edit_match` (SuperAdmin, or owner/admin
+  of the match's own group - mirrors `OWNER_DECIDABLE_TYPES`' existing bar for the request/approve
+  path). Frontend: the confirmation-code prompts/fields are gone from `deleteMatch`, `editMatchScore`,
+  and the full `editMatch` modal - a plain `nwConfirm` is the only "are you sure" now, and all three
+  call `authedFetch` instead of plain `fetch` (route requires a token now). `decide_claim_request`
+  (players lambda) no longer forges a `confirm` field in its internal invoke - it never needed to
+  anymore. Verified with an auth-matrix script (own-group owner edits, plain member blocked,
+  other-group owner blocked, ungrouped match SuperAdmin-only, SuperAdmin edits/deletes anything) plus
+  a regression check that owner-approval of a match request still works end-to-end.
+  Player/group deletion and other genuinely destructive whole-account operations still require the
+  code, unchanged - this only touched the two match routes.
+  (2) **"My dues" double-counted relief as still-owed.** `my_settlement` showed a residual
+  (walk-in-share refund) as "the club owes you ₹X" for every month it was generated, even after that
+  exact amount had already been auto-applied as relief against a later month's bill (reducing what was
+  owed there - see the 2026-08-20 dues-showing-pending fix above it in this log). The money had already
+  changed hands as a smaller bill; showing it again as a standing credit double-counted it. Added
+  `_next_period` and a consumption check: if the following month has a non-forfeited "Yes" membership
+  in the same slot, the residual is treated as spent (capped at what that month actually needed, since
+  relief today only ever looks one month ahead - excess isn't carried further). Verified full and
+  partial consumption with fixtures.
+  (3) **"Paid" showed no amount.** `you_paid_amount` (the actual confirmed/effective amount) is now
+  returned alongside `you_paid`; the "My dues" table shows "paid ₹X" instead of a bare "paid".
+  (4) **Matches-logged-per-group metric.** New `GET /matches?counts_by_group=true` (matches lambda) -
+  one tally over the same full scan every other `/matches` query shape already does, no new scan cost.
+  Wired into the group detail panel (`loadGroupMembers`, shared by the SuperAdmin's "browse any group"
+  view and an owner/co-owner's own group management - covers both asks in one place) as "Matches
+  logged in this group: N", visible whenever that panel is open.
+  Files: `infrastructure/template.yaml` (auth type), `backend/lambdas/matches/index.py` (1, 4),
+  `backend/lambdas/players/index.py` (1, internal-invoke cleanup), `backend/lambdas/finance/index.py`
+  (2, 3), `frontend/js/app.js` (1, 3, 4).
 - ✅ 2026-08-20 — **Stats/history group filters no longer leak other groups' data to members, +
   "My dues" no longer shows already-confirmed payments as pending (both Owner-reported).**
   (1) **Group-scoped Stats/History filters.** `loadGroups()` populated eight different filter

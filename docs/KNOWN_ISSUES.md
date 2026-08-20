@@ -51,6 +51,22 @@ granting broad legacy access via `set_finance_access` (SuperAdmin, `/finance-acc
 it only ever applies to the default group; use a group's own `finance_roles` map (or the
 request→approve flow) for every other group.
 
+### 17. `PUT`/`DELETE /matches/{match_id}` had no Cognito auth at all  · sev: high, RESOLVED 2026-08-20
+Both routes were `AuthorizationType: NONE` with a shared `CONFIRMATION_CODE` as the ONLY gate inside
+the Lambda - no caller identity was ever checked. Anyone who knew or guessed the code (a plain string
+compare, not a Cognito credential) could edit/delete any match and trigger a full rating recompute
+from a totally unauthenticated request. The frontend only ever exposed the direct-edit/delete UI to
+`isSuperAdmin()`, but that's a UI nicety, not enforcement - the API itself never checked. Fixed
+(Owner-asked "why are we still needing the code ... for the match it should be fine right", which
+surfaced the actual gap): both routes are now `COGNITO_USER_POOLS`; the Lambda checks
+`_caller_may_edit_match` (SuperAdmin, or owner/admin of the match's own `group_id` - same bar
+`OWNER_DECIDABLE_TYPES` already applies when a non-admin requests the same change). The confirmation
+code is gone from both the frontend prompts and the two handlers. **Safe move:** the request→approve
+path's internal Lambda-to-Lambda invoke (`decide_claim_request` → `MATCHES_FUNCTION`) bypasses API
+Gateway entirely, so it's unaffected by the auth-type change - it forges `requestContext.authorizer.
+claims` with the already-vetted deciding user's own claims, which `_caller_may_edit_match` accepts on
+the same terms as a direct call.
+
 ---
 
 ## Correctness / data integrity
