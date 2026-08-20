@@ -1246,6 +1246,23 @@ def insights(group_id=None):
         else:
             g['became_member'] = w.get('display_name') in unlinked_member_names
 
+    # A player who's played matches but has never had a walk-in fee entry
+    # AND has never been a Yes member anywhere is a non-member the club is
+    # missing money from - and until now they were completely invisible
+    # here, since this table only ever looked at `walkins` records (Owner-
+    # reported 2026-08-20: played with us, isn't a slot member, doesn't
+    # show up in this list at all). Add them with sessions=0/fees_paid=0 so
+    # they surface with real "days attended" and, once a default walk-in
+    # fee is set, a real "pending" figure - instead of quietly not existing
+    # in this view just because no one got around to logging a fee for them.
+    played_pids = {pid for (pid, _ym) in active_days.keys()}
+    for pid in played_pids:
+        if pid in member_pids or pid in guests:
+            continue
+        guests[pid] = {'display_name': _resolve_name(cache, pid) or pid,
+                        'sessions': 0, 'fees_paid': 0.0, 'recruit_verdict': None,
+                        'became_member': False}
+
     # Attendance vs. fees collected, for non-members (Owner-requested
     # 2026-08-20: "how many days they came and how much they owe, and a
     # difference maintained for them"). `active_days` (built above from the
@@ -1263,11 +1280,10 @@ def insights(group_id=None):
     default_fee = settings_item.get('default_walkin_fee')
     default_fee = float(default_fee) if default_fee is not None else None
     for gkey, g in guests.items():
-        pid = None
-        for w in walkins:
-            if (w.get('player_id') or f"name:{w.get('display_name')}") == gkey and w.get('player_id'):
-                pid = w['player_id']
-                break
+        # gkey IS the player_id whenever one exists (see how it's built,
+        # both from a walk-in record and from the played-but-never-added
+        # block above) - only a name-only guest falls back to "name:...".
+        pid = None if str(gkey).startswith('name:') else gkey
         days_attended = None
         if pid:
             days_attended = sum(len(days) for (p, _ym), days in active_days.items() if p == pid)
