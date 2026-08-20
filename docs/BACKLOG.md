@@ -247,6 +247,19 @@
 
 ## Done
 
+- ✅ 2026-08-19 — **Match-recording team pickers: swap-to-repair instead of hide-to-repair.** The 4
+  player dropdowns on the record-match form (`team_a1_select`/`_a2`/`_b1`/`_b2`) used to exclude anyone
+  already picked in one of the other 3 slots, so moving someone from one slot to another meant clearing
+  their current slot first, then re-finding them in a dropdown whose option list had just changed shape
+  - annoying when re-pairing an existing doubles group (Owner-reported friction). Now every dropdown
+  always lists the full pool, and picking someone already assigned elsewhere **swaps** the two slots
+  (`handleTeamSelectChange`) instead of hiding/duplicating - move Bob from A2 into B1 and whoever was in
+  B1 lands in A2, one click. `refreshTeamSelectOptions` only rebuilds a select's `<option>` list when the
+  underlying pool changes (group switch, initial load) rather than on every pick, so a dropdown's options
+  never get torn down while you're mid-search in it. `teamSelectValues` mirrors each slot outside the DOM
+  so the swap can see the pre-change value. Submit-time and backend duplicate checks are unchanged as a
+  backstop. Verified with a standalone swap-logic simulation (repair, clear, move-into-empty-slot, no
+  duplicates ever produced). Frontend-only (`app.js`), no backend/template change.
 - ✅ 2026-08-11 — **Stats-tab fan-out consolidation (mitigates concurrency throttling, KI #16).** Opening
   Stats used to fire the 4 matches-derived sections (Hall of Fame, diversity, progress-badges, attendance)
   as **4 concurrent `/matches` calls, each doing its own full-table `_scan_all`** - a big chunk of the
