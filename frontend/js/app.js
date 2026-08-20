@@ -742,14 +742,29 @@ let userPool = null;
       populateSelect(document.getElementById('register_group_id'), allGroups, 'group_id', 'group_name', "Don't add to a group yet");
       populateSelect(document.getElementById('match_group_select'), allGroups, 'group_id', 'group_name', 'None');
       defaultMatchGroup();  // pre-pick the recorder's group once groups are loaded
-      populateSelect(document.getElementById('log_group_filter'), allGroups, 'group_id', 'group_name', 'All groups');
+      // Every group-scoped STATS/HISTORY filter below offers "all groups you
+      // can see" rather than the full club roster of groups: a SuperAdmin
+      // still gets everything (unchanged); everyone else only gets groups
+      // they're actually a member of, plus the select's own built-in
+      // All/Global option. Previously these all listed every group in the
+      // club regardless of membership, so any member could browse another
+      // group's rankings/HoF/diversity/badges/attendance/game log/
+      // partnerships just by picking it from the dropdown (Owner-reported
+      // 2026-08-20). This is a UI-level narrowing, not new backend
+      // enforcement - GET /groups/{id} itself stays an open, unauthenticated
+      // read (KNOWN_ISSUES #2, deliberate: group rosters are treated like
+      // the public player list, not like finance) - so it matches how
+      // finance's own group pickers already worked (populateFinanceGroups),
+      // just extended to these.
+      const scopedGroups = visibleGroupsForFilter();
+      populateSelect(document.getElementById('log_group_filter'), scopedGroups, 'group_id', 'group_name', 'All groups');
       if (typeof nwPairingRefreshList === 'function') nwPairingRefreshList();
-      populateSelect(document.getElementById('attendance_group_filter'), allGroups, 'group_id', 'group_name', 'All groups');
-      populateSelect(document.getElementById('rankings_scope_select'), allGroups, 'group_id', 'group_name', 'All players');
-      populateSelect(document.getElementById('profile_partnerships_scope_group'), allGroups, 'group_id', 'group_name', 'All plays');
-      populateSelect(document.getElementById('hof_group_filter'), allGroups, 'group_id', 'group_name', 'All groups');
-      populateSelect(document.getElementById('diversity_group_filter'), allGroups, 'group_id', 'group_name', 'All groups');
-      populateSelect(document.getElementById('badges_group_filter'), allGroups, 'group_id', 'group_name', 'All groups');
+      populateSelect(document.getElementById('attendance_group_filter'), scopedGroups, 'group_id', 'group_name', 'All groups');
+      populateSelect(document.getElementById('rankings_scope_select'), scopedGroups, 'group_id', 'group_name', 'All players');
+      populateSelect(document.getElementById('profile_partnerships_scope_group'), scopedGroups, 'group_id', 'group_name', 'All plays');
+      populateSelect(document.getElementById('hof_group_filter'), scopedGroups, 'group_id', 'group_name', 'All groups');
+      populateSelect(document.getElementById('diversity_group_filter'), scopedGroups, 'group_id', 'group_name', 'All groups');
+      populateSelect(document.getElementById('badges_group_filter'), scopedGroups, 'group_id', 'group_name', 'All groups');
       // Once someone belongs to a group, default every Stats-tab scope
       // selector to it so they land on their own group's numbers instead of
       // the whole club's - still one click away from "All" (global) via the
@@ -772,7 +787,7 @@ let userPool = null;
       }
       const historyScopeSelect = document.getElementById('history_scope_select');
       historyScopeSelect.innerHTML = '<option value="global">Global (all players)</option>' +
-        [...allGroups].sort((a, b) => a.group_name.localeCompare(b.group_name))
+        [...scopedGroups].sort((a, b) => a.group_name.localeCompare(b.group_name))
           .map(g => `<option value="group_${g.group_id}">${g.group_name}</option>`).join('');
       if (allGroups.length) {
         loadGroupMembers(document.getElementById('group_select').value);
@@ -1591,6 +1606,15 @@ let userPool = null;
       const me = myPlayerId();
       if (!me) return [];
       return allGroups.filter(g => (g.member_ids || []).includes(me));
+    }
+
+    /** Groups a Stats/History/Log filter dropdown should offer: a
+     *  SuperAdmin still sees every group in the club (unchanged); everyone
+     *  else only sees groups they're actually a member of. The select's own
+     *  built-in "All"/"Global" option still covers club-wide numbers, so
+     *  this only narrows the per-group choices, not the aggregate view. */
+    function visibleGroupsForFilter() {
+      return isSuperAdmin() ? allGroups : myGroups();
     }
 
     /** Pre-selects the recorder's group when recording a match, so matches

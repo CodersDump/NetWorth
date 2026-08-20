@@ -721,9 +721,22 @@ def my_settlement(claims, group_id):
         cph = b.get('cost_per_head')
         rph = b.get('residual_per_head')
         confirmed_amt = m.get('payment_confirmed_amount')
-        # Unpaid if we have no confirmed amount matching the current per-head.
-        paid = confirmed_amt is not None and cph is not None and abs(_num(confirmed_amt) - cph) < 0.01
-        owe = 0.0 if (paid or cph is None) else cph
+        # What confirm_payment actually stores is the EFFECTIVE amount
+        # (cost_per_head minus that month's relief from the prior month's
+        # residual - see update_record's confirm_payment branch), not the
+        # raw per-head figure. Comparing against raw cph here made every
+        # member who'd ever received relief (i.e. almost everyone, since
+        # relief/residual carries over most months) show as unpaid even
+        # right after confirming, because confirmed_amt (effective) would
+        # never equal cph (pre-relief) whenever relief != 0. Match
+        # _settlement_rows' own "settled" check: compare against the same
+        # effective figure. (Owner-reported 2026-08-20: dues showed
+        # pending despite already-confirmed payment.)
+        ident = pid
+        relief = _member_relief(rows, memberships, ident, b['month'], b['year'], slot=b['slot'])
+        effective = round(max(cph - relief, 0), 2) if cph is not None else None
+        paid = confirmed_amt is not None and effective is not None and abs(_num(confirmed_amt) - effective) < 0.01
+        owe = 0.0 if (paid or effective is None) else effective
         # A member who forfeited this period's refund gets nothing back; their
         # share was redistributed to the others (reflected in rph for them).
         owed_back = 0.0 if m.get('forfeit_residual') else (rph or 0.0)

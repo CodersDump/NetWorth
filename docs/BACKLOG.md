@@ -255,6 +255,33 @@
 
 ## Done
 
+- ✅ 2026-08-20 — **Stats/history group filters no longer leak other groups' data to members, +
+  "My dues" no longer shows already-confirmed payments as pending (both Owner-reported).**
+  (1) **Group-scoped Stats/History filters.** `loadGroups()` populated eight different filter
+  dropdowns (`rankings_scope_select`, `hof_group_filter`, `diversity_group_filter`,
+  `badges_group_filter`, `attendance_group_filter`, `history_scope_select`, `log_group_filter`,
+  `profile_partnerships_scope_group`) from the full, unfiltered `allGroups` list for every viewer, so
+  any member could browse another group's rankings/Hall of Fame/diversity/badges/attendance/game
+  log/partnerships just by picking it from the dropdown. Added `visibleGroupsForFilter()` (SuperAdmin
+  gets `allGroups`, everyone else gets `myGroups()`) and wired all eight selects through it. The
+  select's own built-in "All groups"/"Global"/"All players" option is untouched, so club-wide
+  aggregate views still work for everyone — only the *per-group* picks are narrowed. UI-level only,
+  matching the existing `populateFinanceGroups` pattern and consistent with KNOWN_ISSUES #2 (`GET
+  /groups/{id}` itself stays an open, unauthenticated read — group rosters are treated as
+  club-public data, not new backend enforcement here).
+  (2) **"My dues" showing confirmed payments as pending.** `my_settlement` (finance lambda) compared
+  a member's stored `payment_confirmed_amount` against the raw `cost_per_head`, but
+  `update_record`'s `confirm_payment` branch has stored the **relief-adjusted effective amount**
+  (`cost_per_head` minus the prior month's residual/relief) since 2026-08-01 — the two sides of the
+  same check were using different numbers. Any month where the member had nonzero relief carried
+  over (the normal case, since residual/relief is core to this club's model) would show as unpaid
+  immediately after confirming, because the confirmed (effective) amount could never equal the raw
+  per-head figure. Fixed `my_settlement` to compute the same relief via `_member_relief` and compare
+  against the same effective figure `_settlement_rows`' own "settled" check already uses — the two
+  now agree. `you_owe` also now reflects the effective (post-relief) amount, not the pre-relief one.
+  Verified with a two-month fixture (July residual creates August relief; confirming August's payment
+  now correctly shows `you_paid: true`, `you_owe: 0` instead of a false-positive pending amount).
+  Frontend: `frontend/js/app.js` (1). Backend: `backend/lambdas/finance/index.py` (2).
 - ✅ 2026-08-20 — **Group owners get match delete/edit requests + an actually-working co-owner
   control (both Owner-reported: "only shows up under my admin account", "owner should be able to add
   co-owners").**
