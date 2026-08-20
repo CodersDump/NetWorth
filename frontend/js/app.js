@@ -804,10 +804,29 @@ let userPool = null;
       }
       const sortedMembers = [...data.members].sort((a, b) => a.name.localeCompare(b.name));
       const financeRoles = data.finance_roles || {};
+      const myId = myPlayerId();
       membersEl.innerHTML = '<strong>Members:</strong>' + sortedMembers.map(m => {
-        const roleTag = m.role && m.role !== 'member'
-          ? `<span style="font-size:11px; opacity:0.75; margin-left:6px; border:1px solid var(--border); border-radius:4px; padding:1px 6px;">${m.role}</span>`
-          : '';
+        // Role control - owner/admin only (mirrors the finance-role select
+        // below it). Previously this was a read-only badge with no way to
+        // actually change anyone's role, despite the group-detail copy
+        // further down telling owners to "promote a member to owner/admin
+        // from their role control above" - that control never existed.
+        // Backend (/group-role/{group_id}/{player_id}) already allows any
+        // owner/admin of THIS group to set a member to member/admin/owner
+        // (matches set_role's own gating - no extra restriction added here
+        // that the API doesn't already enforce), so this just wires up what
+        // was missing. Non-managers still see the plain read-only badge.
+        const curRole = m.role || 'member';
+        const roleTag = iCanManage
+          ? (() => {
+              const opt = (v, label) => `<option value="${v}"${curRole === v ? ' selected' : ''}>${label}</option>`;
+              return `<select style="font-size:11px; margin-left:6px; padding:1px 4px;" onchange="setGroupMemberRole('${groupId}','${m.player_id}', this.value, '${curRole}', ${m.player_id === myId})">`
+                + opt('member', 'member') + opt('admin', 'admin') + opt('owner', 'owner')
+                + '</select>';
+            })()
+          : (curRole !== 'member'
+              ? `<span style="font-size:11px; opacity:0.75; margin-left:6px; border:1px solid var(--border); border-radius:4px; padding:1px 6px;">${curRole}</span>`
+              : '');
         // Guests keep seeing Remove (legacy code-only flow, unchanged); a
         // logged-in user who can't manage this specific group doesn't see
         // it at all, rather than clicking it and getting a confusing 403.
@@ -2277,7 +2296,9 @@ let userPool = null;
           body: JSON.stringify({ type, match_id: matchId, match_label: label,
                                  group_id: groupId || null, reason: reason.trim(), ...(extra || {}) })
         });
-        nwAlert(res.ok ? 'Request sent to the admin for approval.' : `Error: ${error}`);
+        // No longer necessarily "the admin" - a group owner/admin can now
+        // decide match_edit/match_delete requests for their own group too.
+        nwAlert(res.ok ? 'Request sent for approval.' : `Error: ${error}`);
       } catch (e) { nwAlert(`Request failed: ${e.message}`); }
     }
 
@@ -2876,6 +2897,26 @@ let userPool = null;
         if (!res.ok) { nwAlert(`Error: ${error}`); return false; }
         return true;
       } catch (e) { nwAlert(`Request failed: ${e.message}`); return false; }
+    }
+
+    // Owner/admin sets a member's role (member/admin/owner) within this
+    // group - this is how a group gets a co-owner. Backend:
+    // PUT /group-role/{group_id}/{player_id} (already gated there to
+    // owner/admin of THIS group or SuperAdmin; this just calls it).
+    async function setGroupMemberRole(groupId, playerId, role, wasRole, isSelf) {
+      if (isSelf && wasRole === 'owner' && role !== 'owner') {
+        const ok = await nwConfirm('Change your OWN role away from owner? If you\'re the only owner, you could lose the ability to manage this group yourself (a SuperAdmin can always fix it, but that\'s a detour). Continue?');
+        if (!ok) { loadGroupMembers(groupId); return; }  // re-render to reset the select back to its actual value
+      }
+      try {
+        const { res, error } = await authedFetch(`${API_BASE_URL}/group-role/${groupId}/${playerId}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ role })
+        });
+        if (!res.ok) { nwAlert(`Error: ${error}`); loadGroupMembers(groupId); return; }
+        loadGroupMembers(groupId);
+      } catch (e) { nwAlert(`Request failed: ${e.message}`); loadGroupMembers(groupId); }
     }
 
     async function setFinanceRole(playerId, role) {

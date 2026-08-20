@@ -155,7 +155,7 @@ _NetWorth - register_player Lambda_
 | `handler` | event, context | 36 | — |
 | `_response` | status_code, body_dict | 89 | — |
 
-#### `players` — 1890 LOC
+#### `players` — 1901 LOC
 _NetWorth - players Lambda (list all, update one, delete one)_
 
 **Module constants:** `CLAIM_REQUESTS_TABLE`, `USER_POOL_ID`, `UPLOADS_BUCKET`, `GROUPS_TABLE`, `CONFIRMATION_CODE`, `ALLOWED_AVATARS`, `ALLOWED_BANNERS`, `ALLOWED_BACKGROUNDS`, `OWNER_DECIDABLE_TYPES`, `_APP_SETTINGS_ID`, `_STORE_CATALOG_ID`, `_STORE_ITEM_TYPES`, `FINANCE_LEVELS`, `ALLOWED_UPLOAD_TYPES`, `UPLOAD_KINDS`, `FREE_CARD_LAYOUTS`, `MAX_UPLOADS_PER_KIND`, `FREE_RENAMES`
@@ -173,46 +173,46 @@ _NetWorth - players Lambda (list all, update one, delete one)_
 | `_is_super_admin` | claims | 293 | — |
 | `_linked_player_is_live` | claims | 300 | True only if the caller's custom:player_id resolves to a player that |
 | `create_claim_request` | event | 310 | Anyone logged in but not yet linked can ASK to be linked to an |
-| `_caller_owned_group_ids` | claims | 369 | The set of group_ids where the caller's linked player is owner or admin. |
-| `_player_group_ids` | player_id | 385 | Every group_id whose roles map contains this player. |
-| `_owner_may_decide` | req, owned_group_ids | 393 | True if a group owner/admin (owning owned_group_ids) may act on req: |
-| `_audit_attr` | user, name | 410 | — |
-| `_cognito_users_all` | cognito | 414 | — |
-| `audit_claims` | event | 424 | SuperAdmin: audit Cognito account <-> player linkage (the claim_audit.py |
-| `claim_audit_action` | event | 496 | SuperAdmin link/unlink. link: point an account at a player AND stamp the |
-| `list_unconfirmed_users` | event | 549 | SuperAdmin-only: Cognito accounts stuck in UNCONFIRMED (signed up but |
-| `delete_unconfirmed_user` | event | 581 | SuperAdmin-only: delete a single UNCONFIRMED Cognito account by username. |
-| `list_claim_requests` | event | 607 | — |
-| `create_action_request` | event | 626 | A non-SuperAdmin asking for a destructive action instead of doing |
-| `_create_new_profile_request` | claims, body | 693 | Creating a brand-new profile. By default this is a REQUEST an admin |
-| `_get_app_setting` | key, default | 776 | App-wide flags live in one reserved row of the players table, keyed |
-| `get_app_settings` | event | 785 | — |
-| `set_app_setting` | event | 799 | — |
-| `_load_catalog` |  | 853 | — |
-| `list_store` | event | 858 | Public read - anyone can browse the store. Returns the catalog. |
-| `save_store_item` | event | 864 | — |
-| `delete_store_item` | event | 899 | — |
-| `purchase_store_item` | event | 912 | A player spends coins on an item. Coins are deducted by bumping |
-| `_create_edit_name_request` | claims, body | 957 | Renaming is now self-service-only: the target is always the |
-| `_approve_edit_name` | req, claims | 1003 | — |
-| `_approve_new_profile` | req, claims | 1019 | Creates the player only at approval time, and links it to the |
-| `_create_match_request` | claims, body, action_type | 1055 | A match edit or delete, filed as a request rather than executed. The |
-| `_create_finance_access_request` | claims, body | 1103 | A member asking for a finance role (view / write / delete) IN A GROUP. |
-| `_approve_finance_access` | req | 1156 | — |
-| `decide_claim_request` | event | 1182 | Approve or reject. On approval this writes the link on BOTH sides: |
-| `create_upload_url` | event | 1332 | Hands back a short-lived presigned PUT. The browser uploads straight |
-| `_valid_upload_key` | value, player_id, kind | 1396 | An uploaded image is referenced by key, and the key is checked |
-| `_owns_store_cosmetic` | player, key, kind | 1406 | True if `key` is the image of a store cosmetic the player OWNS whose |
-| `_owns_card_layout` | player, layout | 1432 | True if the player may use this stats layout - free ones always, |
-| `_owns_value_cosmetic` | player, kind, value | 1440 | True if the player owns a store item of this cosmetic `kind` whose |
-| `_rotate_uploads` | player_id, kind, new_key | 1461 | Maintains the player's short list of custom images, newest first, |
-| `update_my_card` | event | 1493 | Self-service avatar/banner customization for the CALLER'S OWN |
-| `_consume_perk` | player, player_id, effect_kind | 1668 | Spends one token of a perk the player owns (by store item effect |
-| `rename_self` | event | 1697 | Self-service nickname change for the CALLER'S OWN linked player. |
-| `update_player` | player_id, event | 1737 | — |
-| `delete_player` | player_id, event | 1824 | — |
-| `_cognito_username_for_email` | cognito, email | 1873 | The username is not always the email, so it has to be looked up. |
-| `_response` | status_code, body_dict | 1881 | — |
+| `_caller_owned_group_ids` | claims | 380 | The set of group_ids where the caller's linked player is owner or admin. |
+| `_player_group_ids` | player_id | 396 | Every group_id whose roles map contains this player. |
+| `_owner_may_decide` | req, owned_group_ids | 404 | True if a group owner/admin (owning owned_group_ids) may act on req: |
+| `_audit_attr` | user, name | 421 | — |
+| `_cognito_users_all` | cognito | 425 | — |
+| `audit_claims` | event | 435 | SuperAdmin: audit Cognito account <-> player linkage (the claim_audit.py |
+| `claim_audit_action` | event | 507 | SuperAdmin link/unlink. link: point an account at a player AND stamp the |
+| `list_unconfirmed_users` | event | 560 | SuperAdmin-only: Cognito accounts stuck in UNCONFIRMED (signed up but |
+| `delete_unconfirmed_user` | event | 592 | SuperAdmin-only: delete a single UNCONFIRMED Cognito account by username. |
+| `list_claim_requests` | event | 618 | — |
+| `create_action_request` | event | 637 | A non-SuperAdmin asking for a destructive action instead of doing |
+| `_create_new_profile_request` | claims, body | 704 | Creating a brand-new profile. By default this is a REQUEST an admin |
+| `_get_app_setting` | key, default | 787 | App-wide flags live in one reserved row of the players table, keyed |
+| `get_app_settings` | event | 796 | — |
+| `set_app_setting` | event | 810 | — |
+| `_load_catalog` |  | 864 | — |
+| `list_store` | event | 869 | Public read - anyone can browse the store. Returns the catalog. |
+| `save_store_item` | event | 875 | — |
+| `delete_store_item` | event | 910 | — |
+| `purchase_store_item` | event | 923 | A player spends coins on an item. Coins are deducted by bumping |
+| `_create_edit_name_request` | claims, body | 968 | Renaming is now self-service-only: the target is always the |
+| `_approve_edit_name` | req, claims | 1014 | — |
+| `_approve_new_profile` | req, claims | 1030 | Creates the player only at approval time, and links it to the |
+| `_create_match_request` | claims, body, action_type | 1066 | A match edit or delete, filed as a request rather than executed. The |
+| `_create_finance_access_request` | claims, body | 1114 | A member asking for a finance role (view / write / delete) IN A GROUP. |
+| `_approve_finance_access` | req | 1167 | — |
+| `decide_claim_request` | event | 1193 | Approve or reject. On approval this writes the link on BOTH sides: |
+| `create_upload_url` | event | 1343 | Hands back a short-lived presigned PUT. The browser uploads straight |
+| `_valid_upload_key` | value, player_id, kind | 1407 | An uploaded image is referenced by key, and the key is checked |
+| `_owns_store_cosmetic` | player, key, kind | 1417 | True if `key` is the image of a store cosmetic the player OWNS whose |
+| `_owns_card_layout` | player, layout | 1443 | True if the player may use this stats layout - free ones always, |
+| `_owns_value_cosmetic` | player, kind, value | 1451 | True if the player owns a store item of this cosmetic `kind` whose |
+| `_rotate_uploads` | player_id, kind, new_key | 1472 | Maintains the player's short list of custom images, newest first, |
+| `update_my_card` | event | 1504 | Self-service avatar/banner customization for the CALLER'S OWN |
+| `_consume_perk` | player, player_id, effect_kind | 1679 | Spends one token of a perk the player owns (by store item effect |
+| `rename_self` | event | 1708 | Self-service nickname change for the CALLER'S OWN linked player. |
+| `update_player` | player_id, event | 1748 | — |
+| `delete_player` | player_id, event | 1835 | — |
+| `_cognito_username_for_email` | cognito, email | 1884 | The username is not always the email, so it has to be looked up. |
+| `_response` | status_code, body_dict | 1892 | — |
 
 #### `groups` — 763 LOC
 _NetWorth - groups Lambda_
@@ -413,7 +413,7 @@ _NetWorth - progress_scheduler Lambda_
 ## 6. Frontend function reference
 
 <!-- AUTOGEN:FRONTEND START (regenerated by tools/generate_codebase_map.py — do not hand-edit below) -->
-### Frontend (`frontend/js/app.js` — 8140 LOC, flat global script, ~352 functions)
+### Frontend (`frontend/js/app.js` — 8181 LOC, flat global script, ~354 functions)
 
 _Loaded by `index.html` after an inline `<script>` defines the globals `API_BASE_URL`, `COGNITO_USER_POOL_ID`, `COGNITO_CLIENT_ID`, `UPI_ID`, `FINANCE_VIEW_KEY` placeholders. Functions live in global scope (not an IIFE); most are wired to `onclick=` in the HTML._
 
@@ -490,335 +490,337 @@ _Loaded by `index.html` after an inline `<script>` defines the globals `API_BASE
 
 **Delete / edit player**  (from L776)
 - `loadGroupMembers(groupId)` — L785
-- `opt(v, label)` — L827
-- `nameOf(pid)` — L840
+- `opt(v, label)` — L822
+- `opt(v, label)` — L846
 
 **Groups**  (from L850)
-- `applyGroupDefaultsToForm(prefix, settings)` — L875
-- `setIfPresent(suffix, value)` — L877
-- `renderAddPlayersChecklist()` — L888
-- `removePlayerFromGroup(groupId, playerId)` — L901
-- `populateTeamSelects()` — L936
-- `refreshTeamSelectOptions()` — L970
+- `nameOf(pid)` — L859
+- `applyGroupDefaultsToForm(prefix, settings)` — L894
+- `setIfPresent(suffix, value)` — L896
+- `renderAddPlayersChecklist()` — L907
+- `removePlayerFromGroup(groupId, playerId)` — L920
+- `populateTeamSelects()` — L955
 
 **Matches (record/list/game-log)**  (from L979)
-- `syncTeamSelectValues()` — L984
-- `handleTeamSelectChange(changedId)` — L993
-- `applyMatchTypeVisibility()` — L1007
+- `refreshTeamSelectOptions()` — L989
+- `syncTeamSelectValues()` — L1003
+- `handleTeamSelectChange(changedId)` — L1012
 
 **Voice match entry**  (from L1016)
-- `updateMatchGroupCache()` — L1020
-- `randomizeTeams(showAlertOnFail)` — L1039
-- `isGameOver(a, b, target)` — L1077
-- `updateLiveScoreDisplay()` — L1085
-- `getTeamDisplayName(selectId)` — L1155
-- `getSplitTeamNames()` — L1161
-- `updateSplitScreenScores(a, b, over)` — L1176
-- `openSplitScreenGeneric(config)` — L1185
-- `closeSplitScreen()` — L1194
-- `openSplitScreen()` — L1200
-- `openTournamentSplitScreen(matchKey, target, nameA, nameB, finishFn)` — L1225
+- `applyMatchTypeVisibility()` — L1026
+- `updateMatchGroupCache()` — L1039
+- `randomizeTeams(showAlertOnFail)` — L1058
+- `isGameOver(a, b, target)` — L1096
+- `updateLiveScoreDisplay()` — L1104
+- `getTeamDisplayName(selectId)` — L1174
+- `getSplitTeamNames()` — L1180
+- `updateSplitScreenScores(a, b, over)` — L1195
+- `openSplitScreenGeneric(config)` — L1204
+- `closeSplitScreen()` — L1213
+- `openSplitScreen()` — L1219
+- `openTournamentSplitScreen(matchKey, target, nameA, nameB, finishFn)` — L1244
 
 **Team pairing preview**  (from L1264)
-- `prefillEditForm()` — L1379
+- `prefillEditForm()` — L1398
 
 **Game log & CSV export**  (from L1558)
-- `myGroups()` — L1571
-- `defaultMatchGroup()` — L1581
-- `applyVoiceVisibility()` — L1597
-- `nwPhon(s)` — L1604
-- `nwLev(a, b)` — L1615
-- `nwScorePlayer(token, p)` — L1622
-- `nwMatchPlayerToken(tokenRaw)` — L1641
-- `nwWordsToNums(t)` — L1656
-- `nwParseMatchTranscript(raw)` — L1664
-- `nwApplyParsedToForm(p)` — L1696
-- `set(id, entry)` — L1700
-- `nwVoicePreviewHtml(p)` — L1710
-- `nwVoiceMatchInit()` — L1722
-- `stopListening()` — L1751
-- `nwSeeded(p)` — L1840
-- `nwShuffle(a)` — L1841
-- `nwPairingRefreshList()` — L1843
-- `nwPairingUpdateCount()` — L1854
-- `nwPairingRender()` — L1859
-- `nwPairingInit()` — L1891
+- `myGroups()` — L1590
+- `defaultMatchGroup()` — L1600
+- `applyVoiceVisibility()` — L1616
+- `nwPhon(s)` — L1623
+- `nwLev(a, b)` — L1634
+- `nwScorePlayer(token, p)` — L1641
+- `nwMatchPlayerToken(tokenRaw)` — L1660
+- `nwWordsToNums(t)` — L1675
+- `nwParseMatchTranscript(raw)` — L1683
+- `nwApplyParsedToForm(p)` — L1715
+- `set(id, entry)` — L1719
+- `nwVoicePreviewHtml(p)` — L1729
+- `nwVoiceMatchInit()` — L1741
+- `stopListening()` — L1770
+- `nwSeeded(p)` — L1859
+- `nwShuffle(a)` — L1860
+- `nwPairingRefreshList()` — L1862
+- `nwPairingUpdateCount()` — L1873
+- `nwPairingRender()` — L1878
 
 **Profile card customization**  (from L1901)
-- `nameFor(pid)` — L1963
-- `showMatchOutcome(ok, message)` — L2033
-- `savePendingMatch(payload, meta)` — L2052
-- `loadPendingMatch()` — L2056
-- `clearPendingMatch()` — L2059
-- `handleSessionExpired()` — L2066
-- `ensureRestoreHost()` — L2089
-- `offerPendingMatchRestore()` — L2098
-- `loadGameLog()` — L2133
-- `gameLogGoto(p)` — L2183
-- `renderGameLog()` — L2185
-- `matchPermissions(m)` — L2242
-- `matchGroupLabel(m)` — L2263
-- `requestMatchChange(matchId, type, label, groupId, extra)` — L2268
-- `editMatch(matchId, groupId)` — L2287
-- `opts(sel)` — L2296
-- `pickers(team, prefix)` — L2298
-- `close()` — L2320
+- `nwPairingInit()` — L1910
+- `nameFor(pid)` — L1982
+- `showMatchOutcome(ok, message)` — L2052
+- `savePendingMatch(payload, meta)` — L2071
+- `loadPendingMatch()` — L2075
+- `clearPendingMatch()` — L2078
+- `handleSessionExpired()` — L2085
+- `ensureRestoreHost()` — L2108
+- `offerPendingMatchRestore()` — L2117
+- `loadGameLog()` — L2152
+- `gameLogGoto(p)` — L2202
+- `renderGameLog()` — L2204
+- `matchPermissions(m)` — L2261
+- `matchGroupLabel(m)` — L2282
+- `requestMatchChange(matchId, type, label, groupId, extra)` — L2287
+- `editMatch(matchId, groupId)` — L2308
+- `opts(sel)` — L2317
+- `pickers(team, prefix)` — L2319
 
 **Quests**  (from L2326)
-- `editMatchScore(matchId, currentScoreA, currentScoreB, e)` — L2346
-- `deleteMatch(matchId, encLabel, groupId)` — L2382
-- `downloadCSV(filename, rows)` — L2414
+- `close()` — L2341
+- `editMatchScore(matchId, currentScoreA, currentScoreB, e)` — L2367
+- `deleteMatch(matchId, encLabel, groupId)` — L2403
 
 **Store & events admin**  (from L2430)
-- `loadRankings()` — L2448
-- `gp(p)` — L2474
-- `fetchRatingHistory(playerId)` — L2519
-- `loadVisiblePlayers(opts = {})` — L2530
-- `resolveBannerId(id)` — L2668
-- `bgCss(id, url)` — L2742
-- `updatePageBackground()` — L2747
-- `applyPageBackground(player)` — L2758
+- `downloadCSV(filename, rows)` — L2435
+- `loadRankings()` — L2469
+- `gp(p)` — L2495
+- `fetchRatingHistory(playerId)` — L2540
+- `loadVisiblePlayers(opts = {})` — L2551
+- `resolveBannerId(id)` — L2689
+- `bgCss(id, url)` — L2763
 
 **Image uploads**  (from L2765)
-- `renderProfileCardBanner(player)` — L2765
-- `toggleHeaderMenu()` — L2809
-- `openSettingsModal()` — L2823
-- `loadFinanceAccessList()` — L2836
-- `opt(v, label)` — L2854
-- `setGroupFinanceRole(groupId, playerId, role)` — L2869
-- `setFinanceRole(playerId, role)` — L2881
-- `closeSettingsModal()` — L2892
-- `renderSettingsPickers(player)` — L2896
-- `swatch(field, id, css, selected)` — L2905
+- `updatePageBackground()` — L2768
+- `applyPageBackground(player)` — L2779
+- `renderProfileCardBanner(player)` — L2786
+- `toggleHeaderMenu()` — L2830
+- `openSettingsModal()` — L2844
+- `loadFinanceAccessList()` — L2857
+- `opt(v, label)` — L2875
+- `setGroupFinanceRole(groupId, playerId, role)` — L2890
+- `setGroupMemberRole(groupId, playerId, role, wasRole, isSelf)` — L2906
 
 **Profile bundle / cards / charts**  (from L2918)
-- `submitClaimRequest()` — L2934
-- `checkApprovalStatus()` — L2959
-- `recomputeNow()` — L2972
-- `loadAppSettings()` — L2987
-- `setXpPublic(value)` — L3016
-- `setVoiceEnabled(value)` — L3031
-- `setInstantCreate(value)` — L3046
-- `loadQuests()` — L3059
-- `_renderQuestRow(q)` — L3068
-- `_hdr(t)` — L3092
-- `claimQuest(questId)` — L3100
-- `loadQuestsAdmin()` — L3116
-- `saveQuest()` — L3137
-- `deleteQuest(questId)` — L3159
-- `loadStore()` — L3171
-- `catOf(i)` — L3196
-- `cardHtml(i)` — L3201
-- `buyStoreItem(itemId)` — L3233
-- `onStoreImagePick(input)` — L3247
-- `loadStoreAdmin()` — L3255
-- `onStoreTypeChange()` — L3283
-- `onStoreEffectChange()` — L3295
-- `uploadStoreImage(file)` — L3311
-- `saveStoreItem()` — L3328
-- `deleteStoreItem(itemId)` — L3378
-- `loadEventsAdmin()` — L3389
-- `editEvent(e)` — L3411
-- `saveEvent()` — L3419
-- `deleteEvent(eventId)` — L3442
-- `refreshEventBanner()` — L3454
-- `loadClaimAudit()` — L3471
-- `relinkAccount(usernameEnc, presetPlayerId)` — L3538
-- `unlinkAccount(usernameEnc)` — L3546
-- `unlinkAndStrip(usernameEnc, playerId)` — L3551
-- `_claimAuditAction(bodyObj)` — L3556
-- `loadUnconfirmedUsers()` — L3567
-- `deleteUnconfirmedUser(username, email)` — L3594
-- `loadClaimRequests()` — L3607
-- `decideClaimRequest(requestId, action, requestType)` — L3647
-- `escapeHtml(s)` — L3685
-- `resizeImage(file, kind)` — L3702
-- `isAnimatedImage(file)` — L3737
-- `uploadCardImage(kind, fileInput)` — L3749
-- `imageSrc(key)` — L3804
-- `loadStoreCatalogOnce()` — L3810
-- `renderStoreCosmeticStrip(kind, player)` — L3820
-- `renderUploadStrip(kind, player)` — L3844
-- `vsPlayerVisual(pid, snapshot)` — L3876
-- `vsAvatarHtml(v, isWinner)` — L3892
-- `teamBanner(side)` — L3909
-- `gameScore(game, side)` — L3920
-- `renderVsCard(idsA, idsB, opts = {})` — L3926
-- `won(side)` — L3931
+- `setFinanceRole(playerId, role)` — L2922
+- `closeSettingsModal()` — L2933
+- `renderSettingsPickers(player)` — L2937
+- `swatch(field, id, css, selected)` — L2946
+- `submitClaimRequest()` — L2975
+- `checkApprovalStatus()` — L3000
+- `recomputeNow()` — L3013
+- `loadAppSettings()` — L3028
+- `setXpPublic(value)` — L3057
+- `setVoiceEnabled(value)` — L3072
+- `setInstantCreate(value)` — L3087
+- `loadQuests()` — L3100
+- `_renderQuestRow(q)` — L3109
+- `_hdr(t)` — L3133
+- `claimQuest(questId)` — L3141
+- `loadQuestsAdmin()` — L3157
+- `saveQuest()` — L3178
+- `deleteQuest(questId)` — L3200
+- `loadStore()` — L3212
+- `catOf(i)` — L3237
+- `cardHtml(i)` — L3242
+- `buyStoreItem(itemId)` — L3274
+- `onStoreImagePick(input)` — L3288
+- `loadStoreAdmin()` — L3296
+- `onStoreTypeChange()` — L3324
+- `onStoreEffectChange()` — L3336
+- `uploadStoreImage(file)` — L3352
+- `saveStoreItem()` — L3369
+- `deleteStoreItem(itemId)` — L3419
+- `loadEventsAdmin()` — L3430
+- `editEvent(e)` — L3452
+- `saveEvent()` — L3460
+- `deleteEvent(eventId)` — L3483
+- `refreshEventBanner()` — L3495
+- `loadClaimAudit()` — L3512
+- `relinkAccount(usernameEnc, presetPlayerId)` — L3579
+- `unlinkAccount(usernameEnc)` — L3587
+- `unlinkAndStrip(usernameEnc, playerId)` — L3592
+- `_claimAuditAction(bodyObj)` — L3597
+- `loadUnconfirmedUsers()` — L3608
+- `deleteUnconfirmedUser(username, email)` — L3635
+- `loadClaimRequests()` — L3648
+- `decideClaimRequest(requestId, action, requestType)` — L3688
+- `escapeHtml(s)` — L3726
+- `resizeImage(file, kind)` — L3743
+- `isAnimatedImage(file)` — L3778
+- `uploadCardImage(kind, fileInput)` — L3790
+- `imageSrc(key)` — L3845
+- `loadStoreCatalogOnce()` — L3851
+- `renderStoreCosmeticStrip(kind, player)` — L3861
+- `renderUploadStrip(kind, player)` — L3885
+- `vsPlayerVisual(pid, snapshot)` — L3917
+- `vsAvatarHtml(v, isWinner)` — L3933
 
 **UPI payment card**  (from L3941)
-- `vsSideIds(side)` — L3956
-- `setMyCardField(field, value)` — L3966
+- `teamBanner(side)` — L3950
+- `gameScore(game, side)` — L3961
+- `renderVsCard(idsA, idsB, opts = {})` — L3967
+- `won(side)` — L3972
+- `vsSideIds(side)` — L3997
 
 **Finance tab (view-key + role gated)**  (from L3999)
-- `loadProfileBundle(playerId)` — L4034
-- `renderTieredCard(icon, name, unit, tiers, currentValue)` — L4149
-- `renderBinaryCard(icon, name, desc, achieved, detail)` — L4177
-- `resetRatingZoom()` — L4249
-- `loadProfileRatingChart(playerId)` — L4255
-- `loadProfilePartnershipsAndRadar(playerId)` — L4341
-- `loadProfileHeadToHead(playerId)` — L4390
-- `loadProfileWithPartner(playerId)` — L4414
-- `partnerGamesGoto(p)` — L4446
-- `renderPartnerGames()` — L4448
-- `skeletonHTML(lines = 3)` — L4481
-- `showProfileSkeletons()` — L4488
-- `renderXpPanel(player)` — L4501
-- `xpForLevel(n)` — L4509
-- `updateHeaderCoins()` — L4535
-- `loadProfile()` — L4547
-- `refreshProfile()` — L4577
-- `refreshProfileIfShowing(affectedPlayerIds)` — L4594
-- `renderPartnerRadar(data, highlightTournament, svgId = 'rada)` — L4615
+- `setMyCardField(field, value)` — L4007
+- `loadProfileBundle(playerId)` — L4075
+- `renderTieredCard(icon, name, unit, tiers, currentValue)` — L4190
+- `renderBinaryCard(icon, name, desc, achieved, detail)` — L4218
+- `resetRatingZoom()` — L4290
+- `loadProfileRatingChart(playerId)` — L4296
+- `loadProfilePartnershipsAndRadar(playerId)` — L4382
+- `loadProfileHeadToHead(playerId)` — L4431
+- `loadProfileWithPartner(playerId)` — L4455
+- `partnerGamesGoto(p)` — L4487
+- `renderPartnerGames()` — L4489
+- `skeletonHTML(lines = 3)` — L4522
+- `showProfileSkeletons()` — L4529
+- `renderXpPanel(player)` — L4542
+- `xpForLevel(n)` — L4550
+- `updateHeaderCoins()` — L4576
+- `loadProfile()` — L4588
+- `refreshProfile()` — L4618
+- `refreshProfileIfShowing(affectedPlayerIds)` — L4635
 
 **Match review & reorder (SuperAdmin)**  (from L4649)
-- `loadHistory()` — L4671
-- `renderHistory(data)` — L4689
-- `loadBadges()` — L4750
-- `renderBadges(data)` — L4768
+- `renderPartnerRadar(data, highlightTournament, svgId = 'rada)` — L4656
+- `loadHistory()` — L4712
+- `renderHistory(data)` — L4730
 
 **Auth UI (Cognito login/signup/session)**  (from L4780)
-- `loadDiversity()` — L4801
-- `renderDiversity(data)` — L4819
-- `playerLabelById(playerId, fallbackName)` — L4840
-- `playerLabelsById(playerIds, fallbackNames)` — L4844
-- `loadHallOfFame()` — L4850
-- `renderHallOfFame(data)` — L4872
-- `loadAttendance()` — L4956
-- `renderAttendance(data)` — L4975
-- `refreshUpiCard()` — L4994
-- `renderUpiCard()` — L5006
-- `imageServiceFallback()` — L5028
-- `xpVisible()` — L5056
-- `applyFinanceRoleVisibility()` — L5062
-- `finQS(extra)` — L5083
-- `financeBaseUrl()` — L5094
-- `finPost(path, method, bodyObj)` — L5098
-- `populateFinanceSlots(group)` — L5122
-- `_rememberedFinance(key)` — L5145
-- `_rememberFinance(key, val)` — L5149
-- `restoreFinanceMonth()` — L5155
-- `populateFinanceGroups()` — L5164
-- `reloadFinanceForGroup()` — L5192
-- `tryAutoFinanceUnlock()` — L5197
-- `myFinanceGroups()` — L5222
-- `populateMyDuesGroups()` — L5227
-- `loadMyDues(groupId)` — L5245
-- `manageGroupSlots(groupId)` — L5290
-- `assignSlotMembers(groupId, slotEnc)` — L5308
-- `transferGroupOwnership(groupId)` — L5336
+- `loadBadges()` — L4791
+- `renderBadges(data)` — L4809
+- `loadDiversity()` — L4842
+- `renderDiversity(data)` — L4860
+- `playerLabelById(playerId, fallbackName)` — L4881
+- `playerLabelsById(playerIds, fallbackNames)` — L4885
+- `loadHallOfFame()` — L4891
+- `renderHallOfFame(data)` — L4913
+- `loadAttendance()` — L4997
+- `renderAttendance(data)` — L5016
+- `refreshUpiCard()` — L5035
+- `renderUpiCard()` — L5047
+- `imageServiceFallback()` — L5069
+- `xpVisible()` — L5097
+- `applyFinanceRoleVisibility()` — L5103
+- `finQS(extra)` — L5124
+- `financeBaseUrl()` — L5135
+- `finPost(path, method, bodyObj)` — L5139
+- `populateFinanceSlots(group)` — L5163
+- `_rememberedFinance(key)` — L5186
+- `_rememberFinance(key, val)` — L5190
+- `restoreFinanceMonth()` — L5196
+- `populateFinanceGroups()` — L5205
+- `reloadFinanceForGroup()` — L5233
+- `tryAutoFinanceUnlock()` — L5238
+- `myFinanceGroups()` — L5263
+- `populateMyDuesGroups()` — L5268
+- `loadMyDues(groupId)` — L5286
+- `manageGroupSlots(groupId)` — L5331
 
 **Init & session restore**  (from L5346)
-- `setGroupPayee(groupId)` — L5355
+- `assignSlotMembers(groupId, slotEnc)` — L5349
 
 **Tournaments**  (from L5371)
-- `requestFinanceAccess()` — L5378
-- `financeUnlock()` — L5395
-- `updateFinanceScopeNote(scopedTo)` — L5437
-- `loadFinanceSummary()` — L5447
-- `loadFinanceExpenses()` — L5469
-- `resetExpenseEdit()` — L5507
-- `addFinanceExpense()` — L5514
-- `loadFinanceMembers()` — L5533
-- `markMembersDirty()` — L5637
-- `recalcMembers()` — L5644
-- `renderBulkRosterList()` — L5656
-- `bulkAddFromRoster()` — L5670
-- `copyPreviousMonthMembers()` — L5685
-- `addFinanceMember()` — L5721
-- `loadFinanceWalkins()` — L5742
-- `addFinanceWalkin()` — L5769
-- `loadFinanceInsights()` — L5807
-- `copyDuesForWhatsApp()` — L5821
-- `pad(s, w)` — L5838
-- `padL(s, w)` — L5839
-- `line(n, o, r, p)` — L5840
-- `done()` — L5850
-- `fallbackCopy(text, cb)` — L5856
-- `renderInsights()` — L5865
-- `saveFinanceSettings()` — L5938
-- `loadPublicWalkins()` — L5975
-- `loadReviewDay()` — L6058
-- `reviewOrderChanged()` — L6102
-- `renderReviewList()` — L6108
-- `applyReviewOrder()` — L6169
-- `updateAuthUI()` — L6197
-- `hiddenNow(id, btn)` — L6225
-- `refreshMySession(statusElId)` — L6310
-- `setStatus(msg)` — L6311
-- `openAchievementsModal()` — L6339
-- `closeAchievementsModal()` — L6348
-- `openAuthModal()` — L6349
-- `closeAuthModal()` — L6350
-- `showAuthView(view)` — L6351
-- `setAuthSession(session, user, opts = {})` — L6359
-- `closeCompleteProfileModal()` — L6379
-- `openCompleteProfileModal()` — L6380
-- `showCompleteProfileMode(mode, preselectPlayerId)` — L6395
-- `populateClaimPicker(preselectPlayerId)` — L6403
+- `transferGroupOwnership(groupId)` — L5377
+- `setGroupPayee(groupId)` — L5396
+- `requestFinanceAccess()` — L5419
+- `financeUnlock()` — L5436
+- `updateFinanceScopeNote(scopedTo)` — L5478
+- `loadFinanceSummary()` — L5488
+- `loadFinanceExpenses()` — L5510
+- `resetExpenseEdit()` — L5548
+- `addFinanceExpense()` — L5555
+- `loadFinanceMembers()` — L5574
+- `markMembersDirty()` — L5678
+- `recalcMembers()` — L5685
+- `renderBulkRosterList()` — L5697
+- `bulkAddFromRoster()` — L5711
+- `copyPreviousMonthMembers()` — L5726
+- `addFinanceMember()` — L5762
+- `loadFinanceWalkins()` — L5783
+- `addFinanceWalkin()` — L5810
+- `loadFinanceInsights()` — L5848
+- `copyDuesForWhatsApp()` — L5862
+- `pad(s, w)` — L5879
+- `padL(s, w)` — L5880
+- `line(n, o, r, p)` — L5881
+- `done()` — L5891
+- `fallbackCopy(text, cb)` — L5897
+- `renderInsights()` — L5906
+- `saveFinanceSettings()` — L5979
+- `loadPublicWalkins()` — L6016
+- `loadReviewDay()` — L6099
+- `reviewOrderChanged()` — L6143
+- `renderReviewList()` — L6149
+- `applyReviewOrder()` — L6210
+- `updateAuthUI()` — L6238
+- `hiddenNow(id, btn)` — L6266
+- `refreshMySession(statusElId)` — L6351
+- `setStatus(msg)` — L6352
+- `openAchievementsModal()` — L6380
+- `closeAchievementsModal()` — L6389
+- `openAuthModal()` — L6390
+- `closeAuthModal()` — L6391
+- `showAuthView(view)` — L6392
+- `setAuthSession(session, user, opts = {})` — L6400
+- `closeCompleteProfileModal()` — L6420
 
 **Live scoring inside tournaments**  (from L6421)
-- `submitClaimProfile()` — L6427
-- `closeCompleteProfileModal()` — L6467
-- `sanitizeNickname(raw)` — L6473
-- `editDistance(a, b)` — L6478
-- `checkForExistingPlayer(name, typedNickname, statusEl)` — L6500
-- `submitCompleteProfile()` — L6555
-- `finishRequestAndSignOut(message)` — L6631
-- `doLogin()` — L6637
-- `doNewPassword()` — L6690
-- `doSignup()` — L6701
-- `doConfirmSignup()` — L6718
-- `doResendConfirmCode()` — L6749
-- `doForgotPassword()` — L6760
-- `doConfirmForgotPassword()` — L6775
-- `doLogout()` — L6787
-- `restoreSession()` — L6831
-- `restoreTabFromHash()` — L6875
-- `addManualTeamRow()` — L6935
-- `collectManualTeams()` — L6971
-- `loadTournamentGroupOptions()` — L6984
-- `loadTournamentParticipantsChecklist()` — L6993
-- `updateParticipantsCount()` — L7023
-- `collectTournamentParticipants()` — L7035
-- `loadTournamentsList()` — L7039
-- `submitTournamentCreation(payload)` — L7046
-- `collectAllEntities(t)` — L7205
-- `getAllTeamEntities(t)` — L7221
-- `renderTeamCompositionBars(t, containerId)` — L7239
-- `populateSubstitutionSection(t)` — L7274
-- `updateSubOldPlayerOptions()` — L7285
-- `formatGames(games)` — L7374
-- `applyTournamentViewMode()` — L7381
-- `matchTotals(match)` — L7387
-- `truncateBracketName(name, maxChars = 22)` — L7395
-- `renderBracketView(t)` — L7400
-- `renderTournament(t)` — L7516
-- `generateTournamentRecap(t)` — L7690
-- `downloadTournamentImage()` — L7722
-- `loadImg(src)` — L7749
-- `sideVisuals(side)` — L7759
-- `drawCard(x, y, w, match, isFinal)` — L7766
-- `drawAvatars(ctx, x, y, side, isWinner)` — L7812
-- `paintTeam(ctx, x, y, w, h, side, fallback)` — L7831
-- `roundRect(ctx, x, y, w, h, r)` — L7859
-- `copyTournamentRecap()` — L7869
-- `item_has_third_place(t)` — L7880
-- `submitGroupScore(tournamentId, subgroup, fixtureId)` — L7884
-- `submitGroupScoreDirect(tournamentId, subgroup, fixtureId, score)` — L7890
-- `submitKnockoutScore(tournamentId, roundIndex, matchIndex)` — L7909
-- `submitKnockoutScoreDirect(tournamentId, roundIndex, matchIndex, sc)` — L7915
-- `submitThirdPlaceScore(tournamentId)` — L7934
-- `submitThirdPlaceScoreDirect(tournamentId, score_a, score_b, override)` — L7940
-- `getTournamentLiveLog(matchKey)` — L7963
-- `tournamentLivePoint(matchKey, side, target)` — L7968
-- `tournamentUndoPoint(matchKey, target)` — L7977
-- `updateTournamentLiveDisplay(matchKey, target)` — L7983
-- `finishGroupLiveGame(matchKey, tournamentId, subgroup, fixtur)` — L8001
-- `finishKnockoutLiveGame(matchKey, tournamentId, roundIndex, matc)` — L8010
-- `finishThirdPlaceLiveGame(matchKey, tournamentId)` — L8019
-- `renderLiveScoreControls(matchKey, target, finishCallExpr, nameA,)` — L8028
-- `applyTheme(theme)` — L8121
+- `openCompleteProfileModal()` — L6421
+- `showCompleteProfileMode(mode, preselectPlayerId)` — L6436
+- `populateClaimPicker(preselectPlayerId)` — L6444
+- `submitClaimProfile()` — L6468
+- `closeCompleteProfileModal()` — L6508
+- `sanitizeNickname(raw)` — L6514
+- `editDistance(a, b)` — L6519
+- `checkForExistingPlayer(name, typedNickname, statusEl)` — L6541
+- `submitCompleteProfile()` — L6596
+- `finishRequestAndSignOut(message)` — L6672
+- `doLogin()` — L6678
+- `doNewPassword()` — L6731
+- `doSignup()` — L6742
+- `doConfirmSignup()` — L6759
+- `doResendConfirmCode()` — L6790
+- `doForgotPassword()` — L6801
+- `doConfirmForgotPassword()` — L6816
+- `doLogout()` — L6828
+- `restoreSession()` — L6872
+- `restoreTabFromHash()` — L6916
+- `addManualTeamRow()` — L6976
+- `collectManualTeams()` — L7012
+- `loadTournamentGroupOptions()` — L7025
+- `loadTournamentParticipantsChecklist()` — L7034
+- `updateParticipantsCount()` — L7064
+- `collectTournamentParticipants()` — L7076
+- `loadTournamentsList()` — L7080
+- `submitTournamentCreation(payload)` — L7087
+- `collectAllEntities(t)` — L7246
+- `getAllTeamEntities(t)` — L7262
+- `renderTeamCompositionBars(t, containerId)` — L7280
+- `populateSubstitutionSection(t)` — L7315
+- `updateSubOldPlayerOptions()` — L7326
+- `formatGames(games)` — L7415
+- `applyTournamentViewMode()` — L7422
+- `matchTotals(match)` — L7428
+- `truncateBracketName(name, maxChars = 22)` — L7436
+- `renderBracketView(t)` — L7441
+- `renderTournament(t)` — L7557
+- `generateTournamentRecap(t)` — L7731
+- `downloadTournamentImage()` — L7763
+- `loadImg(src)` — L7790
+- `sideVisuals(side)` — L7800
+- `drawCard(x, y, w, match, isFinal)` — L7807
+- `drawAvatars(ctx, x, y, side, isWinner)` — L7853
+- `paintTeam(ctx, x, y, w, h, side, fallback)` — L7872
+- `roundRect(ctx, x, y, w, h, r)` — L7900
+- `copyTournamentRecap()` — L7910
+- `item_has_third_place(t)` — L7921
+- `submitGroupScore(tournamentId, subgroup, fixtureId)` — L7925
+- `submitGroupScoreDirect(tournamentId, subgroup, fixtureId, score)` — L7931
+- `submitKnockoutScore(tournamentId, roundIndex, matchIndex)` — L7950
+- `submitKnockoutScoreDirect(tournamentId, roundIndex, matchIndex, sc)` — L7956
+- `submitThirdPlaceScore(tournamentId)` — L7975
+- `submitThirdPlaceScoreDirect(tournamentId, score_a, score_b, override)` — L7981
+- `getTournamentLiveLog(matchKey)` — L8004
+- `tournamentLivePoint(matchKey, side, target)` — L8009
+- `tournamentUndoPoint(matchKey, target)` — L8018
+- `updateTournamentLiveDisplay(matchKey, target)` — L8024
+- `finishGroupLiveGame(matchKey, tournamentId, subgroup, fixtur)` — L8042
+- `finishKnockoutLiveGame(matchKey, tournamentId, roundIndex, matc)` — L8051
+- `finishThirdPlaceLiveGame(matchKey, tournamentId)` — L8060
+- `renderLiveScoreControls(matchKey, target, finishCallExpr, nameA,)` — L8069
+- `applyTheme(theme)` — L8162
 <!-- AUTOGEN:FRONTEND END -->
 
 ---
