@@ -255,6 +255,36 @@
 
 ## Done
 
+- ✅ 2026-08-20 — **Non-member attendance-vs-fees tracking + collapsible Finance sections
+  (Owner-requested).**
+  (1) **Non-members: days attended vs. fees collected, with expected/pending.** The existing
+  Insights "walk-in conversion" table (guest sessions + fees paid) had no way to answer "did they
+  actually pay for every day they showed up" - `insights()` now cross-references each guest's match
+  log attendance (`active_days`, the same source `cost_rows` already uses for members) against their
+  walk-in fee records. New optional club-wide **default walk-in fee** setting (Finance settings card,
+  `default_walkin_fee` on the shared `settings` record) drives an **expected** figure
+  (`days_attended × fee`) and a **pending** figure (`expected − fees_paid`) per guest; left unset, the
+  table still shows days-attended/sessions/fees-collected with no guessed rupee amount. A guest
+  entered as a free-text name (never linked to a roster player) can't be attendance-matched against
+  the match log (matches only ever reference player_id) - their days-attended column shows "-",
+  unchanged otherwise. Retitled the section "🎯 Non-members: attendance, fees & conversion" to make
+  clear it now covers this, not just conversion. Verified with a fixture (2 match-log days, 1 walk-in
+  fee record, ₹80 default fee → expected ₹160, pending ₹80) and a settings round-trip test (set,
+  partial-update preserves it, explicit clear).
+  (2) **Collapsible Finance sections.** Generalized Stats' existing `makeStatsCollapsible` (tap a
+  card's heading to expand/collapse) into `makeCardsCollapsible(containerId)` and reused it for
+  `#finance-content` via `makeFinanceCollapsible()`, called on both finance-unlock paths. Only the
+  unlocked ledger cards (Monthly settlement, Expenses, Memberships, Walk-ins, Insights, Finance
+  settings) collapse; the lock/unlock card and the always-visible "My dues" card sit outside
+  `#finance-content` and are deliberately left as-is, since they're the small single-glance entry
+  points, not long scrollable lists like Stats' cards.
+  Files: `backend/lambdas/finance/index.py` (1), `frontend/index.html` (1 settings field, no other
+  markup changes needed for 2 - collapsibility is pure JS), `frontend/js/app.js` (1, 2).
+  **Not built this round:** the match-timing/slot-mismatch and match-count-vs-points-density anomaly
+  metrics the owner also raised - explicitly flagged by them as speculative/secondary ("just as a
+  metric," "we can have this as a secondary"), and genuinely under-specified (grace-period threshold,
+  what counts as a mismatch, whether entry timestamp vs. actual play time is even a reliable enough
+  signal to act on). Asked the owner whether/how they want it scoped before building it.
 - ✅ 2026-08-20 — **Match edit/delete: real Cognito auth (was code-only) + relief double-counting
   fix in My Dues + paid amount shown + match-count-per-group metric (all Owner-raised).**
   (1) **`PUT`/`DELETE /matches/{match_id}` moved off the shared confirmation code onto real auth**
