@@ -72,6 +72,25 @@ DEFAULT_GROUP_NAME = 'Club (default)'
 GROUP_SLOT = '(whole group)'   # sentinel slot for slot-less, group-wide records
 _default_group_id_cache = None
 
+
+def _scan_all(table, **kw):
+    """Full-table scan that follows LastEvaluatedKey - a bare .scan() returns
+    only the first 1 MB page (KNOWN_ISSUES #15). This lambda's tables
+    (finance records, groups, matches) all grow unbounded over the club's
+    life, so silently truncating here would mean settlement math, group
+    lookups, and match-log attendance quietly go wrong past the boundary
+    with no error - worse than a crash. Copied from matches/players lambdas
+    (KNOWN_ISSUES #6 - not shared, keep every copy in sync)."""
+    items, last = [], None
+    while True:
+        if last:
+            kw['ExclusiveStartKey'] = last
+        resp = table.scan(**kw)
+        items.extend(resp.get('Items', []))
+        last = resp.get('LastEvaluatedKey')
+        if not last:
+            return items
+
 # Both secrets arrive as environment variables set by CloudFormation
 # parameters (NoEcho), which CI passes in from GitHub repository secrets.
 # Rotating either = change the GitHub secret and re-run the deploy.
@@ -138,7 +157,7 @@ def _default_group_id():
         return _default_group_id_cache
     if not groups_table:
         return None
-    for g in groups_table.scan().get('Items', []):
+    for g in _scan_all(groups_table):
         if g.get('group_name') == DEFAULT_GROUP_NAME:
             _default_group_id_cache = g.get('group_id')
             return _default_group_id_cache
@@ -227,7 +246,7 @@ def _has_any_group_finance(claims):
     pid = claims.get('custom:player_id')
     if not pid or not groups_table:
         return False
-    for g in groups_table.scan().get('Items', []):
+    for g in _scan_all(groups_table):
         if g.get('roles', {}).get(pid) in ('owner', 'admin'):
             return True
         if (g.get('finance_roles') or {}).get(pid) in FINANCE_LEVELS:
@@ -420,7 +439,7 @@ def handler(event, context):
 # ---------- helpers ----------
 
 def _scan_type(record_type, group_id=None):
-    items = finance_table.scan().get('Items', [])
+    items = _scan_all(finance_table)
     items = [i for i in items if i.get('record_type') == record_type]
     if group_id is not None:
         # Records stamped with a different group are invisible to this group.
@@ -1291,7 +1310,7 @@ def insights(group_id=None):
 
     memberships = _scan_type('membership', group_id)
     walkins = _scan_type('walkin', group_id)
-    matches = matches_table.scan().get('Items', [])
+    matches = _scan_all(matches_table)
     settlement = _settlement_rows(group_id)
     group = {}
     if groups_table and group_id:

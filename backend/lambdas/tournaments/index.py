@@ -37,6 +37,25 @@ groups_table = dynamodb.Table(os.environ['GROUPS_TABLE'])
 players_table = dynamodb.Table(os.environ['PLAYERS_TABLE'])
 matches_table = dynamodb.Table(os.environ['MATCHES_TABLE'])
 
+
+def _scan_all(table, **kw):
+    """Full-table scan that follows LastEvaluatedKey - a bare .scan() returns
+    only the first 1 MB page (KNOWN_ISSUES #15). Every scan in this file
+    reads matches and/or players to compute or recompute ratings/results -
+    a silently truncated page here means wrong tournament math with no
+    error, not a crash. Copied from matches/players lambdas (KNOWN_ISSUES
+    #6 - not shared, keep every copy in sync)."""
+    items, last = [], None
+    while True:
+        if last:
+            kw['ExclusiveStartKey'] = last
+        resp = table.scan(**kw)
+        items.extend(resp.get('Items', []))
+        last = resp.get('LastEvaluatedKey')
+        if not last:
+            return items
+
+
 K_FACTOR = 32
 COMEBACK_BONUS_THRESHOLD = 5   # minimum deficit overcome to count as a genuine comeback
 COMEBACK_BONUS_PER_POINT = 0.3
@@ -408,7 +427,7 @@ def _bye_match(entity):
 def list_tournaments(event):
     params = event.get('queryStringParameters') or {}
     group_id = params.get('group_id')
-    items = tournaments_table.scan().get('Items', [])
+    items = _scan_all(tournaments_table)
     if group_id:
         items = [i for i in items if i.get('group_id') == group_id]
     result = [
@@ -446,11 +465,11 @@ def recompute_all_ratings():
     everyone to 1000 and replay every remaining match in chronological
     order, recomputing from scratch - including replaying each pairing's
     K-factor exactly as it would have been at that point in time."""
-    players = players_table.scan().get('Items', [])
+    players = _scan_all(players_table)
     current_ratings = {p['player_id']: 1000.0 for p in players}
     pairing_counts = {}  # frozenset({p1,p2}) -> matches played together so far
 
-    matches = matches_table.scan().get('Items', [])
+    matches = _scan_all(matches_table)
     matches.sort(key=lambda m: m.get('date', ''))
 
     for m in matches:
@@ -530,7 +549,7 @@ def delete_tournament(tournament_id, event):
     if not existing:
         return _response(404, {'error': 'tournament not found'})
 
-    related_matches = matches_table.scan().get('Items', [])
+    related_matches = _scan_all(matches_table)
     deleted_match_count = 0
     for m in related_matches:
         if m.get('tournament_id') == tournament_id:
@@ -879,7 +898,7 @@ def get_pairing_count(team_ids):
         return 0
     pair_key = frozenset(team_ids)
     count = 0
-    items = matches_table.scan().get('Items', [])
+    items = _scan_all(matches_table)
     for m in items:
         if m.get('match_type') != 'doubles':
             continue

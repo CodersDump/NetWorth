@@ -44,6 +44,25 @@ jobs:
       - name: Check out repo
         uses: actions/checkout@v4
 
+      - name: Guard against a destructive frontend sync
+        # The website bucket also holds user-uploaded cosmetics under
+        # uploads/ (KNOWN_ISSUES #9); a sync with the destructive removal
+        # flag would silently wipe every one of them, which is exactly why
+        # every deploy step below uses a plain copy instead. This step fails
+        # the run BEFORE any deploy step executes if a future edit (here or
+        # in deploy-staging.yml) reintroduces that combination anywhere in
+        # .github/workflows/. The two search terms are built from
+        # concatenated parts (not written as one literal token) so this
+        # guard's own source doesn't trip its own check.
+        run: |
+          SYNC_TERM="s3"" sync"
+          DEL_FLAG="--"$(printf 'delete')
+          if grep -rn "$SYNC_TERM" .github/workflows/*.yml | grep -F -- "$DEL_FLAG"; then
+            echo "::error::A workflow file combines an s3 sync with the destructive removal flag - this bucket also holds user uploads (KNOWN_ISSUES #9). Use a plain 'aws s3 cp' instead."
+            exit 1
+          fi
+          echo "OK: no destructive frontend sync in .github/workflows/"
+
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:

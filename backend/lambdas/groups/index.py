@@ -50,6 +50,24 @@ players_table = dynamodb.Table(os.environ['PLAYERS_TABLE'])
 CONFIRMATION_CODE = os.environ['CONFIRMATION_CODE']  # supplied at deploy time via GitHub Secrets -> CFN parameter, never stored in the repo
 
 
+def _scan_all(table, **kw):
+    """Full-table scan that follows LastEvaluatedKey - a bare .scan() returns
+    only the first 1 MB page (KNOWN_ISSUES #15). Both this lambda's tables
+    grow unbounded (players, groups), so a truncated scan would silently
+    drop players/groups from membership checks and roster lookups rather
+    than erroring. Copied from matches/players lambdas (KNOWN_ISSUES #6 -
+    not shared, keep every copy in sync)."""
+    items, last = [], None
+    while True:
+        if last:
+            kw['ExclusiveStartKey'] = last
+        resp = table.scan(**kw)
+        items.extend(resp.get('Items', []))
+        last = resp.get('LastEvaluatedKey')
+        if not last:
+            return items
+
+
 def handler(event, context):
     try:
         method = event.get('httpMethod')
@@ -202,7 +220,7 @@ def register_and_join(event):
     if not name:
         return _response(400, {'error': 'name is required'})
 
-    existing_players = players_table.scan().get('Items', [])
+    existing_players = _scan_all(players_table)
     existing_nicknames = {p.get('nickname', '').strip().lower() for p in existing_players if p.get('nickname')}
 
     nickname = sanitize_nickname(nickname) if nickname else ''
@@ -287,7 +305,7 @@ def create_group_enforced(event):
     # One group free per person; a second+ needs an extra_group perk bought
     # from the store. SuperAdmins are exempt (they manage the club).
     if creator_pid and not _is_super_admin(claims):
-        all_groups = groups_table.scan().get('Items', [])
+        all_groups = _scan_all(groups_table)
         owned_count = sum(1 for g in all_groups
                           if (g.get('roles') or {}).get(creator_pid) == 'owner'
                           or g.get('creator_player_id') == creator_pid)
@@ -335,7 +353,7 @@ def visible_players_for_caller(event):
     if not claims:
         return _response(403, {'error': 'log in to see visible players'})
 
-    all_players = players_table.scan().get('Items', [])
+    all_players = _scan_all(players_table)
     # The players table also holds reserved config rows (__app_settings__,
     # __store_catalog__) that aren't players and have no `name`. GET /players
     # filters these; this route did not - so a SuperAdmin (who gets every
@@ -351,7 +369,7 @@ def visible_players_for_caller(event):
         if not caller_player_id:
             visible = []
         else:
-            groups = groups_table.scan().get('Items', [])
+            groups = _scan_all(groups_table)
             visible_ids = {caller_player_id}
             for g in groups:
                 members = g.get('member_ids', [])
@@ -410,7 +428,7 @@ def create_group(event):
 
 
 def list_groups():
-    items = groups_table.scan().get('Items', [])
+    items = _scan_all(groups_table)
     result = [
         {'group_id': i['group_id'], 'group_name': i['group_name'],
          'member_count': len(i.get('member_ids', [])),

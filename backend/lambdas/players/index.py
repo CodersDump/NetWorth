@@ -332,7 +332,7 @@ def create_claim_request(event):
         return _response(400, {'error': 'this player is already linked to an account'})
 
     email = claims.get('email')
-    existing = claim_requests_table.scan().get('Items', [])
+    existing = _scan_all(claim_requests_table)
     if any(r.get('status') == 'pending' and r.get('requester_email') == email for r in existing):
         return _response(400, {'error': 'you already have a request waiting for approval'})
 
@@ -387,7 +387,7 @@ def _caller_owned_group_ids(claims):
     if not pid:
         return set()
     owned = set()
-    for g in groups_table.scan().get('Items', []):
+    for g in _scan_all(groups_table):
         if g.get('roles', {}).get(pid) in ('owner', 'admin'):
             owned.add(g.get('group_id'))
     return owned
@@ -397,7 +397,7 @@ def _player_group_ids(player_id):
     """Every group_id whose roles map contains this player."""
     if not groups_table or not player_id:
         return set()
-    return {g.get('group_id') for g in groups_table.scan().get('Items', [])
+    return {g.get('group_id') for g in _scan_all(groups_table)
             if player_id in (g.get('roles', {}) or {})}
 
 
@@ -621,7 +621,7 @@ def list_claim_requests(event):
     owned = set() if is_super else _caller_owned_group_ids(claims)
     if not is_super and not owned:
         return _response(403, {'error': 'only a SuperAdmin or a group owner can review requests'})
-    items = claim_requests_table.scan().get('Items', []) if claim_requests_table else []
+    items = _scan_all(claim_requests_table) if claim_requests_table else []
     items.sort(key=lambda r: r.get('created_at', ''), reverse=True)
     if not is_super:
         # A group owner sees only the request types they may act on, and only
@@ -680,7 +680,7 @@ def create_action_request(event):
     if not player:
         return _response(404, {'error': 'player not found'})
 
-    existing = claim_requests_table.scan().get('Items', [])
+    existing = _scan_all(claim_requests_table)
     if any(r.get('status') == 'pending' and r.get('type') == 'delete_player'
            and r.get('player_id') == player_id for r in existing):
         return _response(400, {'error': 'a deletion request for this player is already waiting'})
@@ -762,7 +762,7 @@ def _create_new_profile_request(claims, body):
         return _response(200, {'player_id': player_id, 'name': name, 'nickname': nickname, 'linked': True})
 
     # Default guarded path: file a request for admin approval.
-    pending = claim_requests_table.scan().get('Items', [])
+    pending = _scan_all(claim_requests_table)
     if any(r.get('status') == 'pending' and r.get('requester_email') == claims.get('email') for r in pending):
         return _response(400, {'error': 'you already have a request waiting for approval'})
 
@@ -989,7 +989,7 @@ def _create_edit_name_request(claims, body):
     if any((p.get('nickname') or '').strip().lower() == nickname for p in others):
         return _response(400, {'error': f'nickname "{nickname}" is already taken'})
 
-    pending = claim_requests_table.scan().get('Items', [])
+    pending = _scan_all(claim_requests_table)
     if any(r.get('status') == 'pending' and r.get('type') == 'edit_own_name'
            and r.get('player_id') == player_id for r in pending):
         return _response(400, {'error': 'you already have a name change waiting for approval'})
@@ -1102,7 +1102,7 @@ def _create_match_request(claims, body, action_type):
             return _response(400, {'error': 'valid new scores are required for an edit'})
 
     # One pending request per match is enough - collapse duplicates.
-    pending = claim_requests_table.scan().get('Items', [])
+    pending = _scan_all(claim_requests_table)
     if any(r.get('status') == 'pending' and r.get('type') == action_type
            and r.get('match_id') == match_id for r in pending):
         return _response(400, {'error': 'a request for this match is already waiting'})
@@ -1143,7 +1143,7 @@ def _create_finance_access_request(claims, body):
         current = current or 'none'
     if FINANCE_LEVELS.get(current, 0) >= FINANCE_LEVELS[requested]:
         return _response(400, {'error': f'you already have {current} access'})
-    pending = claim_requests_table.scan().get('Items', [])
+    pending = _scan_all(claim_requests_table)
     if any(r.get('status') == 'pending' and r.get('type') == 'finance_access'
            and r.get('player_id') == pid and r.get('group_id') == group_id for r in pending):
         return _response(400, {'error': 'your finance access request is already waiting'})

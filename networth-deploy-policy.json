@@ -140,7 +140,7 @@
                 "events:UntagResource",
                 "events:ListTagsForResource"
             ],
-            "Resource": "arn:aws:events:*:593579469110:rule/networth-*"
+            "Resource": "arn:aws:events:*:*:rule/networth-*"
         },
         {
             "Sid": "CognitoAccess",
