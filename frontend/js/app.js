@@ -5373,12 +5373,27 @@ let userPool = null;
       }
     }
 
+    // Stage 4c: a view-only grant is slot-scoped server-side (list_records /
+    // summary only return their assigned slot(s) + the group-wide bucket).
+    // Surface that here so a scoped member understands why the ledger looks
+    // shorter than the whole club's, instead of assuming something's broken.
+    function updateFinanceScopeNote(scopedTo) {
+      const note = document.getElementById('finance-scope-note');
+      if (!note) return;
+      if (!scopedTo) { note.style.display = 'none'; note.textContent = ''; return; }
+      const named = scopedTo.filter(s => s !== '(whole group)');
+      const label = named.length ? named.join(', ') : 'the whole-group items only';
+      note.textContent = `You have view-only access, scoped to your slot: showing ${label} (plus whole-group items). Ask an owner for full access to see everything.`;
+      note.style.display = '';
+    }
+
     async function loadFinanceSummary() {
       const el = document.getElementById('finance-summary-result');
       el.textContent = 'Loading...';
       const res = await fetch(`${financeBaseUrl()}/summary?${finQS()}`, { headers: getAuthHeaders() });
       const data = await res.json();
       if (!res.ok) { el.textContent = `Error: ${data.error}`; return; }
+      updateFinanceScopeNote(data.scoped_to || null);
       if (!data.summary.length) { el.textContent = 'No finance data yet.'; return; }
       let html = '<table><tr><th>Month</th><th>Slot</th><th>Estimated</th><th>Actual</th><th>Extra collected</th><th>Members</th><th>Per head</th><th>Residual / head</th><th>Status</th></tr>';
       data.summary.forEach(r => {

@@ -355,11 +355,14 @@ def create_claim_request(event):
 
 # Request types a group owner/admin may decide for their OWN group's members.
 # Deliberately narrow: destructive/global actions (delete_player, match_edit,
-# match_delete) and finance_access stay SuperAdmin-only. finance_access is
-# excluded on purpose - finance roles are still club-GLOBAL, so a group owner
-# granting one would hand access across every group; that waits for true
-# group-scoped finance (see docs/BACKLOG.md). new_profile carries no group, so
-# it also can't be owner-scoped and stays SuperAdmin-only.
+# match_delete) stay SuperAdmin-only. finance_access WAS SuperAdmin-only
+# (finance roles used to be club-GLOBAL, so an owner granting one would hand
+# access across every group) - now that finance is group-scoped (BACKLOG
+# "Group-scoped finance", Stages 2-5 done), a finance_access request always
+# carries a group_id and _owner_may_decide below requires the caller to own
+# THAT group, so it can't leak into groups they don't run. new_profile
+# carries no group, so it still can't be owner-scoped and stays
+# SuperAdmin-only.
 OWNER_DECIDABLE_TYPES = {'claim', 'edit_own_name', 'finance_access'}
 
 

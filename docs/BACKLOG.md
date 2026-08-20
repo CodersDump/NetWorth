@@ -11,13 +11,17 @@
 
 ## Now / high priority
 
-- `[feat] M` **Finance approval for group owners — blocked on group-scoped finance.** Owners can
-  now approve claim/rename requests for their group (done 2026-07-31), but NOT finance-access:
-  finance roles are still club-**global**, so an owner granting one would hand access across every
-  group. To let owners approve finance for their members, finance must first become group-scoped
-  (below). Then add `finance_access` to `OWNER_DECIDABLE_TYPES` and un-hide the Finance-access panel
-  in `updateReviewTabScope`. (Owner request 2026-07-31.)
-- `[feat] L` **Group-scoped finance — staged rollout (in progress).** Decided design: every finance
+- `[feat] M` **Finance approval for group owners — DONE (verified 2026-08-19).** This entry said
+  "blocked on group-scoped finance" but the blocker was cleared during the Stage 2/3 work below and
+  the doc was never updated to say so. Verified end-to-end this session: `finance_access` is in
+  `OWNER_DECIDABLE_TYPES`, `_owner_may_decide` group-scopes it via the request's `group_id`, requests
+  render in the same `#settings-requests-list` the claim/rename panel uses (so `updateReviewTabScope`
+  already showed them to owners — there was never a separate hidden "Finance-access panel" to
+  un-hide), and the owner-facing per-member role selector (`setGroupFinanceRole`) is live in the group
+  detail view gated on `canManageGroup`, not SuperAdmin-only. No code change needed here, just this
+  correction. (Owner request 2026-07-31.)
+- `[feat] L` **Group-scoped finance — staged rollout (all stages done, only the destructive cut-over
+  left).** Decided design: every finance
   record belongs to exactly one group (fully separate ledgers); the group **owner has full finance**
   for their group, others get a **per-group** finance role; existing records migrate under a new
   **"Club (default)"** group; and finance moves **off the shared view-key** onto Cognito group-role
@@ -36,21 +40,21 @@
     `GROUPS_TABLE` env to the finance function. Verified with an access-matrix unit test.
     **Stage 2b (still to do):** a set-per-member-finance-role endpoint in the groups lambda +
     `finance_roles` seeded on group creation — folded into Stage 3 where the UI to manage it lives.
-  - **Stage 3 — frontend + owner approval (DONE 2026-07-31, one caveat).** Finance tab has a **group
-    selector** (`populateFinanceGroups`, `finance_group_select`); `currentFinanceGroupId` is threaded
-    through `finQS`/`finPost`, and any logged-in user now routes through `/finance-secure` so claims
-    reach the Lambda. Removed the finance Lambda's coarse global gate (was blocking group owners) —
-    access is per-group per-method. Broadened the shared-key handout (`_has_any_group_finance`) so
-    owners can unlock during transition. **Request→approve flow (complete):** members request finance
-    access scoped to their group (`group_id` on the action-request); owners see & approve in the
-    Reviews requests panel (`finance_access` added to `OWNER_DECIDABLE_TYPES`, `_owner_may_decide`
-    made group-precise); approval sets the **per-group** role (`_approve_finance_access` writes the
-    group's `finance_roles` map). **Direct-set flow:** groups lambda `set_finance_role` +
-    `/group-finance-role/{group_id}/{player_id}` route (template) + `setGroupFinanceRole` frontend
-    helper — all in and tested. **Caveat / follow-up:** the owner-facing *panel* to browse group
-    members and set their roles inline isn't surfaced yet (the existing role panel stays
-    SuperAdmin-global to avoid regression); owners grant via the request→approve flow today, and the
-    direct-set endpoint is ready to wire into an owner panel next. Needs hands-on staging test.
+  - **Stage 3 — frontend + owner approval (DONE 2026-07-31; caveat closed 2026-08-19).** Finance tab
+    has a **group selector** (`populateFinanceGroups`, `finance_group_select`); `currentFinanceGroupId`
+    is threaded through `finQS`/`finPost`, and any logged-in user now routes through `/finance-secure`
+    so claims reach the Lambda. Removed the finance Lambda's coarse global gate (was blocking group
+    owners) — access is per-group per-method. Broadened the shared-key handout
+    (`_has_any_group_finance`) so owners can unlock during transition. **Request→approve flow
+    (complete):** members request finance access scoped to their group (`group_id` on the
+    action-request); owners see & approve in the Reviews requests panel (`finance_access` added to
+    `OWNER_DECIDABLE_TYPES`, `_owner_may_decide` made group-precise); approval sets the **per-group**
+    role (`_approve_finance_access` writes the group's `finance_roles` map). **Direct-set flow:**
+    groups lambda `set_finance_role` + `/group-finance-role/{group_id}/{player_id}` route (template) +
+    `setGroupFinanceRole` frontend helper — all in and tested. **Owner panel (confirmed live
+    2026-08-19):** the group detail view already renders a per-member finance-role `<select>`
+    (none/view/write/delete) for every plain member, gated on `canManageGroup` — not SuperAdmin-only.
+    The "still to surface" caveat that used to live here was stale; nothing left to build.
   - **Stage 4 — per-group time slots (DONE 2026-07-31).** Groups store `slots` + `slot_members`
     (owner/admin-set via the new Cognito route `PUT /group-slots/{group_id}` → `set_group_slots`;
     validated: only real members, only existing slots). `get_group`/`list_groups` now return them.
@@ -61,10 +65,18 @@
     and what's owed back (`residual_per_head` - the walk-in-share/relief refund), plus net. Available
     to any group member with no view key or finance role; expenses and others' numbers never exposed.
     Frontend "My dues" card on the Finance tab (`loadMyDues`), visible to any member. Math unit-tested.
-  - **Stage 4c — slot-scoped FULL-ledger view (still to do).** A view-access member assigned to a slot
-    should see only that slot's expenses/walk-ins in the main finance tab (not just their own dues).
-    Needs slot-filtering threaded through `list_records`/`summary` for non-owner view members. The
-    member's own dues are already slot-safe via 4b; this is the remaining nice-to-have.
+  - **Stage 4c — slot-scoped FULL-ledger view (DONE 2026-08-19).** A plain `view`-level grant (not
+    write/delete, not owner/admin — those stay unrestricted so they can manage the whole ledger) is now
+    narrowed to their assigned slot(s) + the group-wide bucket in the main finance tab, not just their
+    own dues. Backend: new `_view_scope_slots` (finance lambda) reads the group's `slot_members` map and
+    returns `None` (unrestricted) or a set of allowed slot keys; threaded through `list_records` (all
+    three record types — expenses, walk-ins, **and** membership rosters, so a slot-scoped viewer can't
+    see who's enrolled in a slot that isn't theirs) and `summary`. Both responses include `scoped_to`
+    when restricted. Extracted the previously-nested `_slot_key` helper to module scope so both
+    `_settlement_rows` and the new scoping share one normalizer (avoids yet another KNOWN_ISSUES #6
+    duplicate). Frontend: a `finance-scope-note` banner on the Finance tab explains why the ledger looks
+    shorter than the whole club's when scoped. Verified with a standalone access-matrix script (view
+    sees own slot + group-wide only; write/delete/owner/admin see everything unrestricted).
   - **Stage 5 — co-owners, ownership transfer, per-group payee (DONE 2026-07-31).** Ownership
     transfer (owner-only) via `transfer_to` on `PUT /group-slots/{group_id}` — old owner demotes to
     regular member (view access). Per-group `finance_payee` ({player_id, upi_id, upi_name}, must be a
@@ -88,12 +100,6 @@
   - **Final — cut-over (destructive, LAST).** Retire the shared `FINANCE_VIEW_KEY` + the legacy open
     `/finance/{proxy+}` route once Stages 2–3 are verified in prod. Route/template change + a
     KNOWN_ISSUES update. Do NOT do this before the new path is proven.
-
-- `[feat] L` **Group-scoped finance.** Today there's one shared club finance (one view-key, one
-  global `finance_role` per player). Make finance per-group so each group owner manages their own.
-  Prereq for the finance-approval item above. (Was in Later; promoted because two requests depend
-  on it.)
-
 
 - `[security] M` Retire or lock down the legacy open `/finance/{proxy+}` route once nothing
   external depends on it. (KNOWN_ISSUES #1)
