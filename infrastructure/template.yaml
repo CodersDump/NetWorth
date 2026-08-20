@@ -2142,7 +2142,12 @@ Resources:
       RestApiId: !Ref RestApi
       ResourceId: !Ref MatchesIdResource
       HttpMethod: PUT
-      AuthorizationType: NONE
+      # Was NONE with only a shared CONFIRMATION_CODE gating it in-code (no
+      # Cognito identity at all - open to anyone who knew/guessed the code).
+      # Now real auth: Cognito identity + _caller_may_edit_match's
+      # SuperAdmin-or-group-owner/admin check inside update_match (2026-08-20).
+      AuthorizationType: COGNITO_USER_POOLS
+      AuthorizerId: !Ref CognitoAuthorizer
       Integration:
         Type: AWS_PROXY
         IntegrationHttpMethod: POST
@@ -2154,7 +2159,9 @@ Resources:
       RestApiId: !Ref RestApi
       ResourceId: !Ref MatchesIdResource
       HttpMethod: DELETE
-      AuthorizationType: NONE
+      # Same change as the PUT method above - see that comment.
+      AuthorizationType: COGNITO_USER_POOLS
+      AuthorizerId: !Ref CognitoAuthorizer
       Integration:
         Type: AWS_PROXY
         IntegrationHttpMethod: POST

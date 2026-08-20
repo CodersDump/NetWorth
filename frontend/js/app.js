@@ -800,9 +800,24 @@ let userPool = null;
     async function loadGroupMembers(groupId) {
       const membersEl = document.getElementById('group-members');
       if (!groupId) { membersEl.innerHTML = ''; currentGroupMemberIds = new Set(); currentGroupRoles = {}; renderAddPlayersChecklist(); return; }
-      const res = await fetch(`${API_BASE_URL}/groups/${groupId}`);
+      // Matches-logged count rides alongside the group fetch - same panel
+      // serves both the SuperAdmin's "pick any group" view and an owner's
+      // own group detail (gated further down via iCanManage), so adding it
+      // here covers both asks in one place (Owner-requested 2026-08-20: a
+      // per-group matches-logged count, visible to admin and to an
+      // owner/co-owner for groups they manage). One extra lazy call, only
+      // when this panel is actually opened - not at boot.
+      const [res, countsRes] = await Promise.all([
+        fetch(`${API_BASE_URL}/groups/${groupId}`),
+        fetch(`${API_BASE_URL}/matches?counts_by_group=true`)
+      ]);
       const data = await res.json();
       if (!res.ok) { membersEl.textContent = data.error; return; }
+      const countsData = countsRes.ok ? await countsRes.json() : null;
+      const matchesLogged = countsData ? (countsData.group_counts?.[groupId] || 0) : null;
+      const matchesLoggedHtml = matchesLogged !== null
+        ? `<p style="font-size:12px; color:var(--text-secondary); margin:0 0 8px;">Matches logged in this group: <strong>${matchesLogged}</strong></p>`
+        : '';
 
       currentGroupMemberIds = new Set((data.members || []).map(m => m.player_id));
       currentGroupRoles = data.roles || {};
@@ -814,13 +829,13 @@ let userPool = null;
       if (deleteBtn) deleteBtn.style.display = (!isLoggedIn() || iCanManage) ? 'block' : 'none';
 
       if (!data.members.length) {
-        membersEl.innerHTML = '<p style="font-size:13px;color:#555;">No members yet.</p>';
+        membersEl.innerHTML = matchesLoggedHtml + '<p style="font-size:13px;color:#555;">No members yet.</p>';
         return;
       }
       const sortedMembers = [...data.members].sort((a, b) => a.name.localeCompare(b.name));
       const financeRoles = data.finance_roles || {};
       const myId = myPlayerId();
-      membersEl.innerHTML = '<strong>Members:</strong>' + sortedMembers.map(m => {
+      membersEl.innerHTML = matchesLoggedHtml + '<strong>Members:</strong>' + sortedMembers.map(m => {
         // Role control - owner/admin only (mirrors the finance-role select
         // below it). Previously this was a read-only badge with no way to
         // actually change anyone's role, despite the group-detail copy
@@ -2354,7 +2369,6 @@ let userPool = null;
             <div style="flex:1;"><strong style="font-size:13px;">Team B</strong>${pickers(m.team_b, 'nw-tb')}
               <input type="number" class="nw-modal-input nw-sb" value="${m.score_b}" style="margin-top:4px;" placeholder="Score B"></div>
           </div>
-          <input type="text" class="nw-modal-input nw-code" placeholder="Confirmation code" style="margin-top:10px;">
           <div class="nw-modal-actions">
             <button class="nw-modal-btn nw-cancel">Cancel</button>
             <button class="nw-modal-btn nw-primary nw-save">Save &amp; recompute</button>
@@ -2370,17 +2384,16 @@ let userPool = null;
         const team_b = [...overlay.querySelectorAll('.nw-tb')].map(s => s.value);
         const score_a = parseInt(overlay.querySelector('.nw-sa').value, 10);
         const score_b = parseInt(overlay.querySelector('.nw-sb').value, 10);
-        const confirm = overlay.querySelector('.nw-code').value;
         if (new Set([...team_a, ...team_b]).size !== team_a.length + team_b.length) { nwAlert('A player can\'t be on both teams (or picked twice).'); return; }
         if (isNaN(score_a) || isNaN(score_b) || score_a === score_b) { nwAlert('Enter two different scores.'); return; }
-        if (!confirm) { nwAlert('Enter the confirmation code.'); return; }
+        // See deleteMatch's comment: the confirmation-code field is gone
+        // (2026-08-20) in favor of real Cognito auth + a server-side check.
         try {
-          const res = await fetch(`${API_BASE_URL}/matches/${matchId}`, {
+          const { res, error } = await authedFetch(`${API_BASE_URL}/matches/${matchId}`, {
             method: 'PUT', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ team_a, team_b, score_a, score_b, confirm })
+            body: JSON.stringify({ team_a, team_b, score_a, score_b })
           });
-          const data = await res.json();
-          if (!res.ok) { nwAlert('Error: ' + (data.error || 'could not save')); return; }
+          if (!res.ok) { nwAlert('Error: ' + (error || 'could not save')); return; }
           close();
           nwAlert('Match updated. All ratings were recomputed.');
           loadGameLog(); loadPlayers(); bumpMatchesRev();
@@ -2401,23 +2414,23 @@ let userPool = null;
           { new_score_a: parseInt(newScoreA, 10), new_score_b: parseInt(newScoreB, 10) });
       }
 
-      const confirmText = await nwPrompt('Enter the confirmation code to save this correction. Note: this will recompute every player\'s rating from the corrected history.');
-      if (!confirmText) return;
+      if (!await nwConfirm('Save this correction? This will recompute every player\'s rating from the corrected history.')) return;
 
+      // See deleteMatch's comment: the confirmation-code prompt is gone
+      // (2026-08-20) in favor of real Cognito auth + a server-side check.
       try {
-        const res = await fetch(`${API_BASE_URL}/matches/${matchId}`, {
+        const { res, error } = await authedFetch(`${API_BASE_URL}/matches/${matchId}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ score_a: parseInt(newScoreA, 10), score_b: parseInt(newScoreB, 10), confirm: confirmText })
+          body: JSON.stringify({ score_a: parseInt(newScoreA, 10), score_b: parseInt(newScoreB, 10) })
         });
-        const data = await res.json();
         if (res.ok) {
           nwAlert('Score corrected. All ratings have been recomputed.');
           loadGameLog();
           loadPlayers();
           bumpMatchesRev();
         } else {
-          nwAlert(`Error: ${data.error}`);
+          nwAlert(`Error: ${error}`);
         }
       } catch (err) {
         nwAlert(`Request failed: ${err.message}`);
@@ -2433,23 +2446,23 @@ let userPool = null;
 
       if (!await nwConfirm('Permanently delete this match? This cannot be undone, and every player\'s rating will be recomputed from the remaining history.')) return;
 
-      const confirmText = await nwPrompt('Enter the confirmation code to permanently delete this match.');
-      if (!confirmText) return;
-
+      // The confirmation-code prompt is gone (2026-08-20) - this route now
+      // requires a real Cognito login + a server-side SuperAdmin-or-
+      // group-owner/admin check (_caller_may_edit_match, matches lambda),
+      // which is stronger than the old shared code ever was, so the
+      // nwConfirm above is the only "are you sure" needed.
       try {
-        const res = await fetch(`${API_BASE_URL}/matches/${matchId}`, {
+        const { res, error } = await authedFetch(`${API_BASE_URL}/matches/${matchId}`, {
           method: 'DELETE',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ confirm: confirmText })
+          headers: { 'Content-Type': 'application/json' }
         });
-        const data = await res.json();
         if (res.ok) {
           nwAlert('Match deleted. All ratings have been recomputed.');
           loadGameLog();
           loadPlayers();
           bumpMatchesRev();
         } else {
-          nwAlert(`Error: ${data.error}`);
+          nwAlert(`Error: ${error}`);
         }
       } catch (err) {
         nwAlert(`Request failed: ${err.message}`);
@@ -5319,8 +5332,13 @@ let userPool = null;
         if (!lines.length) { el.innerHTML = '<p style="color:var(--text-secondary);">No dues on record for you in this group yet.</p>'; return; }
         let html = '<table><tr><th>Month</th><th>Slot</th><th>You owe</th><th>Owed back</th></tr>';
         lines.forEach(l => {
+          // "paid" alone didn't say how much - show the confirmed amount
+          // too, not just the status (Owner-requested 2026-08-20).
+          const paidCell = l.you_paid
+            ? `<span style="color:var(--court,#2fa968);">paid \u20b9${l.you_paid_amount ?? ''}</span>`
+            : '\u20b9' + l.you_owe;
           html += `<tr><td>${l.month} ${l.year}</td><td>${l.slot}</td>`
-                + `<td>${l.you_paid ? '<span style="color:var(--court,#2fa968);">paid</span>' : '\u20b9' + l.you_owe}</td>`
+                + `<td>${paidCell}</td>`
                 + `<td>${l.owed_back_to_you ? '\u20b9' + l.owed_back_to_you : '-'}</td></tr>`;
         });
         html += '</table>';

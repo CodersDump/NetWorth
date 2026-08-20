@@ -622,7 +622,6 @@ def compute_comeback_bonus(momentum):
     if deficit < COMEBACK_BONUS_THRESHOLD:
         return 0
     return min(deficit * COMEBACK_BONUS_PER_POINT, COMEBACK_BONUS_CAP)
-CONFIRMATION_CODE = os.environ['CONFIRMATION_CODE']  # supplied at deploy time via GitHub Secrets -> CFN parameter, never stored in the repo
 
 
 def _is_valid_completed_game(score_a, score_b, target):
@@ -651,6 +650,38 @@ def _caller_claims(event):
 def _is_super_admin(claims):
     groups = (claims.get('cognito:groups') or '').split(',')
     return 'SuperAdmin' in groups
+
+
+def _caller_may_edit_match(claims, match):
+    """Who may directly edit/delete a match (PUT/DELETE /matches/{id}):
+    SuperAdmin, always; otherwise the caller's linked player must be
+    owner/admin of the match's OWN group - the exact same bar players
+    lambda's OWNER_DECIDABLE_TYPES already applies to match_edit/
+    match_delete REQUESTS, so going direct isn't a lower bar than going
+    through request+approve (it's the same approval, minus the detour). A
+    match with no group_id (ungrouped/one-off) stays SuperAdmin-only, same
+    as an ungrouped request today.
+
+    This replaces what used to be the ONLY gate on these two routes: a
+    shared CONFIRMATION_CODE, checked with no Cognito identity at all
+    (the routes were AuthorizationType: NONE - literally open to anyone on
+    the internet who knew or guessed the code). That code added real
+    friction for the person actually meant to use it (SuperAdmin had to
+    know and type a secret every time) while adding surprisingly little
+    security - the API is public either way. Cognito + a real per-match
+    ownership check is strictly better on both counts: real auth instead of
+    a shared secret, and no code to type. (Owner-asked 2026-08-20: "why are
+    we still needing the code to delete things ... for the match it should
+    be fine right" - it wasn't the deletion itself that needed rethinking,
+    it was this route having no actual authorization underneath the code.)"""
+    if _is_super_admin(claims):
+        return True
+    gid = match.get('group_id')
+    pid = claims.get('custom:player_id')
+    if not gid or not pid or not groups_table:
+        return False
+    group = groups_table.get_item(Key={'group_id': gid}).get('Item') or {}
+    return group.get('roles', {}).get(pid) in ('owner', 'admin')
 
 
 def _can_view_profile(claims, target_player_id):
@@ -968,18 +999,19 @@ def record_match(event):
 
 def update_match(match_id, event):
     """Fix a mis-entered score on an already-recorded standalone match.
-    Requires the confirmation code, same as deletions and renames. Since
-    Elo is path-dependent, changing a score doesn't just affect this one
-    match's own rating delta - it can shift everyone who played after it
-    too - so every edit triggers a full recompute of every player's rating
-    from scratch, replaying the corrected history in order."""
+    Requires SuperAdmin, or owner/admin of the match's own group (see
+    _caller_may_edit_match - replaces the old shared-code check now that
+    this route is Cognito-gated). Since Elo is path-dependent, changing a
+    score doesn't just affect this one match's own rating delta - it can
+    shift everyone who played after it too - so every edit triggers a full
+    recompute of every player's rating from scratch, replaying the
+    corrected history in order."""
     body = json.loads(event.get('body') or '{}')
-    if body.get('confirm') != CONFIRMATION_CODE:
-        return _response(400, {'error': 'confirmation code is missing or incorrect'})
-
     existing = matches_table.get_item(Key={'match_id': match_id}).get('Item')
     if not existing:
         return _response(404, {'error': 'match not found'})
+    if not _caller_may_edit_match(_caller_claims(event), existing):
+        return _response(403, {'error': 'not authorized to edit this match'})
 
     new_score_a = body.get('score_a')
     new_score_b = body.get('score_b')
@@ -1028,17 +1060,16 @@ def update_match(match_id, event):
 def delete_match(match_id, event):
     """Permanently delete a mis-recorded match - e.g. the wrong player was
     selected entirely and a corrected match was recorded separately.
-    Requires the confirmation code, same as score corrections. Since Elo
-    is path-dependent, deleting a match doesn't just undo its own rating
-    delta - it can shift every match that happened after it too - so
-    deletion triggers the same full recompute as a score correction."""
-    body = json.loads(event.get('body') or '{}')
-    if body.get('confirm') != CONFIRMATION_CODE:
-        return _response(400, {'error': 'confirmation code is missing or incorrect'})
-
+    Requires SuperAdmin, or owner/admin of the match's own group (see
+    _caller_may_edit_match). Since Elo is path-dependent, deleting a match
+    doesn't just undo its own rating delta - it can shift every match that
+    happened after it too - so deletion triggers the same full recompute
+    as a score correction."""
     existing = matches_table.get_item(Key={'match_id': match_id}).get('Item')
     if not existing:
         return _response(404, {'error': 'match not found'})
+    if not _caller_may_edit_match(_caller_claims(event), existing):
+        return _response(403, {'error': 'not authorized to delete this match'})
 
     matches_table.delete_item(Key={'match_id': match_id})
     recompute_all_ratings()
@@ -1383,6 +1414,22 @@ def list_matches(event):
             'progress_badges': _scrub_private(compute_progress_badges(items, group_id), private_ids),
             'attendance': _scrub_private(compute_attendance(items, group_id), private_ids),
         })
+    if params.get('counts_by_group'):
+        # How many matches have been logged under each group - a SuperAdmin
+        # sees every group; an owner/admin's own group-detail panel calls
+        # this scoped to just their group(s) via the same group_id filter
+        # every other branch here already supports (Owner-requested
+        # 2026-08-20). One tally over the scan this route already does for
+        # every other query shape - no extra scan added.
+        counts = {}
+        ungrouped = 0
+        for i in items:
+            gid = i.get('group_id')
+            if gid:
+                counts[gid] = counts.get(gid, 0) + 1
+            else:
+                ungrouped += 1
+        return _response(200, {'group_counts': counts, 'ungrouped': ungrouped, 'total': len(items)})
     if params.get('player_season_summary'):
         _pss = params.get('player_season_summary')
         if _pss in private_ids:
