@@ -3032,10 +3032,10 @@ let userPool = null;
         };
         const _weekly = quests.filter(q => (q.scope || 'weekly') !== 'season');
         const _season = quests.filter(q => q.scope === 'season');
-        const _hdr = (t, icon, color) => `<div style="font-weight:700;margin:10px 0 4px;text-transform:uppercase;font-size:12px;letter-spacing:0.04em;color:${color || 'var(--text-secondary,#8a8f8c)'};">${icon || ''} ${escapeHtml(t)}</div>`;
+        const _hdr = (t) => `<div class="card-sub" style="font-weight:600;margin:4px 0 2px;text-transform:uppercase;font-size:12px;letter-spacing:0.03em;">${escapeHtml(t)}</div>`;
         let _html = '';
-        if (_weekly.length) _html += _hdr('This week', '🗓️') + _weekly.map(_renderQuestRow).join('');
-        if (_season.length) _html += _hdr((_season[0].period) || 'Season', '🏆', '#ffd24a') + _season.map(_renderQuestRow).join('');
+        if (_weekly.length) _html += _hdr('This week') + _weekly.map(_renderQuestRow).join('');
+        if (_season.length) _html += _hdr((_season[0].period) || 'Season') + _season.map(_renderQuestRow).join('');
         el.innerHTML = _html || '<p class="card-sub" style="margin:0;">No quests right now.</p>';
       } catch (e) { el.innerHTML = '<p class="card-sub">Could not load quests.</p>'; }
     }
@@ -3401,15 +3401,9 @@ let userPool = null;
         const res = await fetch(`${API_BASE_URL}/events`);
         const data = await res.json();
         const today = new Date().toLocaleDateString('en-CA');
-        const evs = data.events || [];
-        const active = evs.find(e => e.start_date <= today && today <= e.end_date);
-        const soon = evs.filter(e => e.start_date > today).sort((a, b) => a.start_date < b.start_date ? -1 : 1)[0];
-        const daysTo = soon ? Math.ceil((new Date(soon.start_date) - new Date(today)) / 86400000) : 999;
+        const active = (data.events || []).find(e => e.start_date <= today && today <= e.end_date);
         if (active) {
           bar.innerHTML = `🎉 <strong>${escapeHtml(active.name)}</strong> is live — ${active.xp_multiplier}× XP on every match until ${active.end_date}!`;
-          bar.style.display = 'block';
-        } else if (soon && daysTo <= 14) {
-          bar.innerHTML = `🗓️ <strong>${escapeHtml(soon.name)}</strong> — ${soon.xp_multiplier}× XP coming ${soon.start_date}${soon.start_date === soon.end_date ? '' : ' to ' + soon.end_date}`;
           bar.style.display = 'block';
         } else { bar.style.display = 'none'; }
       } catch (_) { bar.style.display = 'none'; }
@@ -5379,12 +5373,27 @@ let userPool = null;
       }
     }
 
+    // Stage 4c: a view-only grant is slot-scoped server-side (list_records /
+    // summary only return their assigned slot(s) + the group-wide bucket).
+    // Surface that here so a scoped member understands why the ledger looks
+    // shorter than the whole club's, instead of assuming something's broken.
+    function updateFinanceScopeNote(scopedTo) {
+      const note = document.getElementById('finance-scope-note');
+      if (!note) return;
+      if (!scopedTo) { note.style.display = 'none'; note.textContent = ''; return; }
+      const named = scopedTo.filter(s => s !== '(whole group)');
+      const label = named.length ? named.join(', ') : 'the whole-group items only';
+      note.textContent = `You have view-only access, scoped to your slot: showing ${label} (plus whole-group items). Ask an owner for full access to see everything.`;
+      note.style.display = '';
+    }
+
     async function loadFinanceSummary() {
       const el = document.getElementById('finance-summary-result');
       el.textContent = 'Loading...';
       const res = await fetch(`${financeBaseUrl()}/summary?${finQS()}`, { headers: getAuthHeaders() });
       const data = await res.json();
       if (!res.ok) { el.textContent = `Error: ${data.error}`; return; }
+      updateFinanceScopeNote(data.scoped_to || null);
       if (!data.summary.length) { el.textContent = 'No finance data yet.'; return; }
       let html = '<table><tr><th>Month</th><th>Slot</th><th>Estimated</th><th>Actual</th><th>Extra collected</th><th>Members</th><th>Per head</th><th>Residual / head</th><th>Status</th></tr>';
       data.summary.forEach(r => {

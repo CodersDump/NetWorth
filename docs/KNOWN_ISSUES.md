@@ -37,12 +37,19 @@ A Cognito account can exist with no linked player. Every write path relies on
 **Safe move:** any new write endpoint must call that gate; forgetting it silently lets stranger
 accounts act.
 
-### 4b. Finance roles are club-GLOBAL, which constrains group-owner delegation  · sev: low (design)
-`finance_role` is a single global level per player, and the finance tab shows one shared club
-finance. So finance approval can't yet be safely delegated to group owners: granting a member finance
-access grants it across every group. This is why `OWNER_DECIDABLE_TYPES` deliberately excludes
-`finance_access` (group owners approve claim/rename only). **Safe move:** don't add `finance_access`
-to owner-decidable types until finance is group-scoped (BACKLOG "Now / high priority").
+### 4b. Legacy global `finance_role` still acts as a floor on the default group  · sev: low (design), RESOLVED 2026-08-19 (superseded)
+Finance used to be club-GLOBAL (one `finance_role` per player), which meant a group owner granting
+finance access would hand it out across every group - so `OWNER_DECIDABLE_TYPES` excluded
+`finance_access`. Finance is now group-scoped (BACKLOG "Group-scoped finance", Stages 2-5): each
+group has its own `finance_roles` map, `finance_access` requests always carry a `group_id`, and
+`_owner_may_decide` requires the caller to own that specific group. `finance_access` is back in
+`OWNER_DECIDABLE_TYPES` and the owner-facing per-member role selector is live in the group detail
+panel (`setGroupFinanceRole`, gated on `canManageGroup`). **What's left:** the legacy global
+`finance_role` on a player record still counts as a floor, but *only on the "Club (default)" group*
+(`_group_finance_level`'s transition floor) - it never leaks into other groups. **Safe move:** when
+granting broad legacy access via `set_finance_access` (SuperAdmin, `/finance-access` POST), remember
+it only ever applies to the default group; use a group's own `finance_roles` map (or the
+request→approve flow) for every other group.
 
 ---
 

@@ -176,6 +176,48 @@ def _group_finance_level(claims, group_id):
     return 0
 
 
+def _slot_key(slot):
+    """Normalize a record's slot for bucketing/comparison: a missing/blank
+    slot (group-wide expense or walk-in) collapses to the GROUP_SLOT
+    sentinel, same as everywhere else that buckets by (month, year, slot)."""
+    return GROUP_SLOT if slot in (None, '', 'None') else str(slot)
+
+
+def _member_assigned_slots(pid, group):
+    """The set of slots (raw, already-normalized strings) a player is
+    assigned to within a group, per that group's slot_members map."""
+    if not pid:
+        return set()
+    slot_members = (group or {}).get('slot_members') or {}
+    return {slot for slot, members in slot_members.items() if pid in (members or [])}
+
+
+def _view_scope_slots(claims, group_id, level):
+    """Stage 4c: a plain 'view'-level grant only sees their own assigned
+    slot(s) in the main ledger (list_records/summary), not the whole
+    group's finances - the group-wide (slot-less) bucket stays visible to
+    everyone since it's a shared cost split across all distinct members
+    regardless of slot. Returns None for unrestricted (sees everything):
+    SuperAdmin, group owner/admin, or anyone with write/delete (those
+    tiers are trusted to manage the whole ledger). Returns a set of
+    allowed slot keys (always including GROUP_SLOT) when restricted.
+    Own-dues-only access (Stage 4b's my-settlement) is unaffected by this -
+    that's a separate, always-own-only route."""
+    if level > FINANCE_LEVELS['view']:
+        return None
+    if _is_super_admin(claims):
+        return None
+    if not groups_table or not group_id:
+        return None
+    pid = claims.get('custom:player_id')
+    group = groups_table.get_item(Key={'group_id': group_id}).get('Item') or {}
+    if pid and group.get('roles', {}).get(pid) in ('owner', 'admin'):
+        return None
+    scope = _member_assigned_slots(pid, group)
+    scope.add(GROUP_SLOT)
+    return scope
+
+
 def _has_any_group_finance(claims):
     """True if the caller has finance access in ANY group (owner/admin, or a
     per-group finance_roles entry). Lets group owners obtain the shared key
@@ -301,6 +343,7 @@ def handler(event, context):
         # identity to gate on, so the key alone keeps the full access it
         # always had on the default group.
         claims_for_role = _caller_claims(event)
+        scope_slots = None
         if claims_for_role:
             lvl = _group_finance_level(claims_for_role, target_group)
             if method == 'GET' and lvl < FINANCE_LEVELS['view']:
@@ -309,9 +352,13 @@ def handler(event, context):
                 return _response(403, {'error': 'you have view-only finance access here - ask an owner for write access'})
             if method == 'DELETE' and lvl < FINANCE_LEVELS['delete']:
                 return _response(403, {'error': 'you need delete access for this - ask an owner'})
+            # Stage 4c: a view-only grant is narrowed to their own slot(s) in
+            # the main ledger (list_records/summary only - other routes are
+            # unaffected).
+            scope_slots = _view_scope_slots(claims_for_role, target_group, lvl)
 
         if parts == ['summary'] and method == 'GET':
-            return summary(target_group)
+            return summary(target_group, scope_slots)
         if parts == ['insights'] and method == 'GET':
             insights._params = params
             return insights(target_group)
@@ -325,7 +372,7 @@ def handler(event, context):
             rtype = kind[:-1] if kind != 'memberships' else 'membership'
             if parts == [kind]:
                 if method == 'GET':
-                    return list_records(rtype, params, target_group)
+                    return list_records(rtype, params, target_group, scope_slots)
                 if method == 'POST':
                     return create_records(rtype, body, target_group)
             if len(parts) == 2 and parts[0] == kind:
@@ -426,8 +473,14 @@ def _member_relief(settlement, memberships, ident, month, year, slot=None):
     return round(relief, 2)
 
 
-def list_records(record_type, params, group_id=None):
+def list_records(record_type, params, group_id=None, scope_slots=None):
     items = _scan_type(record_type, group_id)
+    if scope_slots is not None:
+        # Stage 4c: narrow a view-only caller to their assigned slot(s) +
+        # the group-wide bucket, across all three record types (expenses,
+        # walk-ins, and membership rosters - a slot-scoped viewer shouldn't
+        # see who's enrolled in a slot that isn't theirs either).
+        items = [i for i in items if _slot_key(i.get('slot')) in scope_slots]
     if record_type == 'walkin':
         # Walk-ins carry an ISO date rather than month/year fields, so
         # month/year filters translate to a date prefix.
@@ -459,6 +512,8 @@ def list_records(record_type, params, group_id=None):
         items.sort(key=lambda i: (int(_num(i.get('year'))), MONTHS.index(i['month']) if i.get('month') in MONTHS else 99,
                                    i.get('slot', ''), i.get('display_name', '')))
     resp = {record_type + 's': items}
+    if scope_slots is not None:
+        resp['scoped_to'] = sorted(scope_slots)
     if record_type == 'membership' and params.get('month') and params.get('year') and params.get('slot'):
         settlement = _settlement_rows(group_id)
         row = settlement.get((str(params['month']), int(_num(params['year'])), str(params['slot'])))
@@ -767,10 +822,8 @@ def _settlement_rows(group_id=None):
     # DISTINCT "Yes" members across every slot that month (counted once even if
     # in two slots). It lives in its own (month, year, GROUP_SLOT) bucket whose
     # player_count is set to that distinct count below, so the same per-bucket
-    # math then divides it correctly.
-    def _slot_key(slot):
-        return GROUP_SLOT if slot in (None, '', 'None') else slot
-
+    # math then divides it correctly. (_slot_key is the module-level helper -
+    # also used by list_records for Stage 4c slot-scoped view access.)
     distinct_members = {}  # (month, year) -> set of idents (Yes, any slot)
 
     for e in expenses:
@@ -855,10 +908,15 @@ def _settlement_rows(group_id=None):
     return periods
 
 
-def summary(group_id=None):
+def summary(group_id=None, scope_slots=None):
     rows = list(_settlement_rows(group_id).values())
+    if scope_slots is not None:
+        rows = [r for r in rows if r['slot'] in scope_slots]
     rows.sort(key=lambda r: (r['year'], MONTHS.index(r['month']) if r['month'] in MONTHS else 99, r['slot']))
-    return _response(200, {'summary': rows})
+    resp = {'summary': rows}
+    if scope_slots is not None:
+        resp['scoped_to'] = sorted(scope_slots)
+    return _response(200, resp)
 
 
 # ---- insights: per-member monthly economics + ghosts + conversion ----

@@ -656,6 +656,7 @@
           </label>
           <p class="card-sub" id="finance-group-hint" style="margin:6px 0 0;"></p>
         </div>
+        <p class="card-sub" id="finance-scope-note" style="display:none; margin:0 0 10px;"></p>
         <div class="card">
           <h2>Monthly settlement</h2>
           <p class="card-sub">Per month and slot: estimated vs actual spend, extra collected from walk-ins, and the residual owed back to each member. Same math as the old Excel, retired with honor.</p>
@@ -814,8 +815,8 @@
 
     <div class="tab-panel" id="tab-quests">
       <div class="card">
-        <h2>Quests</h2>
-        <p class="card-sub">Complete these to earn XP, coins, or cosmetics, then claim your reward. Weekly quests reset every Monday; season quests reset when the season changes.</p>
+        <h2>Weekly quests</h2>
+        <p class="card-sub">Complete these before the week resets (Monday). Claim each reward once it's done.</p>
         <div id="quests-list" style="margin-top:12px;"></div>
       </div>
     </div>
@@ -1092,9 +1093,9 @@
         </details>
 
         <details class="review-section">
-          <summary>Quests</summary>
+          <summary>Weekly quests</summary>
           <div style="padding:10px 0;">
-            <p class="card-sub" style="margin:0 0 10px;">Tasks players complete for XP, coins, or a cosmetic. Progress is checked against real match history; players claim when done. Set <strong>Resets</strong> to Weekly (every Monday) or Per season (resets at rollover).</p>
+            <p class="card-sub" style="margin:0 0 10px;">Tasks players complete during the week for XP, coins, or a cosmetic. Progress is checked against real match history; players claim when done. Resets each Monday.</p>
             <div id="quests-admin-list" style="font-size:13px; margin-bottom:12px;"></div>
             <div style="border-top:1px solid var(--border); padding-top:10px;">
               <p style="font-size:13px; font-weight:600; margin:0 0 6px;">Add a quest</p>
