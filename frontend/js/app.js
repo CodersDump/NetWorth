@@ -907,6 +907,12 @@ let userPool = null;
     const TEAM_SELECT_IDS = ['team_a1_select', 'team_a2_select', 'team_b1_select', 'team_b2_select'];
 
     let teamSelectListenersAttached = false;
+    // Mirrors each slot's current player_id outside the DOM, so
+    // handleTeamSelectChange can tell what a slot held a moment ago (the
+    // 'change' event only tells you the NEW value). Kept in lockstep by
+    // every function that sets a team-select's .value - see
+    // syncTeamSelectValues().
+    let teamSelectValues = { team_a1_select: '', team_a2_select: '', team_b1_select: '', team_b2_select: '' };
 
     function populateTeamSelects() {
       const isFirstPopulation = TEAM_SELECT_IDS.every(id => !document.getElementById(id).value);
@@ -919,12 +925,12 @@ let userPool = null;
         if (distinct[1]) document.getElementById('team_b1_select').value = distinct[1].player_id;
         if (distinct[2]) document.getElementById('team_a2_select').value = distinct[2].player_id;
         if (distinct[3]) document.getElementById('team_b2_select').value = distinct[3].player_id;
-        refreshTeamSelectOptions();
+        syncTeamSelectValues();
       }
 
       if (!teamSelectListenersAttached) {
         TEAM_SELECT_IDS.forEach(id => {
-          document.getElementById(id).addEventListener('change', () => refreshTeamSelectOptions());
+          document.getElementById(id).addEventListener('change', () => handleTeamSelectChange(id));
         });
         teamSelectListenersAttached = true;
       }
@@ -934,27 +940,49 @@ let userPool = null;
 
     let currentMatchGroupMembers = null;
 
+    /** Every dropdown always lists the FULL pool - nobody is hidden from a
+     *  slot just because they're already picked in another one. Picking an
+     *  already-assigned player SWAPS them in (handleTeamSelectChange)
+     *  instead, so re-pairing doubles ("move Alice from A2 to B1") is one
+     *  click, not clear-the-slot-then-hunt-for-the-name-again. Call this
+     *  when the underlying POOL changes (group switch, initial roster
+     *  load) - not on every pick, so a select's own option list is never
+     *  torn down and rebuilt while you're mid-search in it. */
     function refreshTeamSelectOptions() {
-      const currentValues = {};
-      TEAM_SELECT_IDS.forEach(id => { currentValues[id] = document.getElementById(id).value; });
-
       const pool = currentMatchGroupMembers || allPlayers;
-
+      const labeled = pool.map(p => ({ ...p, label: `${p.name}` }));
       TEAM_SELECT_IDS.forEach(id => {
         const selectEl = document.getElementById(id);
-        const excludedElsewhere = TEAM_SELECT_IDS
-          .filter(otherId => otherId !== id)
-          .map(otherId => currentValues[otherId])
-          .filter(Boolean);
-
-        const available = pool.filter(p => !excludedElsewhere.includes(p.player_id));
-        const labeled = available.map(p => ({ ...p, label: `${p.name}` }));
+        const current = selectEl.value;
         populateSelect(selectEl, labeled, 'player_id', 'label', null);
-
-        if (currentValues[id] && available.some(p => p.player_id === currentValues[id])) {
-          selectEl.value = currentValues[id];
+        if (current && pool.some(p => p.player_id === current)) {
+          selectEl.value = current;
         }
       });
+      syncTeamSelectValues();
+    }
+
+    function syncTeamSelectValues() {
+      TEAM_SELECT_IDS.forEach(id => { teamSelectValues[id] = document.getElementById(id).value; });
+    }
+
+    /** Picking a player already assigned to a different slot SWAPS the two
+     *  slots rather than silently duplicating them - whoever was in the
+     *  target slot lands in the slot you picked from. (Submit-time and the
+     *  backend both still reject an actual duplicate as a backstop, but
+     *  the swap means you should never hit that in normal use.) */
+    function handleTeamSelectChange(changedId) {
+      const newVal = document.getElementById(changedId).value;
+      const oldVal = teamSelectValues[changedId] || '';
+      if (newVal === oldVal) return;
+      if (newVal) {
+        const conflictId = TEAM_SELECT_IDS.find(id => id !== changedId && teamSelectValues[id] === newVal);
+        if (conflictId) {
+          document.getElementById(conflictId).value = oldVal;
+          teamSelectValues[conflictId] = oldVal;
+        }
+      }
+      teamSelectValues[changedId] = newVal;
     }
 
     function applyMatchTypeVisibility() {
@@ -966,7 +994,6 @@ let userPool = null;
 
     document.getElementById('match_type_select').addEventListener('change', () => {
       applyMatchTypeVisibility();
-      refreshTeamSelectOptions();
     });
 
     let randomizeTeamsRequestId = 0;
@@ -1004,6 +1031,7 @@ let userPool = null;
         ['team_a1_select', 'team_a2_select', 'team_b1_select', 'team_b2_select'].forEach(id => {
           document.getElementById(id).value = '';
         });
+        syncTeamSelectValues();
         if (showAlertOnFail) {
           nwAlert(`Need at least ${needed} players${groupId ? ' in this group' : ''} to randomize.`);
         }
