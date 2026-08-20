@@ -5167,6 +5167,29 @@ let userPool = null;
       });
     }
 
+    /** Re-fetches the caller's role scoped to whichever group's ledger is
+     *  currently showing, and re-applies visibility. Finance role is
+     *  per-group (a group owner is 'delete' on their own group, maybe
+     *  nothing at all on another), but the initial unlock has to ask for a
+     *  role before any group is even selected - so it used to settle for a
+     *  legacy/global-only answer and never correct it once the real group
+     *  was known. That's why Delete stayed hidden for a group owner who had
+     *  no legacy global role: the backend now supports asking role FOR a
+     *  group (finance-access?group_id=...), so call this once
+     *  currentFinanceGroupId is set (right after populateFinanceGroups) and
+     *  again on every group switch (Owner-reported 2026-08-20: "a deletion
+     *  is not enabled, i can only see edit option"). */
+    async function refreshFinanceRoleForGroup() {
+      if (!currentFinanceGroupId) return;
+      try {
+        const { res, data } = await authedFetch(`${API_BASE_URL}/finance-access?group_id=${encodeURIComponent(currentFinanceGroupId)}`);
+        if (res.ok && data.finance_role) {
+          myFinanceRole = data.finance_role;
+          applyFinanceRoleVisibility();
+        }
+      } catch (_) { /* keep whatever role we already had */ }
+    }
+
     let currentFinanceGroupId = null;   // which group's ledger the Finance tab is showing
 
     function finQS(extra) {
@@ -5296,11 +5319,14 @@ let userPool = null;
         makeFinanceCollapsible();
         applyFinanceRoleVisibility();
         populateFinanceGroups();
+        await refreshFinanceRoleForGroup();
         const s = await (await fetch(`${financeBaseUrl()}/settings?${finQS()}`, { headers: getAuthHeaders() })).json();
         document.getElementById('finance_walkins_public').checked = !!s.walkins_public;
         document.getElementById('finance_upi_id').value = s.upi_id || '';
         document.getElementById('finance_upi_name').value = s.upi_name || '';
         document.getElementById('finance_default_walkin_fee').value = s.default_walkin_fee ?? '';
+        const offEl = document.getElementById('finance_club_utc_offset_minutes');
+        if (offEl) offEl.value = s.club_utc_offset_minutes ?? '';
         loadFinanceSummary(); loadFinanceExpenses(); loadFinanceMembers();
         const lock = document.getElementById('finance-lock-status');
         if (lock) lock.textContent = 'Unlocked ✓ (you have finance access)';
@@ -5506,11 +5532,20 @@ let userPool = null;
         document.getElementById('finance-content').style.display = 'block';
         document.getElementById('finance-lock-card').style.display = 'none';
         makeFinanceCollapsible();
-        // Someone unlocking with the raw key has full rights (the key was
-        // always all-or-nothing); a logged-in user's role, if any, is
-        // fetched to hide controls they shouldn't see.
+        populateFinanceGroups();
+        // Someone unlocking with the raw key has full rights by default
+        // (the key was always all-or-nothing); a logged-in user's role, if
+        // any, is fetched - scoped to the group populateFinanceGroups()
+        // just selected above, so a group owner's real per-group role (e.g.
+        // delete on their own group) is what decides button visibility,
+        // not just a legacy global role. This path used to skip
+        // populateFinanceGroups() entirely, so currentFinanceGroupId was
+        // always null here and the role check below could never be
+        // group-scoped (2026-08-20 fix, same root cause as
+        // tryAutoFinanceUnlock's - Owner-reported: "a deletion is not
+        // enabled, i can only see edit option").
         try {
-          const rr = await authedFetch(`${API_BASE_URL}/finance-access`);
+          const rr = await authedFetch(`${API_BASE_URL}/finance-access${currentFinanceGroupId ? `?group_id=${encodeURIComponent(currentFinanceGroupId)}` : ''}`);
           myFinanceRole = (rr.res.ok && rr.data.finance_role) ? rr.data.finance_role : 'delete';
         } catch (_) { myFinanceRole = 'delete'; }
         applyFinanceRoleVisibility();
@@ -5519,6 +5554,8 @@ let userPool = null;
         document.getElementById('finance_upi_id').value = settings.upi_id || '';
         document.getElementById('finance_upi_name').value = settings.upi_name || '';
         document.getElementById('finance_default_walkin_fee').value = settings.default_walkin_fee ?? '';
+        const offEl2 = document.getElementById('finance_club_utc_offset_minutes');
+        if (offEl2) offEl2.value = settings.club_utc_offset_minutes ?? '';
         loadFinanceSummary();
         loadFinanceExpenses();
         loadFinanceMembers();
@@ -6061,6 +6098,14 @@ let userPool = null;
         if (!c.default_walkin_fee) {
           html += '<p style="font-size:12px; color:var(--text-secondary); margin:2px 0 8px;">Set a default walk-in fee under Finance settings to see expected/pending amounts here - showing attendance and fees collected only for now.</p>';
         }
+        // Sessions/fees/days-attended all scope to the Month+Year picker
+        // above once both are set - someone who's said they'll settle up
+        // at the end of the month shouldn't read as a standing debt in a
+        // lifetime total (Owner-requested 2026-08-20). Leave Year blank for
+        // the lifetime view this table always showed before.
+        html += c.scoped_to_month
+          ? `<p style="font-size:12px; color:var(--text-secondary); margin:2px 0 8px;">Showing <strong>${c.scoped_to_month}</strong> only. Clear Year above for the lifetime total.</p>`
+          : '<p style="font-size:12px; color:var(--text-secondary); margin:2px 0 8px;">Showing the lifetime total. Pick a Month + Year above to see just that month.</p>';
         if (c.guests && c.guests.length) {
           html += '<table><tr><th>Guest</th><th>Days attended</th><th>Sessions paid</th><th>Fees paid</th>'
                 + (c.default_walkin_fee ? '<th>Expected</th><th>Pending</th>' : '')
@@ -6077,6 +6122,34 @@ let userPool = null;
           html += '</table>';
         }
       }
+
+      // Slot-timing / match-density diagnostics (Owner-requested, parked
+      // 2026-08-19, built 2026-08-20). Heuristic and non-authoritative -
+      // slot labels are free text and matches carry no direct slot field,
+      // so both checks are inferred and meant as a prompt to spot-check,
+      // not a verdict. Collapsed by default via <details> so it doesn't
+      // compete for attention with the numbers above; only shown at all
+      // when there's something to flag.
+      if ((data.timing_mismatches && data.timing_mismatches.length) ||
+          (data.density_flags && data.density_flags.length)) {
+        html += '<details style="margin-top:14px;"><summary style="cursor:pointer; font-weight:600;">⏱️ Slot-timing &amp; match-density flags (best-effort, not authoritative)</summary>';
+        html += '<p style="font-size:12px; color:var(--text-secondary); margin:6px 0 8px;">Heuristic only - slot labels are free text and matches don\'t record a slot directly, so these are inferred from who played. Treat as a prompt to spot-check, not a verdict.</p>';
+        if (data.timing_mismatches && data.timing_mismatches.length) {
+          html += '<h5 style="margin-bottom:4px;">Matches outside every assigned slot window</h5><table><tr><th>Date</th><th>Local time</th><th>Assigned slot(s)</th></tr>';
+          data.timing_mismatches.forEach(m => {
+            html += `<tr><td>${(m.date || '').slice(0, 10)}</td><td>${m.local_time}</td><td>${(m.assigned_slots || []).join(', ')}</td></tr>`;
+          });
+          html += '</table>';
+        }
+        if (data.density_flags && data.density_flags.length) {
+          html += '<h5 style="margin:10px 0 4px;">Slot/date combos with more assumed play than the slot allows</h5><table><tr><th>Date</th><th>Slot</th><th>Games</th><th>Assumed min</th><th>Slot min</th><th>Ratio</th></tr>';
+          data.density_flags.forEach(d => {
+            html += `<tr><td>${d.date}</td><td>${d.slot}</td><td>${d.games}</td><td>${d.assumed_minutes}</td><td>${d.slot_minutes}</td><td>${d.ratio}x</td></tr>`;
+          });
+          html += '</table>';
+        }
+        html += '</details>';
+      }
       el.innerHTML = html;
       el.querySelectorAll('.fin-attended').forEach(btn => btn.addEventListener('click', async () => {
         const note = await nwPrompt(`How much did ${btn.dataset.name} attend? (optional note, e.g. 'came 3-4 times before injury')`) || '';
@@ -6091,12 +6164,19 @@ let userPool = null;
     async function saveFinanceSettings() {
       const statusEl = document.getElementById('finance-settings-status');
       const feeRaw = document.getElementById('finance_default_walkin_fee').value.trim();
-      const { ok, data } = await finPost('settings', 'PUT', {
+      const offsetEl = document.getElementById('finance_club_utc_offset_minutes');
+      const offsetRaw = offsetEl ? offsetEl.value.trim() : '';
+      const body = {
         walkins_public: document.getElementById('finance_walkins_public').checked,
         upi_id: document.getElementById('finance_upi_id').value.trim(),
         upi_name: document.getElementById('finance_upi_name').value.trim(),
         default_walkin_fee: feeRaw === '' ? null : parseFloat(feeRaw)
-      });
+      };
+      // Only sent when the field has a value - omitted (not null) keeps the
+      // existing/default offset, same pattern as default_walkin_fee but
+      // without a way to "clear" it, since there's always a usable default.
+      if (offsetRaw !== '') body.club_utc_offset_minutes = parseInt(offsetRaw, 10);
+      const { ok, data } = await finPost('settings', 'PUT', body);
       statusEl.textContent = ok ? 'Saved ✓' : `Error: ${data.error}`;
       // Reflect a changed UPI ID on the pay card immediately.
       if (ok) refreshUpiCard();
@@ -6147,6 +6227,11 @@ let userPool = null;
     document.getElementById('finance_group_select').addEventListener('change', (e) => {
       currentFinanceGroupId = e.target.value || null;
       populateFinanceSlots((allGroups || []).find(g => g.group_id === currentFinanceGroupId));
+      // Role is per-group - re-check it for whichever group was just
+      // switched to, so e.g. someone who's owner on group A but a plain
+      // view-only member on group B sees the right buttons after switching
+      // (2026-08-20, same fix as the initial unlock).
+      refreshFinanceRoleForGroup();
       reloadFinanceForGroup();
     });
     document.getElementById('finance-load-summary-btn').addEventListener('click', loadFinanceSummary);
@@ -8262,6 +8347,7 @@ let userPool = null;
               await tryAutoFinanceUnlock();   // populates the ledger selector on success
             } else {
               populateFinanceGroups();
+              refreshFinanceRoleForGroup();
             }
             restoreFinanceMonth();
             populateMyDuesGroups();

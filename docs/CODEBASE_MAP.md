@@ -354,49 +354,54 @@ _NetWorth - tournaments Lambda (singles or doubles)_
 | `substitute_player` | tournament_id, event | 971 | Swap a player out of a team for all of that team's FUTURE (unplayed) |
 | `_response` | status_code, body_dict | 1050 | — |
 
-#### `finance` — 1321 LOC
+#### `finance` — 1552 LOC
 _NetWorth - finance Lambda_
 
-**Module constants:** `GROUPS_TABLE`, `DEFAULT_GROUP_NAME`, `GROUP_SLOT`, `VIEW_KEY`, `CONFIRMATION_CODE`, `MONTHS`, `FINANCE_LEVELS`, `ALLOWED_FIELDS`, `NUMERIC_FIELDS`, `REQUIRED_FIELDS`, `AVG_GAMES_PER_SESSION`, `SESSION_RATE`, `ACTIVE_DAYS_THRESHOLD`
+**Module constants:** `GROUPS_TABLE`, `DEFAULT_GROUP_NAME`, `GROUP_SLOT`, `VIEW_KEY`, `CONFIRMATION_CODE`, `MONTHS`, `FINANCE_LEVELS`, `ALLOWED_FIELDS`, `NUMERIC_FIELDS`, `REQUIRED_FIELDS`, `DEFAULT_CLUB_UTC_OFFSET_MINUTES`, `AVG_GAMES_PER_SESSION`, `SESSION_RATE`, `ACTIVE_DAYS_THRESHOLD`, `SLOT_GRACE_MINUTES`, `ASSUMED_MINUTES_PER_GAME`, `DEFAULT_ASSUMED_MINUTES_PER_GAME`, `DENSITY_FLAG_RATIO`, `_SLOT_LABEL_RE`
 
 | Function | Args | Line | What it does |
 |---|---|---|---|
-| `_caller_claims` | event | 83 | Claims API Gateway's Cognito Authorizer attaches to the request. |
-| `_is_super_admin` | claims | 91 | — |
-| `_finance_role` | claims | 105 | — |
-| `_finance_level` | claims | 121 | — |
-| `_has_finance_access` | claims | 125 | View or better - the gate for reading finance at all. |
-| `_default_group_id` |  | 130 | The group_id of the 'Club (default)' group that the pre-migration |
-| `_group_for_request` | params, body | 146 | The group_id this finance op targets. Falls back to the default group |
-| `_group_finance_level` | claims, group_id | 153 | A caller's finance level (0-3) FOR A SPECIFIC GROUP. |
-| `_slot_key` | slot | 179 | Normalize a record's slot for bucketing/comparison: a missing/blank |
-| `_member_assigned_slots` | pid, group | 186 | The set of slots (raw, already-normalized strings) a player is |
-| `_view_scope_slots` | claims, group_id, level | 195 | Stage 4c: a plain 'view'-level grant only sees their own assigned |
-| `_has_any_group_finance` | claims | 221 | True if the caller has finance access in ANY group (owner/admin, or a |
-| `finance_key_for_caller` | event | 236 | Hands the shared view key to any caller with finance access - global |
-| `set_finance_access` | event | 249 | SuperAdmin sets a player's finance role directly. |
-| `handler` | event, context | 273 | — |
-| `_scan_type` | record_type, group_id | 391 | — |
-| `_num` | v, default | 402 | — |
-| `_clean` | record_type, data | 425 | — |
-| `_resolve_name` | pid_cache, player_id | 437 | — |
-| `_prev_period` | month, year | 448 | — |
-| `_next_period` | month, year | 453 | — |
-| `_member_relief` | settlement, memberships, ident, month, year,  | 458 | Relief a member gets in (month, year): the previous month's residual. |
-| `list_records` | record_type, params, group_id, scope_slots | 481 | — |
-| `create_records` | record_type, body, group_id | 543 | — |
-| `update_record` | record_type, record_id, body, group_id | 565 | — |
-| `delete_record_enforced` | record_type, record_id, event | 628 | Triple-gated: SuperAdmin identity + FINANCE_VIEW_KEY + the existing |
-| `delete_record` | record_type, record_id, body, group_id | 651 | — |
-| `get_settings` |  | 665 | — |
-| `put_settings` | body | 685 | — |
-| `public_upi` |  | 710 | The pay card is shown to guests (they pay walk-in fees), so the UPI |
-| `my_settlement` | claims, group_id | 718 | A single member's own dues in a group: for every (month, slot) where |
-| `public_walkins` |  | 848 | — |
-| `_settlement_rows` | group_id | 868 | Per (month, year, slot): the exact math from the Calculations sheet. |
-| `summary` | group_id, scope_slots | 1032 | — |
-| `insights` | group_id | 1054 | Per-member monthly economics, ghosts, and walk-in conversion. |
-| `_response` | status_code, body_dict | 1312 | — |
+| `_caller_claims` | event | 85 | Claims API Gateway's Cognito Authorizer attaches to the request. |
+| `_is_super_admin` | claims | 93 | — |
+| `_finance_role` | claims | 107 | — |
+| `_finance_level` | claims | 123 | — |
+| `_has_finance_access` | claims | 127 | View or better - the gate for reading finance at all. |
+| `_default_group_id` |  | 132 | The group_id of the 'Club (default)' group that the pre-migration |
+| `_group_for_request` | params, body | 148 | The group_id this finance op targets. Falls back to the default group |
+| `_group_finance_level` | claims, group_id | 155 | A caller's finance level (0-3) FOR A SPECIFIC GROUP. |
+| `_slot_key` | slot | 181 | Normalize a record's slot for bucketing/comparison: a missing/blank |
+| `_member_assigned_slots` | pid, group | 188 | The set of slots (raw, already-normalized strings) a player is |
+| `_view_scope_slots` | claims, group_id, level | 197 | Stage 4c: a plain 'view'-level grant only sees their own assigned |
+| `_has_any_group_finance` | claims | 223 | True if the caller has finance access in ANY group (owner/admin, or a |
+| `_effective_finance_role` | claims, group_id | 238 | The role name to REPORT to the frontend for button visibility: the |
+| `finance_key_for_caller` | event | 263 | Hands the shared view key to any caller with finance access - global |
+| `set_finance_access` | event | 280 | SuperAdmin sets a player's finance role directly. |
+| `handler` | event, context | 304 | — |
+| `_scan_type` | record_type, group_id | 422 | — |
+| `_num` | v, default | 433 | — |
+| `_clean` | record_type, data | 456 | — |
+| `_resolve_name` | pid_cache, player_id | 468 | — |
+| `_prev_period` | month, year | 479 | — |
+| `_next_period` | month, year | 484 | — |
+| `_member_relief` | settlement, memberships, ident, month, year,  | 489 | Relief a member gets in (month, year): the previous month's residual. |
+| `list_records` | record_type, params, group_id, scope_slots | 512 | — |
+| `create_records` | record_type, body, group_id | 574 | — |
+| `update_record` | record_type, record_id, body, group_id | 596 | — |
+| `delete_record_enforced` | record_type, record_id, event | 659 | Triple-gated: SuperAdmin identity + FINANCE_VIEW_KEY + the existing |
+| `delete_record` | record_type, record_id, body, group_id | 682 | — |
+| `get_settings` |  | 699 | — |
+| `put_settings` | body | 727 | — |
+| `public_upi` |  | 756 | The pay card is shown to guests (they pay walk-in fees), so the UPI |
+| `my_settlement` | claims, group_id | 764 | A single member's own dues in a group: for every (month, slot) where |
+| `public_walkins` |  | 894 | — |
+| `_settlement_rows` | group_id | 914 | Per (month, year, slot): the exact math from the Calculations sheet. |
+| `summary` | group_id, scope_slots | 1078 | — |
+| `_parse_slot_window` | label | 1119 | Best-effort parse of a free-form slot label ('7AM-8AM', '19:00-20:00', |
+| `_local_minutes_of_day` | iso_ts, offset_minutes | 1155 | Convert a stored ISO-8601 UTC match timestamp to local minute-of-day |
+| `_minute_in_window` | minute, window, grace_minutes | 1175 | Whether `minute` (local minute-of-day) falls inside `window` (start, |
+| `_timing_checks` | matches, group, offset_minutes, target_ym | 1188 | Best-effort, non-authoritative diagnostics only (see module note |
+| `insights` | group_id | 1268 | Per-member monthly economics, ghosts, and walk-in conversion. |
+| `_response` | status_code, body_dict | 1543 | — |
 
 #### `progress_scheduler` — 220 LOC
 _NetWorth - progress_scheduler Lambda_
@@ -415,7 +420,7 @@ _NetWorth - progress_scheduler Lambda_
 ## 6. Frontend function reference
 
 <!-- AUTOGEN:FRONTEND START (regenerated by tools/generate_codebase_map.py — do not hand-edit below) -->
-### Frontend (`frontend/js/app.js` — 8296 LOC, flat global script, ~358 functions)
+### Frontend (`frontend/js/app.js` — 8382 LOC, flat global script, ~359 functions)
 
 _Loaded by `index.html` after an inline `<script>` defines the globals `API_BASE_URL`, `COGNITO_USER_POOL_ID`, `COGNITO_CLIENT_ID`, `UPI_ID`, `FINANCE_VIEW_KEY` placeholders. Functions live in global scope (not an IIFE); most are wired to `onclick=` in the HTML._
 
@@ -698,133 +703,136 @@ _Loaded by `index.html` after an inline `<script>` defines the globals `API_BASE
 - `imageServiceFallback()` — L5117
 - `xpVisible()` — L5145
 - `applyFinanceRoleVisibility()` — L5151
-- `finQS(extra)` — L5172
-- `financeBaseUrl()` — L5183
-- `finPost(path, method, bodyObj)` — L5187
-- `populateFinanceSlots(group)` — L5211
-- `_rememberedFinance(key)` — L5234
-- `_rememberFinance(key, val)` — L5238
-- `restoreFinanceMonth()` — L5244
-- `populateFinanceGroups()` — L5253
-- `reloadFinanceForGroup()` — L5281
-- `tryAutoFinanceUnlock()` — L5286
-- `myFinanceGroups()` — L5313
-- `populateMyDuesGroups()` — L5318
-- `loadMyDues(groupId)` — L5336
+- `refreshFinanceRoleForGroup()` — L5182
+- `finQS(extra)` — L5195
+- `financeBaseUrl()` — L5206
+- `finPost(path, method, bodyObj)` — L5210
+- `populateFinanceSlots(group)` — L5234
+- `_rememberedFinance(key)` — L5257
+- `_rememberFinance(key, val)` — L5261
+- `restoreFinanceMonth()` — L5267
+- `populateFinanceGroups()` — L5276
+- `reloadFinanceForGroup()` — L5304
+- `tryAutoFinanceUnlock()` — L5309
+- `myFinanceGroups()` — L5339
+- `populateMyDuesGroups()` — L5344
+
+**Init & session restore**  (from L5346)
+- `loadMyDues(groupId)` — L5362
 
 **Tournaments**  (from L5371)
-- `manageGroupSlots(groupId)` — L5386
-- `assignSlotMembers(groupId, slotEnc)` — L5404
-- `transferGroupOwnership(groupId)` — L5432
-- `setGroupPayee(groupId)` — L5451
-- `requestFinanceAccess()` — L5474
-- `financeUnlock()` — L5491
-- `updateFinanceScopeNote(scopedTo)` — L5535
-- `loadFinanceSummary()` — L5545
-- `loadFinanceExpenses()` — L5579
-- `resetExpenseEdit()` — L5617
-- `addFinanceExpense()` — L5624
-- `loadFinanceMembers()` — L5643
-- `markMembersDirty()` — L5747
-- `recalcMembers()` — L5754
-- `renderBulkRosterList()` — L5766
-- `bulkAddFromRoster()` — L5780
-- `copyPreviousMonthMembers()` — L5795
-- `addFinanceMember()` — L5831
-- `resetWalkinEdit()` — L5855
-- `loadFinanceWalkins()` — L5864
-- `addFinanceWalkin()` — L5912
-- `loadFinanceInsights()` — L5943
-- `copyDuesForWhatsApp()` — L5957
-- `pad(s, w)` — L5974
-- `padL(s, w)` — L5975
-- `line(n, o, r, p)` — L5976
-- `done()` — L5986
-- `fallbackCopy(text, cb)` — L5992
-- `renderInsights()` — L6001
-- `saveFinanceSettings()` — L6091
-- `loadPublicWalkins()` — L6130
-- `loadReviewDay()` — L6214
-- `reviewOrderChanged()` — L6258
-- `renderReviewList()` — L6264
-- `applyReviewOrder()` — L6325
-- `updateAuthUI()` — L6353
-- `hiddenNow(id, btn)` — L6381
+- `manageGroupSlots(groupId)` — L5412
+- `assignSlotMembers(groupId, slotEnc)` — L5430
+- `transferGroupOwnership(groupId)` — L5458
+- `setGroupPayee(groupId)` — L5477
+- `requestFinanceAccess()` — L5500
+- `financeUnlock()` — L5517
+- `updateFinanceScopeNote(scopedTo)` — L5572
+- `loadFinanceSummary()` — L5582
+- `loadFinanceExpenses()` — L5616
+- `resetExpenseEdit()` — L5654
+- `addFinanceExpense()` — L5661
+- `loadFinanceMembers()` — L5680
+- `markMembersDirty()` — L5784
+- `recalcMembers()` — L5791
+- `renderBulkRosterList()` — L5803
+- `bulkAddFromRoster()` — L5817
+- `copyPreviousMonthMembers()` — L5832
+- `addFinanceMember()` — L5868
+- `resetWalkinEdit()` — L5892
+- `loadFinanceWalkins()` — L5901
+- `addFinanceWalkin()` — L5949
+- `loadFinanceInsights()` — L5980
+- `copyDuesForWhatsApp()` — L5994
+- `pad(s, w)` — L6011
+- `padL(s, w)` — L6012
+- `line(n, o, r, p)` — L6013
+- `done()` — L6023
+- `fallbackCopy(text, cb)` — L6029
+- `renderInsights()` — L6038
+- `saveFinanceSettings()` — L6164
+- `loadPublicWalkins()` — L6210
+- `loadReviewDay()` — L6299
+- `reviewOrderChanged()` — L6343
+- `renderReviewList()` — L6349
+- `applyReviewOrder()` — L6410
 
 **Live scoring inside tournaments**  (from L6421)
-- `refreshMySession(statusElId)` — L6466
-- `setStatus(msg)` — L6467
-- `openAchievementsModal()` — L6495
-- `closeAchievementsModal()` — L6504
-- `openAuthModal()` — L6505
-- `closeAuthModal()` — L6506
-- `showAuthView(view)` — L6507
-- `setAuthSession(session, user, opts = {})` — L6515
-- `closeCompleteProfileModal()` — L6535
-- `openCompleteProfileModal()` — L6536
-- `showCompleteProfileMode(mode, preselectPlayerId)` — L6551
-- `populateClaimPicker(preselectPlayerId)` — L6559
-- `submitClaimProfile()` — L6583
-- `closeCompleteProfileModal()` — L6623
-- `sanitizeNickname(raw)` — L6629
-- `editDistance(a, b)` — L6634
-- `checkForExistingPlayer(name, typedNickname, statusEl)` — L6656
-- `submitCompleteProfile()` — L6711
-- `finishRequestAndSignOut(message)` — L6787
-- `doLogin()` — L6793
-- `doNewPassword()` — L6846
-- `doSignup()` — L6857
-- `doConfirmSignup()` — L6874
-- `doResendConfirmCode()` — L6905
-- `doForgotPassword()` — L6916
-- `doConfirmForgotPassword()` — L6931
-- `doLogout()` — L6943
-- `restoreSession()` — L6987
-- `restoreTabFromHash()` — L7031
-- `addManualTeamRow()` — L7091
-- `collectManualTeams()` — L7127
-- `loadTournamentGroupOptions()` — L7140
-- `loadTournamentParticipantsChecklist()` — L7149
-- `updateParticipantsCount()` — L7179
-- `collectTournamentParticipants()` — L7191
-- `loadTournamentsList()` — L7195
-- `submitTournamentCreation(payload)` — L7202
-- `collectAllEntities(t)` — L7361
-- `getAllTeamEntities(t)` — L7377
-- `renderTeamCompositionBars(t, containerId)` — L7395
-- `populateSubstitutionSection(t)` — L7430
-- `updateSubOldPlayerOptions()` — L7441
-- `formatGames(games)` — L7530
-- `applyTournamentViewMode()` — L7537
-- `matchTotals(match)` — L7543
-- `truncateBracketName(name, maxChars = 22)` — L7551
-- `renderBracketView(t)` — L7556
-- `renderTournament(t)` — L7672
-- `generateTournamentRecap(t)` — L7846
-- `downloadTournamentImage()` — L7878
-- `loadImg(src)` — L7905
-- `sideVisuals(side)` — L7915
-- `drawCard(x, y, w, match, isFinal)` — L7922
-- `drawAvatars(ctx, x, y, side, isWinner)` — L7968
-- `paintTeam(ctx, x, y, w, h, side, fallback)` — L7987
-- `roundRect(ctx, x, y, w, h, r)` — L8015
-- `copyTournamentRecap()` — L8025
-- `item_has_third_place(t)` — L8036
-- `submitGroupScore(tournamentId, subgroup, fixtureId)` — L8040
-- `submitGroupScoreDirect(tournamentId, subgroup, fixtureId, score)` — L8046
-- `submitKnockoutScore(tournamentId, roundIndex, matchIndex)` — L8065
-- `submitKnockoutScoreDirect(tournamentId, roundIndex, matchIndex, sc)` — L8071
-- `submitThirdPlaceScore(tournamentId)` — L8090
-- `submitThirdPlaceScoreDirect(tournamentId, score_a, score_b, override)` — L8096
-- `getTournamentLiveLog(matchKey)` — L8119
-- `tournamentLivePoint(matchKey, side, target)` — L8124
-- `tournamentUndoPoint(matchKey, target)` — L8133
-- `updateTournamentLiveDisplay(matchKey, target)` — L8139
-- `finishGroupLiveGame(matchKey, tournamentId, subgroup, fixtur)` — L8157
-- `finishKnockoutLiveGame(matchKey, tournamentId, roundIndex, matc)` — L8166
-- `finishThirdPlaceLiveGame(matchKey, tournamentId)` — L8175
-- `renderLiveScoreControls(matchKey, target, finishCallExpr, nameA,)` — L8184
-- `applyTheme(theme)` — L8277
+- `updateAuthUI()` — L6438
+- `hiddenNow(id, btn)` — L6466
+- `refreshMySession(statusElId)` — L6551
+- `setStatus(msg)` — L6552
+- `openAchievementsModal()` — L6580
+- `closeAchievementsModal()` — L6589
+- `openAuthModal()` — L6590
+- `closeAuthModal()` — L6591
+- `showAuthView(view)` — L6592
+- `setAuthSession(session, user, opts = {})` — L6600
+- `closeCompleteProfileModal()` — L6620
+- `openCompleteProfileModal()` — L6621
+- `showCompleteProfileMode(mode, preselectPlayerId)` — L6636
+- `populateClaimPicker(preselectPlayerId)` — L6644
+- `submitClaimProfile()` — L6668
+- `closeCompleteProfileModal()` — L6708
+- `sanitizeNickname(raw)` — L6714
+- `editDistance(a, b)` — L6719
+- `checkForExistingPlayer(name, typedNickname, statusEl)` — L6741
+- `submitCompleteProfile()` — L6796
+- `finishRequestAndSignOut(message)` — L6872
+- `doLogin()` — L6878
+- `doNewPassword()` — L6931
+- `doSignup()` — L6942
+- `doConfirmSignup()` — L6959
+- `doResendConfirmCode()` — L6990
+- `doForgotPassword()` — L7001
+- `doConfirmForgotPassword()` — L7016
+- `doLogout()` — L7028
+- `restoreSession()` — L7072
+- `restoreTabFromHash()` — L7116
+- `addManualTeamRow()` — L7176
+- `collectManualTeams()` — L7212
+- `loadTournamentGroupOptions()` — L7225
+- `loadTournamentParticipantsChecklist()` — L7234
+- `updateParticipantsCount()` — L7264
+- `collectTournamentParticipants()` — L7276
+- `loadTournamentsList()` — L7280
+- `submitTournamentCreation(payload)` — L7287
+- `collectAllEntities(t)` — L7446
+- `getAllTeamEntities(t)` — L7462
+- `renderTeamCompositionBars(t, containerId)` — L7480
+- `populateSubstitutionSection(t)` — L7515
+- `updateSubOldPlayerOptions()` — L7526
+- `formatGames(games)` — L7615
+- `applyTournamentViewMode()` — L7622
+- `matchTotals(match)` — L7628
+- `truncateBracketName(name, maxChars = 22)` — L7636
+- `renderBracketView(t)` — L7641
+- `renderTournament(t)` — L7757
+- `generateTournamentRecap(t)` — L7931
+- `downloadTournamentImage()` — L7963
+- `loadImg(src)` — L7990
+- `sideVisuals(side)` — L8000
+- `drawCard(x, y, w, match, isFinal)` — L8007
+- `drawAvatars(ctx, x, y, side, isWinner)` — L8053
+- `paintTeam(ctx, x, y, w, h, side, fallback)` — L8072
+- `roundRect(ctx, x, y, w, h, r)` — L8100
+- `copyTournamentRecap()` — L8110
+- `item_has_third_place(t)` — L8121
+- `submitGroupScore(tournamentId, subgroup, fixtureId)` — L8125
+- `submitGroupScoreDirect(tournamentId, subgroup, fixtureId, score)` — L8131
+- `submitKnockoutScore(tournamentId, roundIndex, matchIndex)` — L8150
+- `submitKnockoutScoreDirect(tournamentId, roundIndex, matchIndex, sc)` — L8156
+- `submitThirdPlaceScore(tournamentId)` — L8175
+- `submitThirdPlaceScoreDirect(tournamentId, score_a, score_b, override)` — L8181
+- `getTournamentLiveLog(matchKey)` — L8204
+- `tournamentLivePoint(matchKey, side, target)` — L8209
+- `tournamentUndoPoint(matchKey, target)` — L8218
+- `updateTournamentLiveDisplay(matchKey, target)` — L8224
+- `finishGroupLiveGame(matchKey, tournamentId, subgroup, fixtur)` — L8242
+- `finishKnockoutLiveGame(matchKey, tournamentId, roundIndex, matc)` — L8251
+- `finishThirdPlaceLiveGame(matchKey, tournamentId)` — L8260
+- `renderLiveScoreControls(matchKey, target, finishCallExpr, nameA,)` — L8269
+- `applyTheme(theme)` — L8363
 <!-- AUTOGEN:FRONTEND END -->
 
 ---

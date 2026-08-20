@@ -52,7 +52,9 @@ Env vars:
 """
 import json
 import os
+import re
 import uuid
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 import boto3
@@ -233,17 +235,46 @@ def _has_any_group_finance(claims):
     return False
 
 
+def _effective_finance_role(claims, group_id=None):
+    """The role name to REPORT to the frontend for button visibility: the
+    higher of the caller's legacy/global role and their per-group role for
+    the group actually being viewed (if known). Real enforcement never
+    trusts this - every finance call re-checks _group_finance_level itself
+    - this only decides which buttons the UI shows.
+
+    Bug this fixes (Owner-reported 2026-08-20: "a deletion is not enabled,
+    i can only see edit option"): finance_key_for_caller used to report
+    ONLY _finance_role (the legacy GLOBAL role / default-group transition
+    floor), completely ignoring group ownership. A group owner with no
+    legacy finance_role attribute on their player record got reported as
+    whatever that global check returned (here: 'write', from an old
+    finance_access grant) even though _group_finance_level already
+    correctly grants owners/admins 'delete' on their OWN group - so Delete
+    buttons stayed hidden for someone the backend would have let delete."""
+    level = _finance_level(claims)
+    if group_id:
+        level = max(level, _group_finance_level(claims, group_id))
+    for name, lvl in FINANCE_LEVELS.items():
+        if lvl == level:
+            return name
+    return 'none'
+
+
 def finance_key_for_caller(event):
     """Hands the shared view key to any caller with finance access - global
-    (legacy) OR in any group (owner/admin/per-group role) - plus their global
-    role so the UI can hide write/delete controls at the coarse level. Real
-    per-group enforcement happens on each finance call."""
+    (legacy) OR in any group (owner/admin/per-group role) - plus their
+    EFFECTIVE role for the group being viewed (see _effective_finance_role)
+    so the UI can hide write/delete controls correctly. Real per-group
+    enforcement happens on each finance call regardless of what this
+    reports."""
     claims = _caller_claims(event)
     if not claims:
         return _response(403, {'error': 'log in to access finance'})
     if not (_has_finance_access(claims) or _has_any_group_finance(claims)):
         return _response(403, {'error': 'you do not have finance access - ask an admin'})
-    return _response(200, {'view_key': VIEW_KEY, 'finance_role': _finance_role(claims)})
+    params = event.get('queryStringParameters') or {}
+    return _response(200, {'view_key': VIEW_KEY,
+                           'finance_role': _effective_finance_role(claims, params.get('group_id'))})
 
 
 def set_finance_access(event):
@@ -662,6 +693,9 @@ def delete_record(record_type, record_id, body, group_id=None):
 
 # ---------- settings + public walk-ins ----------
 
+DEFAULT_CLUB_UTC_OFFSET_MINUTES = 330  # IST (+05:30) - see club_utc_offset_minutes below
+
+
 def get_settings():
     item = finance_table.get_item(Key={'record_id': 'settings'}).get('Item') or {}
     dwf = item.get('default_walkin_fee')
@@ -678,7 +712,15 @@ def get_settings():
         # already work; the add-walk-in form's own fee field already
         # defaults to 80 as a starting point, this makes that number a real
         # saved setting instead of just a form placeholder).
-        'default_walkin_fee': float(dwf) if dwf is not None else None
+        'default_walkin_fee': float(dwf) if dwf is not None else None,
+        # Minutes east of UTC, for converting a match's stored UTC timestamp
+        # to local wall-clock time in the timing-check diagnostics below
+        # (Owner-requested 2026-08-20). Matches are stored in UTC and slot
+        # labels ("7AM-8AM") carry no timezone at all, so SOMETHING has to
+        # be assumed - defaults to IST (+05:30) since that's the only
+        # signal available (rupee currency throughout the app). Change this
+        # if the club isn't actually in India.
+        'club_utc_offset_minutes': int(item.get('club_utc_offset_minutes', DEFAULT_CLUB_UTC_OFFSET_MINUTES))
     })
 
 
@@ -700,11 +742,15 @@ def put_settings(body):
         # stored as a DynamoDB null) so get_settings reports None again.
     elif existing.get('default_walkin_fee') is not None:
         item['default_walkin_fee'] = existing['default_walkin_fee']
+    item['club_utc_offset_minutes'] = Decimal(str(int(body.get('club_utc_offset_minutes'))) ) \
+        if 'club_utc_offset_minutes' in body and body.get('club_utc_offset_minutes') not in (None, '') \
+        else Decimal(str(existing.get('club_utc_offset_minutes', DEFAULT_CLUB_UTC_OFFSET_MINUTES)))
     finance_table.put_item(Item=item)
     resp_dwf = item.get('default_walkin_fee')
     return _response(200, {'walkins_public': item['walkins_public'],
                            'upi_id': item['upi_id'], 'upi_name': item['upi_name'],
-                           'default_walkin_fee': float(resp_dwf) if resp_dwf is not None else None})
+                           'default_walkin_fee': float(resp_dwf) if resp_dwf is not None else None,
+                           'club_utc_offset_minutes': int(item['club_utc_offset_minutes'])})
 
 
 def public_upi():
@@ -1051,6 +1097,174 @@ SESSION_RATE = 15.0 / 18.0          # sessions actually held per untracked day
 ACTIVE_DAYS_THRESHOLD = 10          # below this, offer the estimated count
 
 
+# --- Slot-timing / match-density diagnostics (Owner-requested, parked
+# 2026-08-19, built 2026-08-20: "also i think you parked something, please
+# proceed with that as well"). Both checks are best-effort and NOT
+# authoritative - slot labels are free text with no enforced format and
+# match records carry no direct slot field, so a match's "slot" has to be
+# inferred from which slot(s) its participants are commonly assigned to.
+# Anything that can't be cleanly parsed/inferred is SKIPPED rather than
+# guessed at, matching the owner's own hedge ("I know this would not be
+# valid" in some cases) - silence here means "can't check", never "clean".
+SLOT_GRACE_MINUTES = 15             # +/- tolerance around a parsed slot window
+ASSUMED_MINUTES_PER_GAME = {21: 15, 11: 8}   # points_to_win -> assumed minutes/game
+DEFAULT_ASSUMED_MINUTES_PER_GAME = 12
+DENSITY_FLAG_RATIO = 1.3            # flag when assumed playtime exceeds the slot window by >30%
+
+_SLOT_LABEL_RE = re.compile(
+    r'^\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\s*-\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\s*$',
+    re.IGNORECASE)
+
+
+def _parse_slot_window(label):
+    """Best-effort parse of a free-form slot label ('7AM-8AM', '19:00-20:00',
+    '7-8AM') into a (start_minute, end_minute) local-minute-of-day window.
+    Returns None when the label doesn't match a recognizable shape - slots
+    are free text with no enforced format, so failing to parse is the normal,
+    safe outcome; callers must treat None as "can't check this slot", never
+    as "outside the slot"."""
+    if not label:
+        return None
+    m = _SLOT_LABEL_RE.match(str(label))
+    if not m:
+        return None
+    h1, m1, ap1, h2, m2, ap2 = m.groups()
+    h1, h2 = int(h1), int(h2)
+    m1, m2 = int(m1) if m1 else 0, int(m2) if m2 else 0
+    if h1 > 23 or h2 > 23 or m1 > 59 or m2 > 59:
+        return None
+    if ap1 is None and ap2 is not None:
+        ap1 = ap2
+    if ap2 is None and ap1 is not None:
+        ap2 = ap1
+
+    def to24(h, ap):
+        if ap is None:
+            return h if h <= 23 else None
+        ap = ap.lower()
+        if h == 12:
+            h = 0
+        return h + 12 if ap == 'pm' else h
+
+    h1c, h2c = to24(h1, ap1), to24(h2, ap2)
+    if h1c is None or h2c is None:
+        return None
+    return (h1c * 60 + m1, h2c * 60 + m2)
+
+
+def _local_minutes_of_day(iso_ts, offset_minutes):
+    """Convert a stored ISO-8601 UTC match timestamp to local minute-of-day
+    (0-1439) using the club's configured UTC offset. Returns None on any
+    unparseable input - callers must treat that as "can't check this match",
+    not as a flag."""
+    if not iso_ts:
+        return None
+    ts = str(iso_ts).strip()
+    if ts.endswith('Z'):
+        ts = ts[:-1] + '+00:00'
+    try:
+        dt = datetime.fromisoformat(ts)
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    local = dt.astimezone(timezone.utc) + timedelta(minutes=offset_minutes)
+    return local.hour * 60 + local.minute
+
+
+def _minute_in_window(minute, window, grace_minutes):
+    """Whether `minute` (local minute-of-day) falls inside `window` (start,
+    end) +/- grace, handling windows/grace that cross midnight. None if
+    either input is unavailable."""
+    if minute is None or window is None:
+        return None
+    start, end = window
+    lo, hi = (start - grace_minutes) % 1440, (end + grace_minutes) % 1440
+    if lo <= hi:
+        return lo <= minute <= hi
+    return minute >= lo or minute <= hi
+
+
+def _timing_checks(matches, group, offset_minutes, target_ym=None):
+    """Best-effort, non-authoritative diagnostics only (see module note
+    above) - a secondary signal for the owner to spot-check, not a source
+    of truth.
+
+    mismatches: matches whose local kickoff time falls outside every
+        parseable slot window its participants are assigned to (+/-
+        SLOT_GRACE_MINUTES). Skipped whenever the match's local time can't
+        be derived, the group has no parseable slots, or any participant
+        isn't assigned to a slot at all (nothing to compare against).
+
+    density_flags: per (date, inferred slot), the assumed total playing
+        time (sum of ASSUMED_MINUTES_PER_GAME per match) vs. the slot's
+        parsed duration, flagged when it exceeds DENSITY_FLAG_RATIO. A match
+        only contributes when ALL of its participants share exactly one
+        common assigned, parseable slot; matches spanning mixed/unassigned
+        players are excluded rather than guessed at.
+    """
+    slots = (group or {}).get('slots') or []
+    windows = {s: _parse_slot_window(s) for s in slots}
+
+    mismatches = []
+    density_buckets = {}  # (day, slot) -> {'minutes': int, 'games': int}
+    for m in matches:
+        date = (m.get('date') or '')
+        ym, day = date[:7], date[:10]
+        if len(ym) != 7 or (target_ym and ym != target_ym):
+            continue
+        participants = (m.get('team_a') or []) + (m.get('team_b') or [])
+        if not participants:
+            continue
+        per_player_slots = [_member_assigned_slots(pid, group) for pid in participants]
+
+        local_minute = _local_minutes_of_day(m.get('date'), offset_minutes)
+        if local_minute is not None and windows and all(per_player_slots):
+            union_slots = set().union(*per_player_slots)
+            parseable = [windows[s] for s in union_slots if windows.get(s)]
+            if parseable and not any(_minute_in_window(local_minute, w, SLOT_GRACE_MINUTES)
+                                      for w in parseable):
+                mismatches.append({
+                    'match_id': m.get('match_id'), 'date': date,
+                    'local_time': f"{local_minute // 60:02d}:{local_minute % 60:02d}",
+                    'participants': participants,
+                    'assigned_slots': sorted(union_slots),
+                })
+
+        common = set.intersection(*per_player_slots) if per_player_slots and all(per_player_slots) else set()
+        if len(common) == 1:
+            slot = next(iter(common))
+            if windows.get(slot):
+                try:
+                    pts = int(m.get('points_to_win'))
+                except (TypeError, ValueError):
+                    pts = None
+                minutes = ASSUMED_MINUTES_PER_GAME.get(pts, DEFAULT_ASSUMED_MINUTES_PER_GAME)
+                bucket = density_buckets.setdefault((day, slot), {'minutes': 0, 'games': 0})
+                bucket['minutes'] += minutes
+                bucket['games'] += 1
+
+    density_flags = []
+    for (day, slot), agg in density_buckets.items():
+        window = windows.get(slot)
+        if not window:
+            continue
+        start, end = window
+        duration = (end - start) if end >= start else (1440 - start + end)
+        if duration <= 0:
+            continue
+        if agg['minutes'] > duration * DENSITY_FLAG_RATIO:
+            density_flags.append({
+                'date': day, 'slot': slot, 'games': agg['games'],
+                'assumed_minutes': agg['minutes'], 'slot_minutes': duration,
+                'ratio': round(agg['minutes'] / duration, 2),
+            })
+
+    mismatches.sort(key=lambda r: r['date'])
+    density_flags.sort(key=lambda r: (-r['ratio'], r['date']))
+    return mismatches, density_flags
+
+
 def insights(group_id=None):
     """Per-member monthly economics, ghosts, and walk-in conversion.
 
@@ -1079,6 +1293,9 @@ def insights(group_id=None):
     walkins = _scan_type('walkin', group_id)
     matches = matches_table.scan().get('Items', [])
     settlement = _settlement_rows(group_id)
+    group = {}
+    if groups_table and group_id:
+        group = groups_table.get_item(Key={'group_id': group_id}).get('Item') or {}
 
     # matches per (player_id, 'yyyy-mm') and distinct active days
     played, active_days = {}, {}
@@ -1226,11 +1443,23 @@ def insights(group_id=None):
     # UNLINKED memberships - if a guest was deliberately left unlinked
     # despite sharing a roster name (the two Mohits), they are different
     # people and must never be counted as converted.
+    #
+    # Month-wise (Owner-requested 2026-08-20: "can we do it month wise for
+    # the calculation of the joined and session paid and other things" -
+    # someone who's said they'll settle up at the end of the month reads as
+    # a standing debt in a lifetime total, when really it's just this
+    # month's not-yet-due balance). When the same month/year filter used
+    # for ghosts/cost_rows above is set, sessions/fees_paid/days_attended
+    # all scope to just that month; with no filter (the "All" default) this
+    # stays the lifetime view it always was, so nothing changes for anyone
+    # not using the picker.
+    target_ym = f"{f_year:04d}-{MONTHS.index(f_month) + 1:02d}" if (f_month in MONTHS and f_year) else None
     member_pids = {m.get('player_id') for m in memberships if m.get('status') == 'Yes' and m.get('player_id')}
     unlinked_member_names = {m.get('display_name') for m in memberships
                               if m.get('status') == 'Yes' and not m.get('player_id')}
     guests = {}
-    for w in walkins:
+    scoped_walkins = [w for w in walkins if not target_ym or str(w.get('date') or '')[:7] == target_ym]
+    for w in scoped_walkins:
         if _num(w.get('fee')) < 0:
             continue
         gkey = w.get('player_id') or f"name:{w.get('display_name')}"
@@ -1247,15 +1476,16 @@ def insights(group_id=None):
             g['became_member'] = w.get('display_name') in unlinked_member_names
 
     # A player who's played matches but has never had a walk-in fee entry
-    # AND has never been a Yes member anywhere is a non-member the club is
-    # missing money from - and until now they were completely invisible
-    # here, since this table only ever looked at `walkins` records (Owner-
-    # reported 2026-08-20: played with us, isn't a slot member, doesn't
-    # show up in this list at all). Add them with sessions=0/fees_paid=0 so
-    # they surface with real "days attended" and, once a default walk-in
-    # fee is set, a real "pending" figure - instead of quietly not existing
-    # in this view just because no one got around to logging a fee for them.
-    played_pids = {pid for (pid, _ym) in active_days.keys()}
+    # (in the scoped period) AND has never been a Yes member anywhere is a
+    # non-member the club is missing money from - and until now they were
+    # completely invisible here, since this table only ever looked at
+    # `walkins` records (Owner-reported 2026-08-20: played with us, isn't a
+    # slot member, doesn't show up in this list at all). Add them with
+    # sessions=0/fees_paid=0 so they surface with real "days attended" and,
+    # once a default walk-in fee is set, a real "pending" figure - instead
+    # of quietly not existing in this view just because no one got around
+    # to logging a fee for them.
+    played_pids = {pid for (pid, ym) in active_days.keys() if not target_ym or ym == target_ym}
     for pid in played_pids:
         if pid in member_pids or pid in guests:
             continue
@@ -1271,14 +1501,11 @@ def insights(group_id=None):
     # roster player never appears in a match, so their attendance can't be
     # cross-checked this way and days_attended stays None for them (still
     # get sessions/fees_paid from their walk-in records, same as before).
-    # "Days attended" is lifetime (all months in the match log), matching
-    # this guest table's existing lifetime scope - it was never filtered by
-    # the fins_month/fins_year picker above (that only scopes ghosts/
-    # cost_rows), so summing across every (pid, ym) here keeps it consistent
-    # rather than silently only covering one month.
     settings_item = finance_table.get_item(Key={'record_id': 'settings'}).get('Item') or {}
     default_fee = settings_item.get('default_walkin_fee')
     default_fee = float(default_fee) if default_fee is not None else None
+    offset_minutes = int(settings_item.get('club_utc_offset_minutes', DEFAULT_CLUB_UTC_OFFSET_MINUTES))
+    timing_mismatches, density_flags = _timing_checks(matches, group, offset_minutes, target_ym=target_ym)
     for gkey, g in guests.items():
         # gkey IS the player_id whenever one exists (see how it's built,
         # both from a walk-in record and from the played-but-never-added
@@ -1286,7 +1513,8 @@ def insights(group_id=None):
         pid = None if str(gkey).startswith('name:') else gkey
         days_attended = None
         if pid:
-            days_attended = sum(len(days) for (p, _ym), days in active_days.items() if p == pid)
+            days_attended = sum(len(days) for (p, ym), days in active_days.items()
+                                 if p == pid and (not target_ym or ym == target_ym))
         g['days_attended'] = days_attended
         if days_attended is not None and default_fee is not None:
             expected = round(days_attended * default_fee, 2)
@@ -1302,11 +1530,14 @@ def insights(group_id=None):
         'became_members': sum(1 for g in guest_rows if g['became_member']),
         'guests': guest_rows,
         'default_walkin_fee': default_fee,
+        'scoped_to_month': f"{f_month} {f_year}" if target_ym else None,
     }
 
     return _response(200, {'ghosts': ghosts, 'noted_attended': noted_attended,
                             'cost_rows': cost_rows, 'conversion': conversion,
-                            'tracking_start': tracking_start})
+                            'tracking_start': tracking_start,
+                            'timing_mismatches': timing_mismatches,
+                            'density_flags': density_flags})
 
 
 def _response(status_code, body_dict):

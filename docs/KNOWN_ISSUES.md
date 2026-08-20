@@ -51,6 +51,25 @@ granting broad legacy access via `set_finance_access` (SuperAdmin, `/finance-acc
 it only ever applies to the default group; use a group's own `finance_roles` map (or the
 request→approve flow) for every other group.
 
+### 18. `/finance-access` never reported a group owner's real (delete-tier) role  · sev: medium, RESOLVED 2026-08-20
+`finance_key_for_caller` (the handler the frontend calls to learn which role to render buttons for)
+only ever consulted `_finance_level`/`_finance_role` - the LEGACY/GLOBAL-only check - and never
+`_group_finance_level`, the function that correctly grants a group owner/admin `delete` tier on their
+own group. Real enforcement (every write/delete endpoint) was never affected - it always called
+`_group_finance_level` itself - but the *button visibility* the frontend renders from this reported
+role was wrong: a group owner with only a stale/lower legacy grant (or none) never saw Delete on
+walk-ins/expenses/memberships, only Edit, even though the buttons were always in the DOM and a direct
+API call would have succeeded. (Owner-reported: "a deletion is not enabled, i can only see edit
+option".) Fixed with `_effective_finance_role(claims, group_id)` - reports the higher of the legacy/
+global role and the per-group role for the group actually being viewed - wired through
+`finance_key_for_caller`'s `group_id` query param, plus a frontend `refreshFinanceRoleForGroup()`
+called on every point the viewed group can change. Also found & fixed while here: `financeUnlock()`
+(the manual view-key entry path) never called `populateFinanceGroups()` at all, so
+`currentFinanceGroupId` stayed null and a group-scoped role check was structurally impossible on that
+path - added the missing call. **Safe move:** any new "what can this caller do" surface exposed to
+the frontend should call the *group-scoped* check (`_group_finance_level`), not the legacy one - the
+legacy check only makes sense as the default-group transition floor described in #4b.
+
 ### 17. `PUT`/`DELETE /matches/{match_id}` had no Cognito auth at all  · sev: high, RESOLVED 2026-08-20
 Both routes were `AuthorizationType: NONE` with a shared `CONFIRMATION_CODE` as the ONLY gate inside
 the Lambda - no caller identity was ever checked. Anyone who knew or guessed the code (a plain string
