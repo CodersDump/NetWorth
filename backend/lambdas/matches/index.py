@@ -1373,11 +1373,15 @@ def list_matches(event):
         # One call, one scan -> the 4 matches-derived Stats sections. Previously
         # 4 concurrent /matches calls, each doing its own full-table scan (a
         # big chunk of the Lambda-concurrency + DynamoDB-RCU pressure).
+        # Optional group_id scopes all four the same way the individual
+        # loaders already do (the frontend defaults every Stats-tab filter to
+        # the caller's own group, so first paint is group-scoped without
+        # costing an extra request - the bundle is still exactly one call).
         return _response(200, {
-            'hall_of_fame': _scrub_private(compute_hall_of_fame(items), private_ids),
-            'diversity': _scrub_private(compute_diversity(items), private_ids),
-            'progress_badges': _scrub_private(compute_progress_badges(items), private_ids),
-            'attendance': _scrub_private(compute_attendance(items), private_ids),
+            'hall_of_fame': _scrub_private(compute_hall_of_fame(items, group_id), private_ids),
+            'diversity': _scrub_private(compute_diversity(items, group_id), private_ids),
+            'progress_badges': _scrub_private(compute_progress_badges(items, group_id), private_ids),
+            'attendance': _scrub_private(compute_attendance(items, group_id), private_ids),
         })
     if params.get('player_season_summary'):
         _pss = params.get('player_season_summary')

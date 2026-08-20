@@ -247,6 +247,39 @@
 
 ## Done
 
+- ✅ 2026-08-19 — **Stats tab defaults to your own group + two staleness fixes (Owner-reported).**
+  Three related fixes, same session:
+  (1) **Stats scoped to your group by default.** All five Stats-tab scope filters (rankings, Hall of
+  Fame, diversity, progress badges, attendance) now default to the viewer's own group instead of
+  club-wide "All" - still one click away from global via the same dropdown. Backend: `stats_bundle`
+  (the single-scan endpoint the Stats tab opens with) now accepts an optional `group_id` and threads it
+  into `compute_hall_of_fame`/`compute_diversity`/`compute_progress_badges`/`compute_attendance` exactly
+  like the individual per-section loaders already did - still one request, no extra Lambda invocations
+  (verified end-to-end: a synthetic two-group fixture produces different, correctly-scoped bundle output
+  per group and an unscoped bundle covering both). Frontend: `loadGroups()` now defaults every scope
+  select to `myGroups()[0]` via a DOM-only `.value` set (fires no 'change' event, so this costs zero
+  extra fetches at boot) instead of just `rankings_scope_select`; `loadStatsBundle()` passes that scope
+  through as `group_id`.
+  (2) **Session-restore race that could leave the group defaults never applied.** `restoreSession()`'s
+  `getSession()` callback can resolve after the boot sequence's own `loadGroups()` call already ran with
+  no identity yet (silent session restore is async; `loadGroups()` doesn't wait for it) - previously the
+  only way to pick the default group back up was a second page reload. `restoreSession()` now re-runs
+  `loadGroups()` in that callback too (alongside the existing `loadPlayers()`); every default there only
+  fills an empty select, so calling it twice is a no-op past whatever's already been chosen. This also
+  makes the *existing* match-recording group default (`defaultMatchGroup()`, previously the only thing
+  gated this way) reliable for the same reason - Owner flagged "keep the player's group as default when
+  filling up their matches", and it turned out to already exist but not always fire.
+  (3) **Newly-registered player not appearing in the team dropdowns without a page reload
+  (Owner-reported, "crucial").** The "+ Register a new player for this match" quick-add on the
+  record-match form already refreshed `allPlayers` via `loadPlayers()`, but the team-select dropdowns
+  actually populate from `currentMatchGroupMembers` - a client-side cache of the selected group's roster
+  added so randomizing teams doesn't re-fetch the group on every click (see the swap-to-repair entry
+  below). `loadPlayers()` doesn't touch that cache, so a player just added to the currently-selected
+  group silently didn't show up until something else refreshed it (switching groups, or a full reload) -
+  and became more likely to bite now that a group is selected by default per (1)/(2) above. The handler
+  now also calls `updateMatchGroupCache()` + `refreshTeamSelectOptions()` after a successful quick-add.
+  All three: frontend-only (`app.js`) except the `stats_bundle` `group_id` param (`matches/index.py`,
+  additive/backward-compatible - omitting it reproduces the old unscoped behavior exactly).
 - ✅ 2026-08-19 — **Match-recording team pickers: swap-to-repair instead of hide-to-repair.** The 4
   player dropdowns on the record-match form (`team_a1_select`/`_a2`/`_b1`/`_b2`) used to exclude anyone
   already picked in one of the other 3 slots, so moving someone from one slot to another meant clearing

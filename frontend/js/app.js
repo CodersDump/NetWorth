@@ -362,10 +362,17 @@ let userPool = null;
       loadRankings(); loadHistory(); loadPublicWalkins(); loadSeasonsMeta();
       makeStatsCollapsible();
       // Hall of Fame + diversity + badges + attendance in ONE call (was 4
-      // concurrent full-table scans). Group-filter changes still use the
-      // individual loaders. Falls back to those if the bundle call fails.
+      // concurrent full-table scans). Scoped to the default/selected group
+      // (see loadGroups' Stats-scope defaulting) so first paint already
+      // shows the viewer's own group, not the whole club - still one
+      // request either way. A later manual change to one section's own
+      // filter re-fetches just that section via its individual loader.
+      // Falls back to the individual loaders (each reading its own filter)
+      // if the bundle call fails.
       try {
-        const res = await statsFetch('stats_bundle=true');
+        const scope = document.getElementById('rankings_scope_select').value;
+        const bundleQS = 'stats_bundle=true' + (scope ? `&group_id=${encodeURIComponent(scope)}` : '');
+        const res = await statsFetch(bundleQS);
         const data = await res.json();
         if (!res.ok || !data) throw new Error('bundle failed');
         if (data.hall_of_fame) { lastHofData = data.hall_of_fame; renderHallOfFame(data.hall_of_fame); }
@@ -739,18 +746,30 @@ let userPool = null;
       if (typeof nwPairingRefreshList === 'function') nwPairingRefreshList();
       populateSelect(document.getElementById('attendance_group_filter'), allGroups, 'group_id', 'group_name', 'All groups');
       populateSelect(document.getElementById('rankings_scope_select'), allGroups, 'group_id', 'group_name', 'All players');
-      // Once someone belongs to a group, default the rankings view to it so
-      // they see their group-mates first rather than the whole club. Only
-      // when nothing's been chosen yet, so it never fights a manual pick.
-      const rankScope = document.getElementById('rankings_scope_select');
-      if (rankScope && !rankScope.value) {
-        const mine = myGroups();
-        if (mine.length) { rankScope.value = mine[0].group_id; if (typeof loadRankings === 'function') loadRankings(); }
-      }
       populateSelect(document.getElementById('profile_partnerships_scope_group'), allGroups, 'group_id', 'group_name', 'All plays');
       populateSelect(document.getElementById('hof_group_filter'), allGroups, 'group_id', 'group_name', 'All groups');
       populateSelect(document.getElementById('diversity_group_filter'), allGroups, 'group_id', 'group_name', 'All groups');
       populateSelect(document.getElementById('badges_group_filter'), allGroups, 'group_id', 'group_name', 'All groups');
+      // Once someone belongs to a group, default every Stats-tab scope
+      // selector to it so they land on their own group's numbers instead of
+      // the whole club's - still one click away from "All" (global) via the
+      // same dropdown. Only when nothing's been chosen yet, so it never
+      // fights a manual pick. Setting .value here doesn't fire 'change', so
+      // this stays a DOM-only default - no extra fetches at boot for the
+      // four bundle-covered sections (rankings keeps its existing eager
+      // refresh below; hall_of_fame/diversity/progress_badges/attendance
+      // pick up the default the moment loadStatsBundle runs, on first Stats
+      // tab open - see loadStatsBundle's group_id param).
+      const mine = myGroups();
+      if (mine.length) {
+        const defaultGroupId = mine[0].group_id;
+        ['rankings_scope_select', 'hof_group_filter', 'diversity_group_filter', 'badges_group_filter',
+         'attendance_group_filter'].forEach(id => {
+          const sel = document.getElementById(id);
+          if (sel && !sel.value) sel.value = defaultGroupId;
+        });
+        if (typeof loadRankings === 'function') loadRankings();
+      }
       const historyScopeSelect = document.getElementById('history_scope_select');
       historyScopeSelect.innerHTML = '<option value="global">Global (all players)</option>' +
         [...allGroups].sort((a, b) => a.group_name.localeCompare(b.group_name))
@@ -1534,6 +1553,16 @@ let userPool = null;
       });
       if (!res.ok) { nwAlert('Error: ' + error); return; }
       await loadPlayers();  // refreshes allPlayers + every team-select dropdown
+      // If a group is selected, the team dropdowns actually populate from
+      // currentMatchGroupMembers (a client-side cache of that group's
+      // roster, kept around so randomizing teams doesn't re-fetch the group
+      // on every click) - not from allPlayers. loadPlayers() alone doesn't
+      // touch that cache, so a player just added to the selected group
+      // wouldn't show up in the dropdowns until something else happened to
+      // refresh it (a group switch, or a full page reload). Refresh it here
+      // too so the newly-registered player actually appears immediately.
+      await updateMatchGroupCache();
+      refreshTeamSelectOptions();
       nwAlert(`${name.trim()} is registered${data.added_to_group ? ' and added to ' + data.added_to_group : ''} - pick them from the team dropdowns below.`);
     });
 
@@ -6810,6 +6839,16 @@ let userPool = null;
         // to do, and it doesn't block the rest of the page.
         setAuthSession(session, user, { silent: true });
         loadPlayers();
+        // getSession() resolving here can race the boot sequence's own
+        // loadGroups() call - if this callback lands AFTER that call
+        // already ran, it ran with no identity yet, so the "default my
+        // group" logic in loadGroups (match-recording group, every
+        // Stats-tab scope filter) silently found nobody logged in and
+        // skipped it - previously the only way to pick it up was a second
+        // page reload. Re-run it here too; it's a no-op past what's
+        // already been chosen (every default there only fills an empty
+        // select), so this is safe to call twice.
+        loadGroups();
       });
     }
 
