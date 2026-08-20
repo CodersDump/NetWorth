@@ -77,12 +77,20 @@
     duplicate). Frontend: a `finance-scope-note` banner on the Finance tab explains why the ledger looks
     shorter than the whole club's when scoped. Verified with a standalone access-matrix script (view
     sees own slot + group-wide only; write/delete/owner/admin see everything unrestricted).
-  - **Stage 5 — co-owners, ownership transfer, per-group payee (DONE 2026-07-31).** Ownership
-    transfer (owner-only) via `transfer_to` on `PUT /group-slots/{group_id}` — old owner demotes to
-    regular member (view access). Per-group `finance_payee` ({player_id, upi_id, upi_name}, must be a
-    member) set by any owner/admin. Co-owners: use the existing role control to promote a member to
-    owner/admin. `get_group`/`list_groups` return `finance_payee`. Frontend: Transfer ownership + Set
-    payee controls in the group detail. Transfer + payee logic unit-tested.
+  - **Stage 5 — co-owners, ownership transfer, per-group payee (DONE 2026-07-31; co-owner control
+    actually built 2026-08-20).** Ownership transfer (owner-only) via `transfer_to` on
+    `PUT /group-slots/{group_id}` — old owner demotes to regular member (view access). Per-group
+    `finance_payee` ({player_id, upi_id, upi_name}, must be a member) set by any owner/admin.
+    `get_group`/`list_groups` return `finance_payee`. Frontend: Transfer ownership + Set payee controls
+    in the group detail. Transfer + payee logic unit-tested. **Correction (Owner-reported 2026-08-20):**
+    this entry claimed co-owners worked via "the existing role control" - that control never actually
+    existed. The group detail only ever rendered a *read-only* role badge; the backend
+    (`PUT /group-role/{group_id}/{player_id}`, `set_role`) already allowed any owner/admin of a group to
+    set a member's role including 'owner', but nothing in the frontend called it. Built the missing
+    piece: the role badge is now an editable `<select>` (member/admin/owner) for anyone `canManageGroup`,
+    calling the now-wired `setGroupMemberRole`. A self-demotion away from 'owner' gets a confirm first
+    (no backend "last owner" floor exists, so it's possible to leave a group ownerless - a SuperAdmin can
+    always fix that, but worth a pause before doing it to yourself).
   - **Stage 6 — member dues + UPI tap-to-pay (DONE 2026-07-31).** `my_settlement` now also returns
     the group's payee (VPA + name, member-gated). The "My dues" card shows a "Pay ₹X via UPI" button
     that builds a `upi://pay?pa=...&am=...&cu=INR` deep-link the phone hands to the user's UPI app.
@@ -247,6 +255,32 @@
 
 ## Done
 
+- ✅ 2026-08-20 — **Group owners get match delete/edit requests + an actually-working co-owner
+  control (both Owner-reported: "only shows up under my admin account", "owner should be able to add
+  co-owners").**
+  (1) **Match delete/edit requests now reach group owners, not just SuperAdmin.** `_create_match_request`
+  already stamped a `group_id` on every request specifically so this could be wired up later without a
+  schema change - that follow-up was never done. Added `match_edit`/`match_delete` to
+  `OWNER_DECIDABLE_TYPES` (players lambda); `_owner_may_decide`'s existing group-precise check
+  (`gid in owned_group_ids`) now applies to them exactly like it already does for `finance_access` - an
+  owner sees and can approve/reject requests for THEIR group's matches, never another group's, and a
+  request with no group (a genuinely one-off match) still falls through to SuperAdmin-only, unchanged.
+  Verified with a request-matrix script (own-group match request decidable, other-group rejected,
+  ungrouped rejected, `finance_access`/`delete_player` behavior unchanged). **Caveat noted, not a new
+  risk:** approving a match change still triggers a club-wide rating recompute (Elo is one shared pool,
+  not per-group) - true for a SuperAdmin approval today too, not something this change introduces.
+  `delete_player` deliberately stays SuperAdmin-only (whole-account removal, not group-scoped, no
+  `group_id` to gate against). Frontend already rendered these request types in the shared requests list
+  (no change needed there) - just updated the "sent to the admin" toast since it's no longer always the
+  admin.
+  (2) **Co-owner control actually built.** The group detail page's per-member role badge was read-only,
+  despite BACKLOG and the page's own copy both claiming a working "role control." Backend
+  (`PUT /group-role/{group_id}/{player_id}`) already allowed any owner/admin of a group to promote a
+  member to owner/admin - only the frontend call was missing. Added `setGroupMemberRole` and swapped the
+  read-only badge for an editable member/admin/owner `<select>` when the viewer `canManageGroup`, mirroring
+  the existing finance-role select right next to it. Self-demotion away from 'owner' asks for confirmation
+  first (no "last owner" backend floor exists to prevent an accidental lockout).
+  Both: `backend/lambdas/players/index.py` (1) + `frontend/js/app.js` (both).
 - ✅ 2026-08-19 — **Stats tab defaults to your own group + two staleness fixes (Owner-reported).**
   Three related fixes, same session:
   (1) **Stats scoped to your group by default.** All five Stats-tab scope filters (rankings, Hall of

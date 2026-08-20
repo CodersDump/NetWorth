@@ -354,16 +354,27 @@ def create_claim_request(event):
 
 
 # Request types a group owner/admin may decide for their OWN group's members.
-# Deliberately narrow: destructive/global actions (delete_player, match_edit,
-# match_delete) stay SuperAdmin-only. finance_access WAS SuperAdmin-only
-# (finance roles used to be club-GLOBAL, so an owner granting one would hand
-# access across every group) - now that finance is group-scoped (BACKLOG
-# "Group-scoped finance", Stages 2-5 done), a finance_access request always
-# carries a group_id and _owner_may_decide below requires the caller to own
-# THAT group, so it can't leak into groups they don't run. new_profile
-# carries no group, so it still can't be owner-scoped and stays
-# SuperAdmin-only.
-OWNER_DECIDABLE_TYPES = {'claim', 'edit_own_name', 'finance_access'}
+# finance_access WAS SuperAdmin-only (finance roles used to be club-GLOBAL, so
+# an owner granting one would hand access across every group) - now that
+# finance is group-scoped (BACKLOG "Group-scoped finance", Stages 2-5 done), a
+# finance_access request always carries a group_id and _owner_may_decide below
+# requires the caller to own THAT group, so it can't leak into groups they
+# don't run. match_edit/match_delete requests have carried a group_id since
+# _create_match_request was written specifically so this could be added later
+# without a schema migration (Owner request 2026-08-19) - same group-precise
+# gating as finance_access, via the request's own group_id.
+# NOTE: approving a match_edit/match_delete still triggers a CLUB-WIDE rating
+# recompute (Elo is one shared pool, not per-group - see AGENTS.md golden rule
+# #1), so an owner approving a correction for their own group's match can
+# still shift ratings for players outside it. That's inherent to how ratings
+# already work for a SuperAdmin approval too, not something this change adds.
+# delete_player stays OUT on purpose: it removes the player record AND their
+# Cognito login entirely, it isn't meaningfully "owned" by one group (a player
+# can be a member of several, or none), and unlike the other types here it
+# carries no group_id to scope a group-precise grant against - broadening it
+# needs its own explicit decision, not a side effect of this one. new_profile
+# carries no group either and stays SuperAdmin-only for the same reason.
+OWNER_DECIDABLE_TYPES = {'claim', 'edit_own_name', 'finance_access', 'match_edit', 'match_delete'}
 
 
 def _caller_owned_group_ids(claims):
