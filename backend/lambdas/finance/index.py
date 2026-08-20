@@ -815,7 +815,10 @@ def my_settlement(claims, group_id):
         if not gw or gw.get('cost_per_head') is None:
             continue
         gw_cost = gw['cost_per_head']
-        gw_back = gw.get('residual_per_head') or 0.0
+        # residual_per_head is the expense-driven even share; walkin_shares
+        # is this member's slot-weighted cut of walk-in earnings (see
+        # _settlement_rows) - summed for their total group-wide refund.
+        gw_back = (gw.get('residual_per_head') or 0.0) + (gw.get('walkin_shares', {}).get(pid, 0) or 0.0)
         owe_total += gw_cost
         owed_back_total += gw_back
         lines.append({
@@ -886,13 +889,28 @@ def _settlement_rows(group_id=None):
             'extra_collected': 0.0, 'player_count': 0, 'forfeit_count': 0, 'items': []
         })
 
-    # A record with no slot is GROUP-WIDE: its cost/residual is split across the
-    # DISTINCT "Yes" members across every slot that month (counted once even if
-    # in two slots). It lives in its own (month, year, GROUP_SLOT) bucket whose
-    # player_count is set to that distinct count below, so the same per-bucket
-    # math then divides it correctly. (_slot_key is the module-level helper -
+    # A record with no slot is GROUP-WIDE. Its EXPENSE side (cost_per_head,
+    # and the expense-driven half of residual) is split across the DISTINCT
+    # "Yes" members across every slot that month, counted once even if a
+    # member is in several slots - a group-wide expense (shuttle boxes, a
+    # one-off court-wide purchase) is rare and doesn't scale with how many
+    # slots you play, so everyone pays/gets refunded the same even share.
+    # Its WALK-IN side (extra_collected) is different: walk-ins occupy court
+    # time PER SLOT, so a member who plays more slots is more exposed to
+    # that - their share of walk-in earnings is weighted by how many of the
+    # month's slots they're enrolled in, not split evenly. (Owner-requested
+    # 2026-08-20: expense/12 evenly, walk-in/18 by slot-count, in their
+    # worked example of 12 unique members across 18 total slot-enrollments.)
+    # It lives in its own (month, year, GROUP_SLOT) bucket whose player_count
+    # is set to the distinct count below, so cost_per_head divides correctly;
+    # residual_per_head after the main loop below is the EXPENSE-ONLY even
+    # share, and walkin_shares (added in the post-pass further down) is a
+    # per-member dict for the slot-weighted walk-in share - the two are
+    # summed by the callers that need a member's total group-wide refund
+    # (my_settlement, insights). (_slot_key is the module-level helper -
     # also used by list_records for Stage 4c slot-scoped view access.)
     distinct_members = {}  # (month, year) -> set of idents (Yes, any slot)
+    member_slot_counts = {}  # (month, year) -> {ident: # distinct slots Yes this month}
 
     for e in expenses:
         b = bucket(e.get('month'), e.get('year'), _slot_key(e.get('slot')))
@@ -911,7 +929,10 @@ def _settlement_rows(group_id=None):
             if m.get('forfeit_residual'):
                 b['forfeit_count'] += 1
             ident = m.get('player_id') or f"name:{m.get('display_name')}"
-            distinct_members.setdefault((str(m.get('month')), int(_num(m.get('year')))), set()).add(ident)
+            my = (str(m.get('month')), int(_num(m.get('year'))))
+            distinct_members.setdefault(my, set()).add(ident)
+            member_slot_counts.setdefault(my, {})
+            member_slot_counts[my][ident] = member_slot_counts[my].get(ident, 0) + 1
 
     for w in walkins:
         date = w.get('date') or ''
@@ -945,6 +966,38 @@ def _settlement_rows(group_id=None):
         b['estimated_total'] = round(b['estimated_total'], 2)
         b['actual_total'] = round(b['actual_total'], 2)
         b['extra_collected'] = round(b['extra_collected'], 2)
+
+    # Group-wide post-pass: split the expense-driven and walk-in-driven
+    # halves of residual differently (see the big comment above). Overwrites
+    # the combined residual_per_head computed above with the EXPENSE-ONLY
+    # even share, and adds walkin_shares, a per-member dict, for the
+    # slot-weighted walk-in share.
+    for key, b in periods.items():
+        if key[2] != GROUP_SLOT:
+            continue
+        month, year = key[0], key[1]
+        active = b.get('active_count') or 0
+        b['residual_per_head'] = round(
+            (b['estimated_total'] - b['actual_total']) / active, 2) if active else None
+        slot_counts = member_slot_counts.get((month, year), {})
+        total_slots = sum(slot_counts.values())
+        walkin_total = b['extra_collected']
+        shares = {}
+        if walkin_total:
+            if total_slots > 0:
+                for ident, n_slots in slot_counts.items():
+                    shares[ident] = round(walkin_total * n_slots / total_slots, 2)
+            elif active:
+                # No real per-slot enrollment on record this month (shouldn't
+                # normally happen alongside a group-wide walk-in fee, but
+                # don't just drop the money) - fall back to an even split
+                # across the distinct group-wide members instead.
+                even = round(walkin_total / active, 2)
+                for ident in distinct_members.get((month, year), set()):
+                    shares[ident] = even
+        b['walkin_shares'] = shares
+        b['walkin_total'] = round(walkin_total, 2)
+        b['walkin_denominator'] = total_slots
 
     # Settled status (second pass - needs every period's residual finalised
     # first, because a member's EFFECTIVE amount = cost_per_head - their relief,
@@ -1099,10 +1152,12 @@ def insights(group_id=None):
         relief = _member_relief(settlement, memberships, ident, month, year)
         # Group-wide relief from last month (only if they were a distinct Yes
         # member then, i.e. they have an entry for the previous period).
+        # residual_per_head is the expense-driven even share; walkin_shares
+        # is this member's slot-weighted cut of walk-in earnings (see
+        # _settlement_rows) - both count toward relief.
         p_gw = settlement.get((p_month, p_year, GROUP_SLOT))
-        if (p_gw and p_gw.get('residual_per_head')
-                and (ident, p_month, p_year) in by_member_month):
-            relief += p_gw['residual_per_head']
+        if p_gw and (ident, p_month, p_year) in by_member_month:
+            relief += (p_gw.get('residual_per_head') or 0) + (p_gw.get('walkin_shares', {}).get(ident, 0) or 0)
 
         attended_briefly = any(
             mem3.get('attended_briefly') for mem3 in memberships

@@ -255,6 +255,36 @@
 
 ## Done
 
+- ✅ 2026-08-20 — **Group-wide expense/walk-in split reworked (expense evenly per unique member,
+  walk-in earnings weighted by slot-count) + walk-in entries now editable (Owner-requested).**
+  (1) **Split rework.** A slot-less ("(whole group)") expense or walk-in record used one combined
+  `residual_per_head`, split evenly across the month's DISTINCT Yes members regardless of how many
+  slots each was in. Per the owner's worked example (3 slots x 6 = 18 slot-enrollments, 12 unique
+  members: 2 in all 3 slots, 2 in 2 slots, 8 in exactly 1), that's now two different splits: the
+  EXPENSE side (`cost_per_head` and the expense-driven half of `residual_per_head`) stays an even
+  per-unique-member split (rare, doesn't scale with slot count - e.g. a one-off shuttle-box buy); the
+  WALK-IN side (`extra_collected`) is now weighted by each member's slot-count that month (walk-ins
+  occupy court time per slot, so someone in 3 slots is exposed to more of that than someone in 1).
+  `_settlement_rows` (finance lambda) gained `member_slot_counts` and a post-pass that overwrites the
+  GROUP_SLOT bucket's `residual_per_head` to be expense-only and adds a per-member `walkin_shares`
+  dict (falls back to an even split if a group-wide walk-in exists with zero real slot-enrollments on
+  record, so money is never silently dropped). `my_settlement` and `insights()` both sum
+  `residual_per_head + walkin_shares[ident]` wherever they used to read the old combined
+  `residual_per_head` alone, so a member's own dues/relief already reflect the new split with no
+  frontend math needed. Frontend: the Monthly settlement summary table shows the two pieces
+  separately for `(whole group)` rows instead of one now-misleading average. Verified against the
+  owner's exact example (1200 expense / 12 = 100 even; 900 walk-in split 3/2/1 parts -> ₹150 for the
+  two triple-slot members, ₹100 for the two double-slot members, ₹50 each for the eight single-slot
+  members) plus a `my_settlement` end-to-end check.
+  (2) **Walk-in entries are editable.** Only had Delete before (Owner-reported: "i added a few
+  accidentally multiple times" - no way to fix a typo or duplicate without delete-then-redo). Added an
+  Edit button mirroring the existing expense-edit pattern (`editingWalkinId`, `resetWalkinEdit`,
+  `finance-cancel-walkin-edit-btn`), backed by the `PUT /walkins/{id}` route that already existed
+  server-side (`update_record` is generic per record type - no backend change needed). Wired into the
+  write-tier visibility gate (`fin-edit-walkin` added alongside `fin-edit-exp` in
+  `applyFinanceRoleVisibility`) so view-only finance roles don't see it, same as expense edit.
+  Files: `backend/lambdas/finance/index.py` (1), `frontend/index.html` (2, one button),
+  `frontend/js/app.js` (1 summary table, 2 walk-in list).
 - ✅ 2026-08-20 — **Non-member attendance-vs-fees tracking + collapsible Finance sections
   (Owner-requested).**
   (1) **Non-members: days attended vs. fees collected, with expected/pending.** The existing
