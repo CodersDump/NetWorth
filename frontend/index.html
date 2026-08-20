@@ -803,6 +803,11 @@
             <p class="card-sub" style="margin:0 0 8px;">Expected per-visit fee for non-members. Set this to see an "expected" and "pending" figure in Insights' walk-in table (days attended, from the match log, × this fee); leave blank to see attendance and fees collected only, with no guessed amount.</p>
             <label>Fee per visit <input type="number" id="finance_default_walkin_fee" step="0.01" placeholder="80"></label>
           </div>
+          <div data-fin-min="write" style="margin-top:14px; border-top:1px solid var(--border); padding-top:12px;">
+            <p style="font-size:13px; font-weight:600; margin:0 0 4px;">Club timezone (for slot-timing checks)</p>
+            <p class="card-sub" style="margin:0 0 8px;">Minutes offset from UTC used to convert match timestamps to local time for the best-effort slot-timing / match-density flags in Insights (e.g. India Standard Time is 330). Leave blank to keep the default.</p>
+            <label>UTC offset (minutes) <input type="number" id="finance_club_utc_offset_minutes" step="1" placeholder="330"></label>
+          </div>
           <button id="finance-save-settings-btn" data-fin-min="write" type="button" class="secondary" style="margin-top:8px;">Save settings</button>
           <span id="finance-settings-status" style="font-size:13px; margin-left:8px;"></span>
         </div>

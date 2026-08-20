@@ -332,6 +332,70 @@
   metric," "we can have this as a secondary"), and genuinely under-specified (grace-period threshold,
   what counts as a mismatch, whether entry timestamp vs. actual play time is even a reliable enough
   signal to act on). Asked the owner whether/how they want it scoped before building it.
+  **(Note: that question was never actually surfaced to the owner in a reply - see 2026-08-20 v1.42.0
+  below, where they said "you parked something, please proceed" and it got built anyway, resolved by
+  making both checks fail-safe/skip-on-ambiguity instead of blocking on the missing answer.)**
+- ✅ 2026-08-20 (v1.42.0) — **Finance-role reporting bug (Owner-reported "a deletion is not enabled,
+  i can only see edit option") + month-wise non-member scoping + the parked slot-timing/match-density
+  anomaly checks (all three from the same owner message).**
+  (1) **Finance delete buttons invisible to group owners.** `finance_key_for_caller` (the
+  `/finance-access` handler that tells the frontend which role to render buttons for) only ever
+  called `_finance_level`/`_finance_role` - the LEGACY/GLOBAL-only check - and never
+  `_group_finance_level`, the function that correctly grants a group owner/admin `delete` tier on
+  their own group. A group owner whose only reported role came from a stale/lower legacy grant (or
+  none at all) never got told they had delete access, so `.fin-del` buttons - which already existed
+  in the walk-in/expense/membership row templates, gated purely on `myFinanceRole` - stayed hidden;
+  only `.fin-edit*` (write-tier) showed. Not a rendering bug: the buttons were always there, the role
+  string reaching the browser was just wrong. Added `_effective_finance_role(claims, group_id)`
+  (finance lambda) - reports the higher of the caller's legacy/global role and their per-group role
+  for the group being viewed; real enforcement is untouched, this only decides what the UI shows -
+  and wired `group_id` through from `finance_key_for_caller`'s query params. Frontend: added
+  `refreshFinanceRoleForGroup()` and wired it into `tryAutoFinanceUnlock()`, `financeUnlock()` (which
+  was *also* missing `populateFinanceGroups()` entirely on the manual-key-entry path, so
+  `currentFinanceGroupId` stayed null and no group-scoped role check was even possible there - added
+  that call too), the finance-group `<select>`'s change handler, and the Finance tab reopen path.
+  Verified with a fixture: an owner with only a legacy `finance_role='write'` now gets `'delete'`
+  when their own group's `group_id` is passed, unchanged `'write'` with no group_id (backward compat).
+  (2) **Non-members table now scopes to the Month+Year picker, not just lifetime** (Owner-requested:
+  "sashi did not pay anything for now as we discussed he would pay at the end" - a guest who's agreed
+  to settle up later shouldn't read as a standing lifetime debt). `insights()`'s guest/conversion
+  block now filters walk-in records, match-log attendance (`active_days`), and the derived
+  sessions/fees/days-attended/expected/pending figures to the same `f_month`/`f_year` filter the
+  ghosts/cost-rows tables already used, when both are set; leaving Year blank keeps the lifetime view
+  unchanged for anyone not using the picker. `conversion.scoped_to_month` tells the frontend which
+  mode it's in; `renderInsights()` shows a one-line note either way ("Showing July 2026 only..." /
+  "Showing the lifetime total..."). Verified with a fixture: a guest with match-log days in both July
+  and August shows 3 lifetime / 2 July-only / 1 August-only.
+  (3) **Slot-timing mismatch + match-density anomaly flags** (the item parked 2026-08-19, built now
+  on explicit go-ahead: "i think you parked something, please proceed with that as well"). Two
+  best-effort, non-authoritative diagnostics under a new collapsed-by-default "⏱️ Slot-timing & match-
+  density flags" section in Insights, clearly labeled as heuristic:
+    - **Timing mismatches** - a match whose local kickoff time falls outside every parseable slot
+      window (± 15 min grace, `SLOT_GRACE_MINUTES`) its participants are assigned to. New
+      `_parse_slot_window(label)` regex-parses free-text slot labels ("7AM-8AM", "7-8AM",
+      "19:00-20:00", crossing-midnight windows) into a local minute-of-day range, returning `None`
+      (skip, never flag) on anything it can't parse. New `_local_minutes_of_day(iso_ts, offset)`
+      converts a match's stored UTC timestamp using a new club-wide `club_utc_offset_minutes` setting
+      (defaults to IST, +330 - inferred from context: rupee currency, Indian names throughout; a
+      Finance-settings field lets the owner correct this if wrong). A match is skipped entirely
+      (never flagged) unless local time, the group's parsed slots, AND every participant's slot
+      assignment are all available - ambiguity means "can't check," never a false flag.
+    - **Density flags** - per (date, inferred slot), whether the assumed total playing time (sum of
+      `ASSUMED_MINUTES_PER_GAME` - 15 min for a 21-point game, 8 for an 11-point game, 12 default -
+      across that bucket's matches) exceeds the slot's parsed duration by more than 1.3x
+      (`DENSITY_FLAG_RATIO`). Since match records carry no direct `slot` field, a match only
+      contributes to a bucket when ALL of its participants share exactly one common assigned,
+      parseable slot; matches spanning mixed or unassigned players are excluded rather than guessed
+      at.
+    New `_timing_checks(matches, group, offset_minutes, target_ym)` (finance lambda) returns both
+    lists, scoped by the same month/year filter as the rest of `insights()`; wired into its response
+    as `timing_mismatches`/`density_flags`. `insights()` now also fetches the group record (for
+    `slots`/`slot_members`) when a `group_id` is given. Verified with fixtures: an on-time match in
+    its assigned window doesn't flag, one 3.5 hours off does; 6 assumed-15-min games crammed into a
+    60-min slot (1.5x) flags, 2 games (0.5x) don't; unparseable/no-group/no-slot-assignment inputs
+    all degrade to empty results rather than errors.
+  Files: `backend/lambdas/finance/index.py` (all 3), `frontend/js/app.js` (1, 2, 3),
+  `frontend/index.html` (3, one settings field).
 - ✅ 2026-08-20 — **Match edit/delete: real Cognito auth (was code-only) + relief double-counting
   fix in My Dues + paid amount shown + match-count-per-group metric (all Owner-raised).**
   (1) **`PUT`/`DELETE /matches/{match_id}` moved off the shared confirmation code onto real auth**
