@@ -255,6 +255,23 @@
 
 ## Done
 
+- ✅ 2026-08-20 — **Non-members table was invisible to anyone with no walk-in fee record
+  (Owner-reported: played with us, isn't a slot member, doesn't show up).**
+  `insights()`'s guest table was built ENTIRELY from `walkins` records - a player who's played
+  matches but was never a Yes member anywhere AND never had a walk-in fee logged for them (no one got
+  around to it, or they simply hadn't paid yet) never entered the `guests` dict at all, so they were
+  completely absent from the one table meant to catch exactly that case. Added a pass after the
+  walk-in-derived guests are built: anyone appearing in the match log (`active_days`, already computed
+  for the cost-per-member table) who isn't a `member_pids` and isn't already a guest gets added with
+  `sessions: 0, fees_paid: 0` and their real days-attended - so they now surface with a full
+  attendance count and (once a default walk-in fee is set) a real pending amount, instead of not
+  existing in this view. Also simplified/fixed the days-attended pid lookup while in there: it used to
+  re-scan every walk-in record per guest to recover their player_id from the dict key; since the key
+  literally IS the player_id whenever one exists (by construction), that's now a direct check instead
+  of a nested scan - also fixes it for these newly-added match-only guests, who have no walk-in record
+  to scan in the first place. Verified with a fixture (a player with 2 match-log days, no walk-in
+  record, not a member -> now appears with `days_attended: 2, sessions: 0, fees_paid: 0`).
+  File: `backend/lambdas/finance/index.py`.
 - ✅ 2026-08-20 — **Group-wide expense/walk-in split reworked (expense evenly per unique member,
   walk-in earnings weighted by slot-count) + walk-in entries now editable (Owner-requested).**
   (1) **Split rework.** A slot-less ("(whole group)") expense or walk-in record used one combined

@@ -354,7 +354,7 @@ _NetWorth - tournaments Lambda (singles or doubles)_
 | `substitute_player` | tournament_id, event | 971 | Swap a player out of a team for all of that team's FUTURE (unplayed) |
 | `_response` | status_code, body_dict | 1050 | — |
 
-#### `finance` — 1305 LOC
+#### `finance` — 1321 LOC
 _NetWorth - finance Lambda_
 
 **Module constants:** `GROUPS_TABLE`, `DEFAULT_GROUP_NAME`, `GROUP_SLOT`, `VIEW_KEY`, `CONFIRMATION_CODE`, `MONTHS`, `FINANCE_LEVELS`, `ALLOWED_FIELDS`, `NUMERIC_FIELDS`, `REQUIRED_FIELDS`, `AVG_GAMES_PER_SESSION`, `SESSION_RATE`, `ACTIVE_DAYS_THRESHOLD`
@@ -396,7 +396,7 @@ _NetWorth - finance Lambda_
 | `_settlement_rows` | group_id | 868 | Per (month, year, slot): the exact math from the Calculations sheet. |
 | `summary` | group_id, scope_slots | 1032 | — |
 | `insights` | group_id | 1054 | Per-member monthly economics, ghosts, and walk-in conversion. |
-| `_response` | status_code, body_dict | 1296 | — |
+| `_response` | status_code, body_dict | 1312 | — |
 
 #### `progress_scheduler` — 220 LOC
 _NetWorth - progress_scheduler Lambda_
