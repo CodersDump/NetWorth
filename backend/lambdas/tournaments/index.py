@@ -600,9 +600,11 @@ def create_manual_draft_tournament(event, claims):
         picks_per_pool = int(body.get('picks_per_pool', 2))
         group_matches_per_tie = int(body.get('group_matches_per_tie', 2))
         knockout_matches_per_tie = int(body.get('knockout_matches_per_tie', 1))
+        num_groups = int(body.get('num_groups', 1))
+        advance_per_group = int(body.get('advance_per_group', 2))
     except (TypeError, ValueError):
         return _response(400, {'error': 'budget_per_leader, num_pools, picks_per_pool, group_matches_per_tie, '
-                                         'knockout_matches_per_tie must be numbers'})
+                                         'knockout_matches_per_tie, num_groups, advance_per_group must be numbers'})
 
     match_type = body.get('match_type', 'singles')
     if match_type not in ('singles', 'doubles'):
@@ -616,6 +618,10 @@ def create_manual_draft_tournament(event, claims):
         return _response(400, {'error': 'budget_per_leader must be positive'})
     if group_matches_per_tie < 1 or knockout_matches_per_tie < 1:
         return _response(400, {'error': 'matches_per_tie values must be at least 1'})
+    if num_groups < 1:
+        return _response(400, {'error': 'num_groups must be at least 1'})
+    if advance_per_group < 1:
+        return _response(400, {'error': 'advance_per_group must be at least 1'})
 
     member_ids = list(group.get('member_ids', []))
     if len(member_ids) < num_pools:
@@ -638,6 +644,8 @@ def create_manual_draft_tournament(event, claims):
             'group_matches_per_tie': group_matches_per_tie,
             'knockout_matches_per_tie': knockout_matches_per_tie,
             'match_type': match_type,
+            'num_groups': num_groups,
+            'advance_per_group': advance_per_group,
         },
         'leaders': [],
         'pools': {
@@ -1400,11 +1408,17 @@ def _authorize_tie_scorer(item, tie, claims):
     return _response(403, {'error': "only the organizer or one of this tie's two squad leaders can submit a score"})
 
 
-def compute_squad_standings(item):
+def compute_squad_standings(item, squad_ids=None):
     """Squad-level standings: sorted by (ties_won desc, aggregate point
     differential desc) - same score-based rule used to decide a single
-    tie, one level up."""
+    tie, one level up. Pass squad_ids to scope this to one group's
+    standings (real separate groups, owner request 2026-08-21) instead of
+    every squad in the tournament - every tie-walking line below already
+    guards with `if a in stats`/`if b in stats`, so restricting which
+    squads have a stats entry is the only change needed to scope it."""
     squads = item.get('squads') or {}
+    if squad_ids is not None:
+        squads = {sid: sq for sid, sq in squads.items() if sid in squad_ids}
     stats = {sid: {'squad_id': sid, 'name': sq.get('name', sid), 'ties_won': 0, 'ties_lost': 0, 'point_diff': 0}
               for sid, sq in squads.items()}
     for tie in (item.get('group_stage') or {}).get('ties', []):
@@ -1686,7 +1700,37 @@ def generate_schedule(tournament_id, event, claims):
         return _response(400, {'error': 'need at least 2 squads to generate a schedule'})
 
     matches_per_tie = int(item['manual_draft']['group_matches_per_tie'])
-    item['group_stage'] = {'matches_per_tie': matches_per_tie, 'ties': build_tie_round_robin(squad_ids, matches_per_tie)}
+    num_groups = int(item.get('manual_draft', {}).get('num_groups', 1))
+
+    if num_groups <= 1:
+        # Unchanged from the original design: one round-robin across every
+        # squad, no elimination before the knockout (which is seeded by
+        # combined standings) - this is still the default, and every
+        # existing manual-draft tournament (created before num_groups
+        # existed) behaves byte-identically since .get(..., 1) is 1 for them.
+        item['group_stage'] = {'matches_per_tie': matches_per_tie, 'ties': build_tie_round_robin(squad_ids, matches_per_tie)}
+    else:
+        # Real separate groups (owner request, 2026-08-21): squads randomly
+        # split into num_groups named groups (A, B, C...), round-robin only
+        # within each group - mirrors the existing groups_then_knockout
+        # legacy format's own subgroup/advance_per_group design as closely
+        # as possible (see inject_tiebreakers_if_needed/advance_to_knockout)
+        # rather than inventing a parallel mechanism.
+        if num_groups > len(squad_ids):
+            return _response(400, {'error': f'cannot split {len(squad_ids)} squads into {num_groups} groups'})
+        group_names = list(ascii_uppercase[:num_groups])
+        shuffled = list(squad_ids)
+        random.shuffle(shuffled)
+        groups = {n: [] for n in group_names}
+        for idx, sid in enumerate(shuffled):
+            groups[group_names[idx % num_groups]].append(sid)
+        all_ties = []
+        for name, members in groups.items():
+            for tie in build_tie_round_robin(members, matches_per_tie):
+                tie['group'] = name
+                all_ties.append(tie)
+        item['group_stage'] = {'matches_per_tie': matches_per_tie, 'ties': all_ties, 'groups': groups}
+
     item['status'] = 'group_stage'
     tournaments_table.put_item(Item=item)
     return _response(200, item)
@@ -1802,6 +1846,79 @@ def _generate_knockout_from_group_stage(item):
     item['status'] = 'knockout'
 
 
+def _inject_group_tiebreakers_if_needed(item):
+    """Real-separate-groups sibling of the legacy groups_then_knockout
+    format's inject_tiebreakers_if_needed: if two squads are level on both
+    ties_won AND point_diff right at their group's advance_per_group
+    boundary, append one more tie between exactly those two squads instead
+    of guessing who advances. Returns True if any group still has one
+    pending (so advancement should wait)."""
+    groups = item['group_stage']['groups']
+    advance_n = int(item.get('manual_draft', {}).get('advance_per_group', 2))
+    matches_per_tie = item['group_stage']['matches_per_tie']
+    needs_tiebreaker = False
+
+    for name, members in groups.items():
+        group_ties = [t for t in item['group_stage']['ties'] if t.get('group') == name]
+        if any(t.get('tiebreaker') and not t.get('decided') for t in group_ties):
+            needs_tiebreaker = True
+            continue
+
+        standings = compute_squad_standings(item, squad_ids=members)
+        if len(standings) <= advance_n:
+            continue
+
+        boundary_a, boundary_b = standings[advance_n - 1], standings[advance_n]
+        tied = (boundary_a['ties_won'] == boundary_b['ties_won'] and boundary_a['point_diff'] == boundary_b['point_diff'])
+        if not tied:
+            continue
+
+        pair_key = {boundary_a['squad_id'], boundary_b['squad_id']}
+        already_resolved = any(
+            t.get('tiebreaker') and t.get('decided') and {t.get('squad_a'), t.get('squad_b')} == pair_key
+            for t in group_ties
+        )
+        if already_resolved:
+            continue
+
+        tie = build_tie(boundary_a['squad_id'], boundary_b['squad_id'], matches_per_tie)
+        tie['group'] = name
+        tie['tiebreaker'] = True
+        item['group_stage']['ties'].append(tie)
+        needs_tiebreaker = True
+
+    return needs_tiebreaker
+
+
+def _advance_squads_to_knockout_from_groups(item):
+    """Real-separate-groups sibling of the legacy groups_then_knockout
+    format's advance_to_knockout: top advance_per_group squads from each
+    group qualify, shuffled into the knockout bracket with a best-effort
+    swap to avoid two squads from the SAME group meeting in round one
+    (same de-clustering approach as the legacy path, adapted from
+    entities to squad_ids)."""
+    groups = item['group_stage']['groups']
+    advance_n = int(item.get('manual_draft', {}).get('advance_per_group', 2))
+    qualifiers = []
+    for name, members in groups.items():
+        standings = compute_squad_standings(item, squad_ids=members)
+        for s in standings[:advance_n]:
+            qualifiers.append({'squad_id': s['squad_id'], 'group': name})
+
+    random.shuffle(qualifiers)
+    for i in range(0, len(qualifiers) - 1, 2):
+        if qualifiers[i]['group'] == qualifiers[i + 1]['group']:
+            for j in range(i + 2, len(qualifiers)):
+                if qualifiers[j]['group'] != qualifiers[i]['group']:
+                    qualifiers[i + 1], qualifiers[j] = qualifiers[j], qualifiers[i + 1]
+                    break
+
+    seeded_squad_ids = [q['squad_id'] for q in qualifiers]
+    matches_per_tie = int(item['manual_draft']['knockout_matches_per_tie'])
+    item['knockout'] = {'matches_per_tie': matches_per_tie, 'rounds': [build_knockout_tie_round(seeded_squad_ids, matches_per_tie)]}
+    item['status'] = 'knockout'
+
+
 def record_group_tie_score(tournament_id, event, claims):
     item, err = _draft_get_tournament(tournament_id)
     if err:
@@ -1833,7 +1950,11 @@ def record_group_tie_score(tournament_id, event, claims):
         return _response(400, {'error': str(e)})
 
     if all(t.get('decided') for t in item['group_stage']['ties']):
-        _generate_knockout_from_group_stage(item)
+        if item['group_stage'].get('groups'):
+            if not _inject_group_tiebreakers_if_needed(item):
+                _advance_squads_to_knockout_from_groups(item)
+        else:
+            _generate_knockout_from_group_stage(item)
 
     tournaments_table.put_item(Item=item)
     return _response(200, _hide_pool_auction_from_non_organizer(item, claims))
@@ -1977,6 +2098,14 @@ def get_tournament(tournament_id):
         # these can't drift out of sync with the ties/matches they're
         # computed from.
         item['squad_standings'] = compute_squad_standings(item)
+        groups = (item.get('group_stage') or {}).get('groups')
+        if groups:
+            # Real separate groups (owner request, 2026-08-21): a combined
+            # table across every squad isn't meaningful while groups haven't
+            # played each other, so also attach one standings table per
+            # group - the frontend prefers this when present.
+            item['group_standings'] = {name: compute_squad_standings(item, squad_ids=members)
+                                        for name, members in groups.items()}
         item['player_tournament_stats'] = compute_player_tournament_scores(item)
     if item.get('format') == 'manual_draft':
         item = _redact_pool_auction_detail(item)

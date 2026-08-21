@@ -7384,6 +7384,8 @@ let userPool = null;
         picks_per_pool: document.getElementById('draft_picks_per_pool').value,
         group_matches_per_tie: document.getElementById('draft_group_matches_per_tie').value,
         knockout_matches_per_tie: document.getElementById('draft_knockout_matches_per_tie').value,
+        num_groups: document.getElementById('draft_num_groups').value,
+        advance_per_group: document.getElementById('draft_advance_per_group').value,
         match_type: document.getElementById('tournament_match_type').value,
       };
       resultEl.textContent = 'Creating...';
@@ -8186,8 +8188,23 @@ let userPool = null;
       if (t.status === 'completed' && t.champion_squad_id) {
         html += `<div class="card" style="margin-top:10px;text-align:center;"><h4 style="font-size:16px;margin:0;">Champion: ${escapeHtml(draftSquadName(t, t.champion_squad_id))}</h4></div>`;
       }
-      if (t.squad_standings && t.squad_standings.length) html += renderSquadStandingsTable(t.squad_standings);
-      if (t.group_stage) html += renderTieSection('Group stage', t.group_stage.ties, t, 'group');
+      const groups = t.group_stage && t.group_stage.groups;
+      if (groups && t.group_standings) {
+        // Real separate groups (owner request, 2026-08-21): one section per
+        // named group, each with its OWN standings table and only that
+        // group's own ties - not a single combined table/list, since
+        // groups don't play each other.
+        Object.keys(groups).sort().forEach(name => {
+          html += `<div class="card" style="margin-top:10px;"><h4 style="font-size:14px;margin:0 0 4px;">Group ${escapeHtml(name)}</h4>` +
+            `<p class="card-sub" style="margin:0 0 8px;">${groups[name].map(sid => escapeHtml(draftSquadName(t, sid))).join(', ')}</p></div>`;
+          if (t.group_standings[name]) html += renderSquadStandingsTable(t.group_standings[name]);
+          const groupTies = (t.group_stage.ties || []).filter(tie => tie.group === name);
+          if (groupTies.length) html += renderTieSection(`Group ${name} matches`, groupTies, t, 'group');
+        });
+      } else {
+        if (t.squad_standings && t.squad_standings.length) html += renderSquadStandingsTable(t.squad_standings);
+        if (t.group_stage) html += renderTieSection('Group stage', t.group_stage.ties, t, 'group');
+      }
       if (t.knockout && t.knockout.rounds) {
         t.knockout.rounds.forEach((rnd, i) => {
           const label = (i === t.knockout.rounds.length - 1 && rnd.length === 1) ? 'Final' : `Knockout - round ${i + 1}`;
@@ -8244,7 +8261,7 @@ let userPool = null;
       let html = `<div style="padding:8px 0;border-bottom:1px solid var(--border);">
         <div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;font-size:13px;margin-bottom:6px;">
           <strong>${escapeHtml(nameA)} ${tie.wins_a} - ${tie.wins_b} ${escapeHtml(nameB)}</strong>
-          <span class="card-sub">${tie.decided ? 'Decided' : 'In progress'}${(tie.point_diff_a || 0) !== 0 ? ` (diff ${tie.point_diff_a > 0 ? '+' : ''}${tie.point_diff_a})` : ''}</span>
+          <span class="card-sub">${tie.tiebreaker ? 'Tiebreaker &ndash; ' : ''}${tie.decided ? 'Decided' : 'In progress'}${(tie.point_diff_a || 0) !== 0 ? ` (diff ${tie.point_diff_a > 0 ? '+' : ''}${tie.point_diff_a})` : ''}</span>
         </div>`;
       (tie.matches || []).forEach((m, idx) => { html += renderTieMatchRow(tie, m, idx, t, stageKind, iLeadA, iLeadB); });
       html += '</div>';

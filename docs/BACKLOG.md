@@ -76,17 +76,12 @@
     being leader-only, for leaders/organizer/admin to be able to name their squad, and for an (i)
     tooltip on every manual-draft creation-form field since "Group-stage matches per tie" etc weren't
     self-explanatory.
-  - **OPEN QUESTION (2026-08-21, not yet built): does the group stage need real sub-groups (multiple
-    parallel round-robins, top-N per group advancing to a single knockout), or does the existing
-    single round-robin across every squad (full knockout seeded by standings, nobody eliminated
-    beforehand) already match what the owner described?** Owner's message described "4 groups which
-    will have 1 of each team... every team playing 3 matches... whoever comes on top proceeds to
-    knockout" — with 4 squads that's *consistent* with the current single-round-robin behavior (3
-    ties each, standings seed the knockout), so this may just be the owner confirming their
-    understanding rather than a new ask. Asked the owner to clarify before building anything, since a
-    real multi-group format (configurable group count/size, per-group standings, only the top N per
-    group advancing, everyone else eliminated before knockout) would be a substantial new mechanic
-    distinct from what exists today.
+  - **Real separate groups (Group A/B/C..., random squad assignment, top N per group advance) — DONE
+    (see Done section, 2026-08-21, v1.53.0).** Resolved the open question above: owner confirmed they
+    wanted genuine separate groups (not the existing single round-robin), randomly assigned, with the
+    top 2 per group (configurable via `advance_per_group`) advancing to a combined knockout bracket —
+    the rest are eliminated after the group stage. `num_groups=1` (the default) keeps every existing
+    manual-draft tournament's behavior byte-identical.
   - Two small, fully independent asks captured alongside this (not gated on the phases above):
     organizer can create a brand-new player profile inline during pool setup (**done** - Phase A
     reuses the existing `/register-and-join` route, no new backend code needed) and an admin "rename
@@ -338,6 +333,47 @@
 ---
 
 ## Done
+
+- ✅ 2026-08-21 (v1.53.0) — **Manual-mode tournaments: real separate groups for the group stage.**
+  Owner asked for genuine World-Cup-style groups after describing a scenario ("4 groups... every team
+  playing 3 matches... whoever comes on top proceeds to knockout") that, worked through, turned out to
+  be ambiguous with the existing single-round-robin behavior — clarified via two follow-up questions:
+  real separate groups (not the existing single round-robin), squads assigned randomly, and the top 2
+  per group (not top 1, not "everyone advances seeded") move on to a combined knockout. New
+  `manual_draft.num_groups` (default 1, so every existing manual-draft tournament is completely
+  unaffected — `generate_schedule` only takes the new code path when `num_groups > 1`) and
+  `manual_draft.advance_per_group` (default 2), both settable at creation. When grouped,
+  `generate_schedule` randomly splits squads into `num_groups` named groups (A, B, C... via the same
+  `ascii_uppercase` slicing the legacy `groups_then_knockout` format already uses) as evenly as
+  possible, and builds a round-robin only within each group — every tie is tagged with its `group`.
+  Rather than inventing a new mechanism, the two hardest parts — a genuine boundary tie needing a
+  tiebreaker instead of a guess, and de-clustering the knockout draw so two squads from the same group
+  don't rematch in round one where avoidable — directly mirror the *existing* legacy
+  `groups_then_knockout` format's own `inject_tiebreakers_if_needed`/`advance_to_knockout` design
+  (found already solving this exact problem for the old per-player group format): new
+  `_inject_group_tiebreakers_if_needed` appends an extra tie between exactly two squads level on both
+  `ties_won` and `point_diff` at their group's `advance_per_group` boundary; `record_group_tie_score`'s
+  "all decided" hook now branches on whether `group_stage.groups` is set, calling this new pair of
+  functions instead of the old single-standings `_generate_knockout_from_group_stage` when it is.
+  `compute_squad_standings(item, squad_ids=None)` grew an optional filter (every existing tie-walking
+  line already guarded with `if a in stats`, so scoping it to one group's squads needed no other
+  change) and now backs both the overall table and a new per-group breakdown. `get_tournament` attaches
+  `group_standings: {name: [...]}` alongside the existing `squad_standings` for a grouped tournament.
+  Frontend: the manual-draft creation form gained "Number of groups"/"Squads advancing per group"
+  fields (with tooltips); the schedule view renders one labeled "Group A"/"Group B"/... section per
+  group (its own standings table + only its own ties) instead of one flat list when
+  `group_stage.groups` is present, and a tiebreaker tie is visibly labeled as such. Also clarified the
+  "Group-stage matches per tie" tooltip and changed its default from 2 to 1, after the owner described
+  wanting exactly one decisive game per opponent ("a pair... supposed to play 3 games inside the group
+  stage, not 3 times with each opposition") rather than the previous default of 2 games against the
+  SAME opponent per tie. New `/tmp/test_manual_draft_groups.py` (12 checks: config validation, the
+  random group split, that num_groups=1 stays byte-identical to the pre-existing flat shape, only the
+  top-N-per-group advancing, the same-group-rematch avoidance in round one, per-group standings via
+  `get_tournament`, and — the trickiest case — a contrived 3-way level tie at a group's boundary
+  provably injecting a tiebreaker tie rather than silently guessing) and `/tmp/test_manual_draft_groups_ui.js`
+  (4 checks: labeled group sections, one standings table per group not one combined table, the
+  tiebreaker label, and that an ungrouped tournament's rendering is completely unaffected). Full
+  existing backend (17 files) and Playwright (4 files) suites re-verified passing throughout.
 
 - ✅ 2026-08-21 (v1.52.0) — **Manual-mode tournaments: organizer can also set a tie's lineup, squad
   renaming, and (i) tooltips on the creation form.** Three owner requests handled together.
