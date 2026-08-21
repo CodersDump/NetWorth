@@ -8064,7 +8064,23 @@ let userPool = null;
     function renderSquadRosterEditPanel(t, allowMove) {
       const squads = t.squads || {};
       const squadIds = Object.keys(squads);
-      if (squadIds.length < 2) return '';
+      if (!squadIds.length) return '';
+
+      let html = '<div class="card" style="margin-top:10px;"><h4 style="font-size:14px;margin:0 0 6px;">Edit squads</h4>';
+
+      // Rename - organizer or that squad's own leader. Always offered
+      // whenever squads exist, independent of whether there's anyone to
+      // move/substitute below.
+      html += '<p class="card-sub" style="margin:0 0 4px;">Rename a squad (organizer, or that squad\'s own leader).</p>' +
+        '<div style="display:flex;flex-direction:column;gap:4px;margin-bottom:10px;">';
+      squadIds.forEach(sid => {
+        html += `<div style="display:flex;gap:6px;align-items:center;font-size:13px;">
+          <span style="min-width:110px;">${escapeHtml(squads[sid].name)}</span>
+          <button type="button" class="secondary" onclick="renameSquadPrompt('${t.tournament_id}','${sid}')">Rename</button>
+        </div>`;
+      });
+      html += '</div>';
+
       const pickedOptions = [];
       squadIds.forEach(sid => {
         (squads[sid].members || []).forEach(pid => {
@@ -8072,33 +8088,49 @@ let userPool = null;
           pickedOptions.push(`<option value="${pid}" data-squad="${sid}">${escapeHtml(draftPlayerName(pid))} (${escapeHtml(squads[sid].name)})</option>`);
         });
       });
-      if (!pickedOptions.length) return '';
-      const onSquadIds = new Set();
-      squadIds.forEach(sid => (squads[sid].members || []).forEach(pid => onSquadIds.add(pid)));
-      const freeAgentOptions = allPlayers.filter(p => !onSquadIds.has(p.player_id))
-        .map(p => `<option value="${p.player_id}">${escapeHtml(p.name)}</option>`).join('');
+      if (pickedOptions.length) {
+        const onSquadIds = new Set();
+        squadIds.forEach(sid => (squads[sid].members || []).forEach(pid => onSquadIds.add(pid)));
+        const freeAgentOptions = allPlayers.filter(p => !onSquadIds.has(p.player_id))
+          .map(p => `<option value="${p.player_id}">${escapeHtml(p.name)}</option>`).join('');
 
-      let html = '<div class="card" style="margin-top:10px;"><h4 style="font-size:14px;margin:0 0 6px;">Edit squads</h4>';
-      if (allowMove) {
-        const squadOptions = squadIds.map(sid => `<option value="${sid}">${escapeHtml(squads[sid].name)}</option>`).join('');
-        html += `<p class="card-sub" style="margin:0 0 4px;">Move a player to a different squad (before the schedule is generated).</p>
-          <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:10px;">
-            <select id="squad-move-player">${pickedOptions.join('')}</select>
+        if (allowMove && squadIds.length >= 2) {
+          const squadOptions = squadIds.map(sid => `<option value="${sid}">${escapeHtml(squads[sid].name)}</option>`).join('');
+          html += `<p class="card-sub" style="margin:0 0 4px;">Move a player to a different squad (before the schedule is generated).</p>
+            <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:10px;">
+              <select id="squad-move-player">${pickedOptions.join('')}</select>
+              <span>&rarr;</span>
+              <select id="squad-move-target">${squadOptions}</select>
+              <button type="button" class="secondary" onclick="moveSquadPlayer('${t.tournament_id}')">Move</button>
+            </div>`;
+        }
+        html += `<p class="card-sub" style="margin:0 0 4px;">Substitute a squad member for a new player (injury, unavailable, etc) - not on any squad already.</p>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
+            <select id="squad-sub-player">${pickedOptions.join('')}</select>
             <span>&rarr;</span>
-            <select id="squad-move-target">${squadOptions}</select>
-            <button type="button" class="secondary" onclick="moveSquadPlayer('${t.tournament_id}')">Move</button>
+            <select id="squad-sub-new">${freeAgentOptions || '<option value="">- no eligible replacement players -</option>'}</select>
+            <button type="button" class="secondary" onclick="substituteSquadPlayer('${t.tournament_id}')">Substitute</button>
           </div>`;
       }
-      html += `<p class="card-sub" style="margin:0 0 4px;">Substitute a squad member for a new player (injury, unavailable, etc) - not on any squad already.</p>
-        <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
-          <select id="squad-sub-player">${pickedOptions.join('')}</select>
-          <span>&rarr;</span>
-          <select id="squad-sub-new">${freeAgentOptions || '<option value="">- no eligible replacement players -</option>'}</select>
-          <button type="button" class="secondary" onclick="substituteSquadPlayer('${t.tournament_id}')">Substitute</button>
-        </div>
-        <div id="squad-roster-edit-status" class="result"></div>
-      </div>`;
+      html += '<div id="squad-roster-edit-status" class="result"></div></div>';
       return html;
+    }
+
+    async function renameSquadPrompt(tournamentId, squadId) {
+      const t = currentTournamentData;
+      const current = (t && t.squads && t.squads[squadId] && t.squads[squadId].name) || '';
+      const name = await nwPrompt('New squad name:', current);
+      if (name === null || name === undefined) return; // cancelled
+      const trimmed = String(name).trim();
+      if (!trimmed) return;
+      const statusEl = document.getElementById('squad-roster-edit-status');
+      if (statusEl) statusEl.textContent = 'Renaming...';
+      const { res, data, error } = await authedFetch(`${API_BASE_URL}/tournament-draft/${tournamentId}/rename-squad`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ squad_id: squadId, name: trimmed })
+      });
+      if (!res.ok) { if (statusEl) statusEl.textContent = `Error: ${error}`; nwAlert(error || (data && data.error) || 'Could not rename that squad'); return; }
+      renderTournament(data);
     }
 
     async function moveSquadPlayer(tournamentId) {

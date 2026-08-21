@@ -476,6 +476,25 @@
   font-size: 14px; line-height: 1; padding: 0 0 0 2px; margin: 0;
 }
 .draft-chip-remove:hover { color: var(--smash); }
+/* Small (i)-in-a-circle tooltip: tap/click or hover to reveal a plain-
+   language explanation next to a form field whose name alone is unclear
+   (e.g. "Group-stage matches per tie"). tabindex makes it focusable so a
+   tap works on touch devices too, not just desktop hover. */
+.info-tip {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 15px; height: 15px; border-radius: 50%; border: 1px solid var(--border);
+  color: var(--text-secondary); font-size: 11px; font-style: normal; font-weight: 700;
+  cursor: help; margin-left: 5px; position: relative; vertical-align: middle;
+}
+.info-tip:hover, .info-tip:focus { border-color: var(--rally); color: var(--rally); outline: none; }
+.info-tip:hover .info-tip-text, .info-tip:focus .info-tip-text { display: block; }
+.info-tip-text {
+  display: none; position: absolute; z-index: 50; bottom: 130%; left: 0;
+  width: 230px; background: var(--surface-2); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 8px 10px; font-size: 12px; font-weight: 400;
+  color: var(--text-primary); box-shadow: 0 4px 12px rgba(0,0,0,0.35); text-align: left;
+  white-space: normal; line-height: 1.4;
+}
 .draft-leader-banner-row { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0; }
 .draft-leader-banner {
   background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius);

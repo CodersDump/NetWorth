@@ -70,6 +70,23 @@
     excuse themselves (or anyone else not participating) from that required roster, and got
     permanently stuck unable to lock pools. New `remove-player` route (pools_open only, rejects
     removing a current leader) plus an "x" control on each unassigned/pool chip.
+  - **Organizer can also set a tie's lineup (not just the leader); squad renaming; creation-form
+    tooltips — DONE (see Done section, 2026-08-21, v1.52.0).** Owner asked for the organizer/admin to
+    also be able to set the pairing within a tie (in consultation with the leader) rather than it
+    being leader-only, for leaders/organizer/admin to be able to name their squad, and for an (i)
+    tooltip on every manual-draft creation-form field since "Group-stage matches per tie" etc weren't
+    self-explanatory.
+  - **OPEN QUESTION (2026-08-21, not yet built): does the group stage need real sub-groups (multiple
+    parallel round-robins, top-N per group advancing to a single knockout), or does the existing
+    single round-robin across every squad (full knockout seeded by standings, nobody eliminated
+    beforehand) already match what the owner described?** Owner's message described "4 groups which
+    will have 1 of each team... every team playing 3 matches... whoever comes on top proceeds to
+    knockout" — with 4 squads that's *consistent* with the current single-round-robin behavior (3
+    ties each, standings seed the knockout), so this may just be the owner confirming their
+    understanding rather than a new ask. Asked the owner to clarify before building anything, since a
+    real multi-group format (configurable group count/size, per-group standings, only the top N per
+    group advancing, everyone else eliminated before knockout) would be a substantial new mechanic
+    distinct from what exists today.
   - Two small, fully independent asks captured alongside this (not gated on the phases above):
     organizer can create a brand-new player profile inline during pool setup (**done** - Phase A
     reuses the existing `/register-and-join` route, no new backend code needed) and an admin "rename
@@ -321,6 +338,47 @@
 ---
 
 ## Done
+
+- ✅ 2026-08-21 (v1.52.0) — **Manual-mode tournaments: organizer can also set a tie's lineup, squad
+  renaming, and (i) tooltips on the creation form.** Three owner requests handled together.
+  **(1) Organizer/admin can also set a tie's pairing/lineup.** `pick_tie_player` was deliberately
+  leader-only from Phase C ("only this tie's own leader can nominate, by design") — the owner asked
+  for the organizer to also be able to do it, in consultation with the leader (same "the app
+  shouldn't be a hard stop if not everyone has it open" reasoning as organizer-assign during the
+  auction). A leader still nominates for their own squad exactly as before, no request-body change.
+  The organizer has no "own squad" to infer a side from, so they now also send `squad_id` (must match
+  one of the tie's two squads) to say which side's lineup they're setting; omitting it as organizer
+  returns a 400 asking for it, not a 403. Updated `/tmp/test_draft_auth_matrix.py`'s check #7 (used to
+  assert organizer/SuperAdmin were flatly rejected here - now asserts the disambiguation behavior
+  instead) plus its doc comment; the rest of the auth matrix (17 other checks) still passes unchanged.
+  **(2) Squad renaming.** Squads got an auto-generated `"Team <leader>"` name the instant the auction
+  auto-froze, with no way to change it. New `POST /tournament-draft/{id}/rename-squad` (organizer OR
+  that squad's own leader; available from `squads_locked` onward through `completed`, since a name is
+  cosmetic and there's no reason to lock it once the schedule starts) validates a non-empty name up to
+  60 characters. Frontend: a "Rename" button per squad inside the existing `renderSquadRosterEditPanel`
+  (renamed conceptually from a roster-editing-only panel to squads' general "Edit squads" panel),
+  using `nwPrompt` - it now always renders once squads exist, independent of whether there's anyone
+  eligible to move/substitute below it (previously the whole panel silently didn't render at all if
+  `pickedOptions` was empty, which would have hidden renaming too for a squad with only its leader and
+  no other picks).
+  **(3) (i) tooltips on the manual-draft creation form** (owner: "even i'm getting confused what each
+  is... make it understandable"). New `.info-tip` CSS component (a small bordered circle, hover or
+  tap/focus to reveal a popover - `tabindex="0"` so it works on touch, not just desktop hover) added
+  next to every manual-draft field: budget, number of pools, picks per pool, group-stage matches per
+  tie, knockout matches per tie, and match type - each rewritten in plain language explaining what it
+  actually does and why (e.g. "Group-stage matches per tie" now explains what a "tie" even is: the
+  whole squad-vs-squad matchup, decided over N individual games, tiebroken by total points if split).
+  New `/tmp/test_squad_editing_ui.js` checks (rename buttons scoped to `#tournament-detail` so they
+  don't collide with the pre-existing unrelated admin "Rename [a player]" control elsewhere on the
+  page; verifies the rename control submits the right `squad_id`/`name`, and that it still appears
+  during `group_stage` alongside the substitute-only panel). Full existing backend (14 files) and
+  Playwright (3 files) suites re-verified passing.
+  **Left open, not built:** the owner's message also described a "4 groups... every team playing 3
+  matches... whoever comes on top proceeds to knockout" scenario that, worked through with 4 squads,
+  is actually consistent with the *existing* single-round-robin group stage (3 ties per squad,
+  knockout seeded by standings) - so it's unclear whether this is a new "real sub-groups, top-N
+  advance" ask or just the owner confirming their understanding of what's already built. Flagged back
+  to the owner rather than guessed at, since building the wrong one would be substantial wasted work.
 
 - ✅ 2026-08-21 (v1.51.0) — **Manual-mode tournaments: squad roster editing/substitution/doubles
   pairing ("not a hard stop"), plus a real fix for a non-playing organizer getting stuck unable to
