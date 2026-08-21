@@ -538,6 +538,8 @@ def handle_draft_route(event):
         return get_draft_state(tournament_id, event, claims)
     if len(parts) == 2 and parts[1] == 'generate-schedule' and method == 'POST':
         return generate_schedule(tournament_id, event, claims)
+    if len(parts) == 2 and parts[1] == 'rename-squad' and method == 'POST':
+        return rename_squad(tournament_id, event, claims)
     if len(parts) == 2 and parts[1] == 'move-squad-player' and method == 'POST':
         return move_squad_player(tournament_id, event, claims)
     if len(parts) == 2 and parts[1] == 'substitute-squad-player' and method == 'POST':
@@ -1501,6 +1503,40 @@ def compute_player_tournament_scores(item):
     return result
 
 
+def rename_squad(tournament_id, event, claims):
+    """Squads get an auto-generated name ("Team <leader>") the instant the
+    auction auto-freezes - the owner asked for the organizer OR that
+    squad's own leader to be able to rename it to something the club
+    actually wants to call it. Available from squads_locked onward (once
+    the squads dict exists) through to completed - a name is cosmetic, so
+    there's no reason to lock it once the schedule starts."""
+    item, err = _draft_get_tournament(tournament_id)
+    if err:
+        return err
+    if not item.get('squads'):
+        return _response(400, {'error': 'squads do not exist yet for this tournament'})
+
+    body = json.loads(event.get('body') or '{}')
+    squad_id = body.get('squad_id')
+    name = (body.get('name') or '').strip()
+    if not squad_id or not name:
+        return _response(400, {'error': 'squad_id and name are required'})
+    if len(name) > 60:
+        return _response(400, {'error': 'name is too long (60 characters max)'})
+
+    squad = (item.get('squads') or {}).get(squad_id)
+    if not squad:
+        return _response(400, {'error': 'unknown squad_id'})
+
+    caller_pid = claims.get('custom:player_id')
+    if caller_pid != squad_id and _authorize_tournament_organizer(item, claims) is not None:
+        return _response(403, {'error': "only the organizer or this squad's own leader can rename it"})
+
+    squad['name'] = name
+    tournaments_table.put_item(Item=item)
+    return _response(200, item)
+
+
 def move_squad_player(tournament_id, event, claims):
     """Organizer-only roster rebalancing between two squads, before the
     schedule exists - the auction is over, so there's no budget bookkeeping
@@ -1658,8 +1694,15 @@ def generate_schedule(tournament_id, event, claims):
 
 def pick_tie_player(tournament_id, event, claims):
     """A leader nominates which of their own squad's members plays a given
-    match slot within a tie - deliberately NOT an organizer action (owner-
-    confirmed decision: each side's own leader picks their own player)."""
+    match slot within a tie. Originally leader-only by design, but the
+    owner asked for the organizer to be able to set a tie's lineup too
+    (in consultation with the leader, e.g. over chat/in person) - same
+    "the app shouldn't be a hard stop if not everyone has it open" spirit
+    as organizer-assign during the auction. A leader still nominates for
+    their own squad exactly as before, with no body changes needed; the
+    organizer additionally needs to say which of the tie's two squads
+    they're nominating for, via `squad_id` in the body (there's no
+    "caller's own squad" to infer it from)."""
     item, err = _draft_get_tournament(tournament_id)
     if err:
         return err
@@ -1700,11 +1743,20 @@ def pick_tie_player(tournament_id, event, claims):
 
     caller_pid = claims.get('custom:player_id')
     if caller_pid == tie.get('squad_a'):
-        side = 'a'
+        side, acting_squad_id = 'a', tie.get('squad_a')
     elif caller_pid == tie.get('squad_b'):
-        side = 'b'
+        side, acting_squad_id = 'b', tie.get('squad_b')
+    elif _authorize_tournament_organizer(item, claims) is None:
+        acting_squad_id = body.get('squad_id')
+        if acting_squad_id == tie.get('squad_a'):
+            side = 'a'
+        elif acting_squad_id == tie.get('squad_b'):
+            side = 'b'
+        else:
+            return _response(400, {'error': "as organizer, include squad_id (one of this tie's two squads) "
+                                             "to say which side's lineup you're setting"})
     else:
-        return _response(403, {'error': "only this tie's two squad leaders can set their own lineup"})
+        return _response(403, {'error': "only this tie's two squad leaders, or the organizer, can set the lineup"})
 
     match_type = item.get('manual_draft', {}).get('match_type', 'singles')
     expected_size = 2 if match_type == 'doubles' else 1
@@ -1714,11 +1766,11 @@ def pick_tie_player(tournament_id, event, claims):
     if len(set(player_ids)) != len(player_ids):
         return _response(400, {'error': 'the same player cannot be nominated twice for one match'})
 
-    squad = (item.get('squads') or {}).get(caller_pid)
+    squad = (item.get('squads') or {}).get(acting_squad_id)
     squad_members = squad.get('members', []) if squad else []
     not_in_squad = [pid for pid in player_ids if pid not in squad_members]
     if not_in_squad:
-        return _response(400, {'error': f'these players are not members of your squad: {not_in_squad}'})
+        return _response(400, {'error': f'these players are not members of that squad: {not_in_squad}'})
 
     players = [players_table.get_item(Key={'player_id': pid}).get('Item') for pid in player_ids]
     if match_type == 'doubles':

@@ -1299,11 +1299,13 @@
             <div class="row">
               <div>
                 <label>Points each leader can spend
+                  <span class="info-tip" tabindex="0">i<span class="info-tip-text">The auction budget each team leader gets to bid with. Every leader starts with this many points and spends them bidding on players during the live auction &mdash; squads are built from whoever bids the most for each player.</span></span>
                   <input type="number" id="draft_budget" value="1000" min="1">
                 </label>
               </div>
               <div>
                 <label>Number of pools
+                  <span class="info-tip" tabindex="0">i<span class="info-tip-text">Splits every player into this many skill tiers before the auction (Pool 1 = strongest players). Every leader must draft the same number of players from each pool, so no one squad can end up with all the strongest (or all the weakest) players.</span></span>
                   <input type="number" id="draft_num_pools" value="4" min="2">
                 </label>
               </div>
@@ -1311,6 +1313,7 @@
             <div class="row">
               <div>
                 <label>Picks per pool (per leader)
+                  <span class="info-tip" tabindex="0">i<span class="info-tip-text">How many players each leader must draft from each pool. For example, 2 means every squad ends up with exactly 2 players from Pool 1, 2 from Pool 2, and so on &mdash; this is what keeps squads balanced.</span></span>
                   <input type="number" id="draft_picks_per_pool" value="2" min="1">
                 </label>
               </div>
@@ -1318,17 +1321,20 @@
             <div class="row">
               <div>
                 <label>Group-stage matches per tie
+                  <span class="info-tip" tabindex="0">i<span class="info-tip-text">When two squads face off in the group stage, that whole squad-vs-squad matchup is called a "tie". This is how many individual games make up one tie. E.g. 2 means each squad-vs-squad tie is decided over 2 individual games between players each leader picks &mdash; whoever wins more of those games wins the tie (a tie split 1-1 is broken by total points scored across both games).</span></span>
                   <input type="number" id="draft_group_matches_per_tie" value="2" min="1">
                 </label>
               </div>
               <div>
                 <label>Knockout matches per tie
+                  <span class="info-tip" tabindex="0">i<span class="info-tip-text">Same idea as "Group-stage matches per tie", but for the knockout rounds (semifinal, final, etc) once the group stage is over &mdash; how many individual games decide each squad-vs-squad matchup at that later stage.</span></span>
                   <input type="number" id="draft_knockout_matches_per_tie" value="1" min="1">
                 </label>
               </div>
             </div>
           </div>
           <label>Match type
+            <span class="info-tip" tabindex="0">i<span class="info-tip-text">Whether each individual game is played 1-vs-1 (Singles) or 2-vs-2 (Doubles). For a manual-mode tournament, this also decides whether each squad leader nominates one player or a pair of players for every game &mdash; pick this based on how your club actually plays.</span></span>
             <select id="tournament_match_type">
               <option value="doubles">Doubles</option>
               <option value="singles">Singles</option>
