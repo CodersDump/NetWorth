@@ -1982,6 +1982,19 @@ def generate_schedule(tournament_id, event, claims):
     if item.get('status') != 'squads_locked':
         return _response(400, {'error': 'squads must be locked before generating the schedule'})
 
+    # Accepts an optional group_mode override, same as regenerate_schedule -
+    # a tournament created before cross-squad group mode existed (or simply
+    # created with the default 'squads' mode) can still switch to
+    # 'cross_squad' right here at first-generation time, once its squads
+    # have set their pairs, without a separate round-trip through
+    # regenerate_schedule.
+    body = json.loads(event.get('body') or '{}')
+    if 'group_mode' in body:
+        new_group_mode = body['group_mode']
+        if new_group_mode not in ('squads', 'cross_squad'):
+            return _response(400, {'error': "group_mode must be 'squads' or 'cross_squad'"})
+        item.setdefault('manual_draft', {})['group_mode'] = new_group_mode
+
     if item.get('manual_draft', {}).get('group_mode') == 'cross_squad':
         build_err = _build_cross_squad_group_stage(item)
     else:
