@@ -1078,6 +1078,16 @@
               <span id="admin-privacy-status" style="font-size:12px;"></span>
             </div>
 
+            <div style="margin-top:12px;border-top:1px solid var(--border);padding-top:10px;">
+              <label style="font-size:13px;display:block;margin-bottom:4px;">Rename a player (fixes a typo'd or confusing real name - nickname is untouched):</label>
+              <select id="admin-rename-player" style="max-width:280px;"></select>
+              <div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
+                <input type="text" id="admin-rename-new-name" placeholder="New name" style="max-width:200px;">
+                <button type="button" class="secondary" onclick="adminRenamePlayer()">Rename</button>
+              </div>
+              <span id="admin-rename-status" style="font-size:12px;"></span>
+            </div>
+
             <div style="margin-top:14px;border-top:1px solid var(--border);padding-top:12px;">
               <div class="switch-row">
                 <label class="switch"><input type="checkbox" id="app-seasons-enabled" onchange="setSeasonsEnabled(this.checked)"><span class="slider"></span></label>

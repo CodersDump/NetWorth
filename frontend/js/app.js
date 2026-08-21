@@ -552,6 +552,45 @@ let userPool = null;
         if (statusEl) statusEl.textContent = 'Done - set to ' + (makePrivate ? 'private' : 'public') + '. They may need to log out/in to see it.';
       } catch (e) { if (statusEl) statusEl.textContent = 'Failed: ' + e.message; }
     }
+    /* Admin "rename a player" - fixes a typo'd/confusing real `name`
+     * without touching `nickname` (the unique id). Reuses the existing
+     * PUT /players/{id} route (already supported name changes, gated by
+     * the shared confirmation code) - only the admin UI for it was
+     * missing before. Owner request 2026-08-21. */
+    function populateAdminRenameSelect() {
+      const sel = document.getElementById('admin-rename-player');
+      if (!sel) return;
+      const cur = sel.value;
+      sel.innerHTML = allPlayers
+        .filter(p => p && p.player_id && !String(p.player_id).startsWith('__'))
+        .slice().sort((a, b) => (a.name || '').localeCompare(b.name || ''))
+        .map(p => `<option value="${p.player_id}">${escapeHtml(p.name)} (${escapeHtml(p.nickname || '')})</option>`).join('');
+      if (cur) sel.value = cur;
+    }
+    async function adminRenamePlayer() {
+      const sel = document.getElementById('admin-rename-player');
+      const pid = sel && sel.value;
+      const nameInput = document.getElementById('admin-rename-new-name');
+      const newName = nameInput && nameInput.value.trim();
+      const statusEl = document.getElementById('admin-rename-status');
+      if (!pid) { if (statusEl) statusEl.textContent = 'Pick a player first.'; return; }
+      if (!newName) { if (statusEl) statusEl.textContent = 'Enter a new name first.'; return; }
+      const code = await nwPrompt('Enter the confirmation code to rename this player:');
+      if (!code) return;
+      if (statusEl) statusEl.textContent = 'Saving...';
+      try {
+        const { res, data, error } = await authedFetch(`${API_BASE_URL}/players/${pid}`, {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: newName, confirm: code })
+        });
+        if (!res || !res.ok) { if (statusEl) statusEl.textContent = 'Error: ' + (error || (data && data.error) || 'could not save'); return; }
+        await loadPlayers();
+        populateAdminRenameSelect();
+        populateAdminPrivacySelect();
+        if (nameInput) nameInput.value = '';
+        if (statusEl) statusEl.textContent = 'Done - renamed to "' + newName + '". Nickname is unchanged.';
+      } catch (e) { if (statusEl) statusEl.textContent = 'Failed: ' + e.message; }
+    }
     // ---------- seasons (frontend, C2) ----------
     let seasonsEnabled = false, seasonResetK = 0.3, seasonsList = [], currentSeasonId = null;
     /** Clean Apple-Fitness-style medallion for a top-3 finisher. */
@@ -3092,6 +3131,7 @@ let userPool = null;
         if (pcd) pcd.value = (data.privacy_cooldown_days != null ? data.privacy_cooldown_days : 7);
         applyVoiceVisibility();
         populateAdminPrivacySelect();
+        populateAdminRenameSelect();
         seasonsEnabled = !!data.seasons_enabled;
         const sec = document.getElementById('app-seasons-enabled'); if (sec) sec.checked = seasonsEnabled;
         seasonResetK = parseFloat(data.season_reset_k != null ? data.season_reset_k : 0.3);
