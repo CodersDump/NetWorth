@@ -102,6 +102,14 @@ let userPool = null;
     setInterval(() => { if (authSession) ensureFreshToken(); }, 10 * 60 * 1000);
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'visible' && authSession) ensureFreshToken();
+      // Manual-draft auction polling (Phase B): the interval itself already
+      // no-ops while the tab is hidden (see pollDraftStateTick), so this
+      // isn't required for correctness - it's just for snappiness, giving
+      // an immediate refresh the instant the tab wakes up instead of
+      // waiting up to 1.75s for the next tick.
+      if (document.visibilityState === 'visible' && typeof draftPollTournamentId !== 'undefined' && draftPollTournamentId) {
+        pollDraftStateTick(draftPollTournamentId);
+      }
     });
 
     function describeApiError(res, data) {
@@ -7417,13 +7425,22 @@ let userPool = null;
       let html = `<h3 style="font-size:16px;">${escapeHtml(t.name)} - manual draft (${t.status})</h3>`;
 
       if (t.status === 'pools_open' || t.status === 'pools_locked') {
+        stopDraftPolling();
         html += renderDraftLeaderPicker(t);
         html += renderDraftPoolBoard(t);
+        if (t.status === 'pools_locked') html += renderDraftStartAuctionPanel(t);
+      } else if (t.status === 'auction') {
+        html += renderDraftAuctionRoom(t);
+      } else if (t.status === 'squads_locked') {
+        stopDraftPolling();
+        html += renderDraftSquadsReview(t);
       } else {
-        html += '<p class="card-sub">This tournament has moved past the pool-setup stage. (Auction and schedule views are coming in a later update.)</p>';
+        stopDraftPolling();
+        html += '<p class="card-sub">This tournament has moved past the auction stage. (Group-stage and knockout views are coming in a later update.)</p>';
       }
 
       el.innerHTML = html;
+      if (t.status === 'auction') startDraftPolling(t.tournament_id);
     }
 
     function renderDraftLeaderPicker(t) {
@@ -7595,6 +7612,252 @@ let userPool = null;
       });
       if (!res.ok) { if (statusEl) statusEl.textContent = `Error: ${error}`; nwAlert(error || (data && data.error) || 'Could not lock pools'); return; }
       renderTournament(data);
+    }
+
+    /* ---------- manual-draft mode: the auction (Phase B) ----------
+     * Organizer-paced: the organizer opens one player ("lot") at a time
+     * from the queue picker, leaders bid (and can re-raise their own
+     * standing bid) while it's open, and the organizer closes it to award
+     * the player. Leaders poll GET .../state every ~1.75s while the
+     * auction view is showing, so a lot's high bid updates for everyone
+     * without anyone needing to refresh - see docs/BACKLOG.md.
+     *
+     * The poll payload is deliberately small (current_lot + each leader's
+     * budget/pool_picks only - see get_draft_state on the backend), so it
+     * only ever touches the #draft-live-status subtree below. The queue
+     * picker and the bid input box are never rebuilt by a poll tick - the
+     * queue picker only changes on the organizer's OWN actions (which
+     * already return the full tournament item), and the bid input would
+     * lose focus/whatever the leader is mid-typing if it were replaced
+     * every 1.75s. */
+
+    let draftPollTimer = null;
+    let draftPollTournamentId = null;
+
+    function stopDraftPolling() {
+      if (draftPollTimer) { clearInterval(draftPollTimer); draftPollTimer = null; }
+      draftPollTournamentId = null;
+    }
+
+    function startDraftPolling(tournamentId) {
+      if (draftPollTournamentId === tournamentId && draftPollTimer) return; // already polling this one
+      stopDraftPolling();
+      draftPollTournamentId = tournamentId;
+      draftPollTimer = setInterval(() => pollDraftStateTick(tournamentId), 1750);
+    }
+
+    // draftPollTournamentId is a script-scoped `let`, not a `window`
+    // property (only `function` declarations become globals in this
+    // classic top-level script) - this small inspector is what lets
+    // anything outside this closure (including the Playwright test suite)
+    // check the polling loop's state without reaching into module
+    // internals directly.
+    function isDraftPollingActiveFor(tournamentId) { return draftPollTournamentId === tournamentId; }
+
+    async function pollDraftStateTick(tournamentId) {
+      if (draftPollTournamentId !== tournamentId) return; // a newer poll loop has since replaced this one
+      if (document.visibilityState !== 'visible') return; // paused while the tab/window is hidden
+      const tabPanel = document.getElementById('tab-tournaments');
+      if (!tabPanel || !tabPanel.classList.contains('active')) return; // paused once we've left the tab
+      try {
+        const { res, data } = await authedFetch(`${API_BASE_URL}/tournament-draft/${tournamentId}/state`);
+        if (res && res.ok) updateDraftLiveStatus(tournamentId, data);
+      } catch (err) { /* transient network hiccup - just skip this tick, no alert spam */ }
+    }
+
+    function draftDecidedIds(draft) {
+      const sold = new Set();
+      Object.entries(draft.leaders || {}).forEach(([lid, info]) => {
+        (info.squad_member_ids || []).forEach(pid => { if (pid !== lid) sold.add(pid); });
+      });
+      (draft.unsold || []).forEach(pid => sold.add(pid));
+      return sold;
+    }
+
+    function renderDraftStartAuctionPanel(t) {
+      return `<div class="card" style="margin-top:10px;">
+        <h4 style="font-size:14px;margin:0 0 6px;">Ready for the auction</h4>
+        <p class="card-sub" style="margin:0 0 8px;">Pools are locked. Starting the auction lets each leader bid for every non-leader player, pool by pool. (Organizer only.)</p>
+        <button type="button" onclick="startDraftAuction('${t.tournament_id}')">Start auction</button>
+        <div id="draft-start-auction-status" class="result"></div>
+      </div>`;
+    }
+
+    async function startDraftAuction(tournamentId) {
+      const statusEl = document.getElementById('draft-start-auction-status');
+      if (statusEl) statusEl.textContent = 'Starting...';
+      const { res, data, error } = await authedFetch(`${API_BASE_URL}/tournament-draft/${tournamentId}/start-auction`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}'
+      });
+      if (!res.ok) { if (statusEl) statusEl.textContent = `Error: ${error}`; nwAlert(error || (data && data.error) || 'Could not start the auction'); return; }
+      renderTournament(data);
+    }
+
+    function renderDraftAuctionRoom(t) {
+      const draft = t.draft || {};
+      const iAmLeader = (t.leaders || []).includes(myPlayerId());
+      let html = renderDraftLiveStatusHtml(t.tournament_id, draft);
+      html += renderDraftQueuePicker(t);
+      if (iAmLeader) html += renderDraftBidBox();
+      return html;
+    }
+
+    function renderDraftLiveStatusHtml(tournamentId, draftLike) {
+      const lot = draftLike.current_lot;
+      const picksPerPool = (currentTournamentData && currentTournamentData.manual_draft && currentTournamentData.manual_draft.picks_per_pool) || 1;
+      let html = `<div id="draft-live-status" data-high-bid="${lot ? lot.high_bid : 0}">`;
+
+      html += '<div class="card" style="margin-top:10px;"><h4 style="font-size:14px;margin:0 0 6px;">Current lot</h4>';
+      if (lot) {
+        html += `<p style="margin:0 0 4px;"><strong>${escapeHtml(draftPlayerName(lot.player_id))}</strong> - Pool ${escapeHtml(String(lot.pool))}</p>`;
+        html += `<p class="card-sub" style="margin:0 0 8px;">High bid: ${lot.high_bid}${lot.high_bidder_id ? ` by ${escapeHtml(draftPlayerName(lot.high_bidder_id))}` : ' (no bids yet)'}</p>`;
+        html += `<div style="display:flex;gap:6px;flex-wrap:wrap;">
+          <button type="button" class="secondary" ${lot.high_bidder_id ? '' : 'disabled'} onclick="closeDraftLot('${tournamentId}')">Close lot (award)</button>
+          <button type="button" class="secondary" ${lot.high_bidder_id ? 'disabled' : ''} onclick="skipDraftLot('${tournamentId}')">Skip (no bids)</button>
+        </div>`;
+      } else {
+        html += '<p class="card-sub">No lot is currently open.</p>';
+      }
+      html += '<div id="draft-lot-status" class="result"></div></div>';
+
+      const leaderEntries = Object.entries(draftLike.leaders || {});
+      if (leaderEntries.length) {
+        html += '<div class="card" style="margin-top:10px;"><h4 style="font-size:14px;margin:0 0 6px;">Leaders</h4>';
+        leaderEntries.forEach(([lid, info]) => {
+          const picksStr = Object.entries(info.pool_picks || {}).map(([p, c]) => `Pool ${p}: ${c}/${picksPerPool}`).join(' · ');
+          html += `<div style="display:flex;justify-content:space-between;gap:10px;padding:2px 0;flex-wrap:wrap;">
+            <span>${escapeHtml(draftPlayerName(lid))}${lid === myPlayerId() ? ' (you)' : ''}</span>
+            <span class="card-sub">Budget: ${info.remaining_budget} · ${picksStr}</span>
+          </div>`;
+        });
+        html += '</div>';
+      }
+
+      html += '</div>';
+      return html;
+    }
+
+    function updateDraftLiveStatus(tournamentId, draftLike) {
+      const container = document.getElementById('draft-live-status');
+      if (!container) return; // no longer showing the auction view - nothing to update
+      container.outerHTML = renderDraftLiveStatusHtml(tournamentId, draftLike);
+      const lotOpen = !!(draftLike && draftLike.current_lot);
+      document.querySelectorAll('#draft-queue-picker button').forEach(b => { b.disabled = lotOpen; });
+    }
+
+    function renderDraftQueuePicker(t) {
+      const draft = t.draft || {};
+      const decided = draftDecidedIds(draft);
+      const lotOpen = !!draft.current_lot;
+      const byPool = {};
+      (draft.queue || []).forEach(q => {
+        if (decided.has(q.player_id)) return;
+        (byPool[q.pool] = byPool[q.pool] || []).push(q.player_id);
+      });
+      const poolNames = Object.keys(byPool).sort((a, b) => Number(a) - Number(b));
+      let html = '<div id="draft-queue-picker" class="card" style="margin-top:10px;"><h4 style="font-size:14px;margin:0 0 6px;">Open the next lot</h4>';
+      html += '<p class="card-sub" style="margin:0 0 6px;">Organizer only - pick who goes up next.</p>';
+      if (!poolNames.length) {
+        html += '<p class="card-sub">Every player has been sold or marked unsold.</p>';
+      } else {
+        poolNames.forEach(p => {
+          html += `<div style="margin-bottom:6px;"><strong>Pool ${escapeHtml(p)}</strong><br>`;
+          html += byPool[p].map(pid =>
+            `<button type="button" class="secondary" style="margin:2px 4px 2px 0;" ${lotOpen ? 'disabled' : ''} onclick="openDraftLot('${t.tournament_id}', '${pid}')">${escapeHtml(draftPlayerName(pid))}</button>`
+          ).join('');
+          html += '</div>';
+        });
+      }
+      html += '</div>';
+      return html;
+    }
+
+    async function openDraftLot(tournamentId, playerId) {
+      const { res, data, error } = await authedFetch(`${API_BASE_URL}/tournament-draft/${tournamentId}/open-lot`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ player_id: playerId })
+      });
+      if (!res.ok) { nwAlert(error || (data && data.error) || 'Could not open that lot'); return; }
+      renderTournament(data);
+    }
+
+    async function closeDraftLot(tournamentId) {
+      const statusEl = document.getElementById('draft-lot-status');
+      if (statusEl) statusEl.textContent = 'Closing...';
+      const { res, data, error } = await authedFetch(`${API_BASE_URL}/tournament-draft/${tournamentId}/close-lot`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}'
+      });
+      if (!res.ok) { if (statusEl) statusEl.textContent = `Error: ${error}`; nwAlert(error || (data && data.error) || 'Could not close that lot'); return; }
+      renderTournament(data);
+    }
+
+    async function skipDraftLot(tournamentId) {
+      const statusEl = document.getElementById('draft-lot-status');
+      if (statusEl) statusEl.textContent = 'Skipping...';
+      const { res, data, error } = await authedFetch(`${API_BASE_URL}/tournament-draft/${tournamentId}/skip-lot`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}'
+      });
+      if (!res.ok) { if (statusEl) statusEl.textContent = `Error: ${error}`; nwAlert(error || (data && data.error) || 'Could not skip that lot'); return; }
+      renderTournament(data);
+    }
+
+    function renderDraftBidBox() {
+      return `<div class="card" style="margin-top:10px;"><h4 style="font-size:14px;margin:0 0 6px;">Place a bid</h4>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
+          <input type="number" id="draft-bid-amount" placeholder="Amount" min="1" style="max-width:120px;">
+          <button type="button" class="secondary" onclick="draftBidBump(10)">+10</button>
+          <button type="button" class="secondary" onclick="draftBidBump(20)">+20</button>
+          <button type="button" class="secondary" onclick="draftBidBump(50)">+50</button>
+          <button type="button" id="draft-bid-submit-btn" onclick="submitDraftBid('${currentTournamentData ? currentTournamentData.tournament_id : ''}')">Bid</button>
+        </div>
+        <div id="draft-bid-status" class="result"></div>
+      </div>`;
+    }
+
+    function draftBidBump(delta) {
+      const statusContainer = document.getElementById('draft-live-status');
+      const currentHigh = statusContainer ? Number(statusContainer.dataset.highBid || 0) : 0;
+      const input = document.getElementById('draft-bid-amount');
+      if (input) input.value = String(currentHigh + delta);
+    }
+
+    async function submitDraftBid(tournamentId) {
+      if (!tournamentId) return;
+      const input = document.getElementById('draft-bid-amount');
+      const statusEl = document.getElementById('draft-bid-status');
+      const amount = parseInt(input && input.value, 10);
+      if (!amount || amount <= 0) { if (statusEl) statusEl.textContent = 'Enter a bid amount.'; return; }
+      if (statusEl) statusEl.textContent = 'Bidding...';
+      const { res, data, error } = await authedFetch(`${API_BASE_URL}/tournament-draft/${tournamentId}/bid`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ amount })
+      });
+      if (res.ok) {
+        if (statusEl) statusEl.textContent = 'Bid placed!';
+        // The bid response already carries the FULL tournament item (not
+        // the small polling shape) - use it directly rather than firing an
+        // extra request. The bid box itself is deliberately left alone so
+        // focus/whatever's next in the input isn't disturbed.
+        updateDraftLiveStatus(tournamentId, data.draft);
+      } else {
+        if (statusEl) {
+          statusEl.textContent = res.status === 409
+            ? 'Someone bid higher just before this - refreshing...'
+            : (error || (data && data.error) || 'Bid rejected');
+        }
+        // Our own read was stale (or the amount was otherwise invalid) -
+        // resync from the server so the shown high bid is accurate again.
+        pollDraftStateTick(tournamentId);
+      }
+    }
+
+    function renderDraftSquadsReview(t) {
+      const squads = t.squads || {};
+      let html = '<div class="card" style="margin-top:10px;"><h4 style="font-size:14px;margin:0 0 6px;">Squads</h4>';
+      html += '<p class="card-sub" style="margin:0 0 8px;">The auction is complete. Group-stage and knockout scheduling are coming in a later update.</p>';
+      Object.entries(squads).forEach(([, squad]) => {
+        html += `<div style="margin-bottom:10px;"><strong>${escapeHtml(squad.name)}</strong><br>${(squad.members || []).map(pid => escapeHtml(draftPlayerName(pid))).join(', ')}</div>`;
+      });
+      html += '</div>';
+      return html;
     }
 
     let pendingTournamentPayload = null;
@@ -8588,6 +8851,10 @@ let userPool = null;
       const btn = document.querySelector(`.tab-btn[data-tab="${CSS.escape(tabName)}"]`);
       const panel = document.getElementById(`tab-${tabName}`);
       if (!btn || !panel) return;
+      // Manual-draft auction polling (Phase B) only makes sense while the
+      // Tournaments tab is showing - stop it the instant we leave, so it
+      // never keeps hitting the API in the background from another tab.
+      if (tabName !== 'tournaments' && typeof stopDraftPolling === 'function') stopDraftPolling();
       document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
       document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
       btn.classList.add('active');
