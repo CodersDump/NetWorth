@@ -210,9 +210,55 @@
     border-bottom: 3px solid transparent;
     white-space: nowrap;
     margin: 0;
+    /* Owner-requested 2026-08-20: "enlarge the tab" on selection. Scale
+       doesn't affect layout (siblings don't shift), so the active tab pops
+       slightly and can overlap its neighbors a touch - raised z-index below
+       keeps it drawn on top when it does. Origin at the bottom edge so it
+       grows from the underline, not off in space above it. */
+    transition: transform 0.18s cubic-bezier(0.34, 1.56, 0.64, 1), color 0.18s ease, border-color 0.18s ease;
+    transform-origin: center bottom;
   }
-  .tab-btn.active { color: var(--court); border-bottom-color: var(--shuttle); }
+  .tab-btn.active {
+    color: var(--court);
+    border-bottom-color: var(--shuttle);
+    transform: scale(1.12);
+    position: relative;
+    z-index: 1;
+  }
   [data-theme="dark"] .tab-btn.active { color: var(--court); }
+
+  /* Always-floating "record a match" shortcut - see index.html for the
+     Owner's ask. Sits above page content and the sticky header/tab-strip
+     (z-index 19/20) but below the header dropdown menu (50) and any modal,
+     so an open modal naturally covers it instead of floating above it. */
+  .record-fab {
+    position: fixed;
+    right: 20px;
+    bottom: calc(20px + env(safe-area-inset-bottom, 0px));
+    z-index: 45;
+    width: 56px;
+    height: 56px;
+    border-radius: 50%;
+    border: none;
+    background: var(--court);
+    color: #fff;
+    font-family: 'Rajdhani', sans-serif;
+    font-size: 30px;
+    font-weight: 700;
+    line-height: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.32);
+    transition: transform 0.15s ease, opacity 0.15s ease;
+  }
+  .record-fab:hover { transform: scale(1.06); }
+  .record-fab:active { transform: scale(0.94); }
+  .record-fab.hide { display: none; }
+  @media (max-width: 480px) {
+    .record-fab { right: 16px; bottom: calc(16px + env(safe-area-inset-bottom, 0px)); width: 52px; height: 52px; font-size: 28px; }
+  }
 
   .tab-panel { display: none; padding-top: 20px; }
   .tab-panel.active { display: block; }

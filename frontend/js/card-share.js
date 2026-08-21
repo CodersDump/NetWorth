@@ -153,35 +153,6 @@
     ice:    [[0, '#dff9ff'], [.4, '#7fd8ff'], [.7, '#bff0ff'], [1, '#5ab8e6']],     // pale icy blue/white
     plasma: [[0, '#7a2cff'], [.4, '#b026ff'], [.7, '#5a3cff'], [1, '#8a2cff']]      // deep violet/purple
   };
-  function flameTongue(ctx, cx, baseY, w, h) {   // grows +y (inward) by h in local space
-    ctx.beginPath(); ctx.moveTo(cx - w / 2, baseY);
-    ctx.quadraticCurveTo(cx - w * 0.1, baseY + h * 0.5, cx, baseY + h);
-    ctx.quadraticCurveTo(cx + w * 0.1, baseY + h * 0.5, cx + w / 2, baseY);
-    ctx.closePath();
-  }
-  function flameEdge(ctx, along, t) {            // local: x 0..along, +y points inward
-    const n = Math.max(5, Math.round(along / 46)), base = 16;
-    for (let i = 0; i <= n; i++) {
-      const cx = (i / n) * along, w = (along / n) * 1.2;
-      const h = 40 + Math.sin(t * 6.283 + i * 1.3) * 14 + (i % 2 ? 8 : 0);
-      let g = ctx.createLinearGradient(0, base, 0, base + h);
-      g.addColorStop(0, '#ff7a12'); g.addColorStop(.5, '#ff3d0a'); g.addColorStop(1, 'rgba(200,24,0,0)');
-      ctx.fillStyle = g; flameTongue(ctx, cx, base, w, h); ctx.fill();
-      g = ctx.createLinearGradient(0, base, 0, base + h * 0.6);
-      g.addColorStop(0, '#ffe694'); g.addColorStop(1, 'rgba(255,150,20,0)');
-      ctx.fillStyle = g; flameTongue(ctx, cx, base, w * 0.48, h * 0.6); ctx.fill();
-    }
-  }
-  function drawFlame(ctx, W, H, t) {
-    const rad = 44, tt = (t == null ? 0.3 : t);
-    ctx.strokeStyle = '#5a1508'; ctx.lineWidth = 8; rr(ctx, 12, 12, W - 24, H - 24, rad); ctx.stroke();
-    ctx.save(); rr(ctx, 10, 10, W - 20, H - 20, rad + 4); ctx.clip();
-    ctx.save(); flameEdge(ctx, W, tt); ctx.restore();                                  // top
-    ctx.save(); ctx.translate(W, 0); ctx.rotate(Math.PI / 2); flameEdge(ctx, H, tt + 0.25); ctx.restore();   // right
-    ctx.save(); ctx.translate(W, H); ctx.rotate(Math.PI); flameEdge(ctx, W, tt + 0.5); ctx.restore();        // bottom
-    ctx.save(); ctx.translate(0, H); ctx.rotate(-Math.PI / 2); flameEdge(ctx, H, tt + 0.75); ctx.restore();  // left
-    ctx.restore();
-  }
   function drawFramePreset(ctx, id, W, H, t) {
     const rad = 44;
     ctx.save();
@@ -191,7 +162,14 @@
     } else if (id === 'ruby') {
       gradStroke(ctx, W, H, rad, [[0, '#ff8ea6'], [.4, '#c11f45'], [.7, '#ff5a7d'], [1, '#8a1230']], 10);
     } else if (id === 'flame') {
-      drawFlame(ctx, W, H, t);
+      // Redesigned 2026-08-20 (Owner: the old jagged flame-tongue SVG border
+      // "monstrosity" - wanted something closer to a clean Steam-style card
+      // frame instead). Same two-stroke shape as Gold/Carbon - a warm ember
+      // gradient plus a soft glow instead of literal flame-shaped graphics.
+      ctx.save(); ctx.shadowColor = 'rgba(255,90,20,.5)'; ctx.shadowBlur = 22;
+      gradStroke(ctx, W, H, rad, [[0, '#ffcf7a'], [.3, '#ff6a1a'], [.55, '#ffe9a0'], [.8, '#c81800'], [1, '#ff9a3a']], 10);
+      ctx.restore();
+      ctx.strokeStyle = 'rgba(255,205,150,.3)'; ctx.lineWidth = 2; rr(ctx, 22, 22, W - 44, H - 44, rad - 6); ctx.stroke();
     } else if (id === 'chrome') {
       gradStroke(ctx, W, H, rad, [[0, '#f2f5f8'], [.35, '#9aa6b2'], [.55, '#ffffff'], [.75, '#7d8794'], [1, '#dfe6ec']], 10);
     } else if (id === 'carbon') {
@@ -270,10 +248,7 @@
     .nw-cs-min{padding:1.5px; background:rgba(127,216,168,.4);}
     .nw-cs-fr-gold{padding:3px; background:linear-gradient(135deg,#f9df8a,#b9871f 35%,#ffe9a8 55%,#a06b12 75%,#f7d774);}
     .nw-cs-fr-ruby{padding:3px; background:linear-gradient(135deg,#ff8ea6,#c11f45 40%,#ff5a7d 70%,#8a1230);}
-    .nw-cs-fr-flame{padding:3px; background:linear-gradient(135deg,#8a2410,#3a0f06 50%,#6e1c0a); box-shadow:0 0 16px rgba(255,90,20,.35);}
-    .nw-cs-fr-flame .nw-cs-content{padding:38px 30px 26px;}
-    .nw-cs-flames{position:absolute; inset:0; z-index:2; pointer-events:none; filter:drop-shadow(0 0 5px rgba(255,120,20,.5)); animation:nw-cs-flick .9s ease-in-out infinite alternate;}
-    @keyframes nw-cs-flick{from{opacity:.82; transform:scale(1);}to{opacity:1; transform:scale(1.015);}}
+    .nw-cs-fr-flame{padding:3px; background:linear-gradient(135deg,#ffcf7a,#ff6a1a 30%,#ffe9a0 55%,#c81800 80%,#ff9a3a); box-shadow:0 0 18px rgba(255,90,20,.4);}
     .nw-cs-fr-chrome{padding:3px; background:linear-gradient(135deg,#f2f5f8,#9aa6b2 35%,#fff 55%,#7d8794 75%,#dfe6ec);}
     .nw-cs-fr-carbon{padding:3px; background:repeating-linear-gradient(45deg,#3a423d 0 3px,#1c211e 3px 6px);}
     .nw-cs-fr-neon{padding:3px; background:#5affd0; box-shadow:0 0 18px rgba(51,240,192,.55);}
@@ -593,36 +568,10 @@
     if (fr.type === 'preset') return 'nw-cs-fr-' + fr.id;
     return '';
   }
-  function svgTongue(bx, by, dx, dy, px, py, w, h) {
-    const lx = bx - px * w / 2, ly = by - py * w / 2, rx = bx + px * w / 2, ry = by + py * w / 2;
-    const tx = bx + dx * h, ty = by + dy * h;
-    const c1x = bx - px * w * 0.1 + dx * h * 0.5, c1y = by - py * w * 0.1 + dy * h * 0.5;
-    const c2x = bx + px * w * 0.1 + dx * h * 0.5, c2y = by + py * w * 0.1 + dy * h * 0.5;
-    return `M${lx.toFixed(1)} ${ly.toFixed(1)} Q${c1x.toFixed(1)} ${c1y.toFixed(1)} ${tx.toFixed(1)} ${ty.toFixed(1)} Q${c2x.toFixed(1)} ${c2y.toFixed(1)} ${rx.toFixed(1)} ${ry.toFixed(1)} Z`;
-  }
-  const FLAME_BORDER_SVG = (function (W, H) {
-    const m = 12, ei = 14; let outer = '', inner = '';
-    function edge(x0, y0, x1, y1, dx, dy, px, py) {
-      const len = Math.hypot(x1 - x0, y1 - y0), n = Math.max(4, Math.round(len / 38));
-      for (let i = 0; i <= n; i++) {
-        const bx = x0 + (x1 - x0) * (i / n), by = y0 + (y1 - y0) * (i / n), h = 32 + (i % 3) * 9, w = (len / n) * 1.25;
-        outer += svgTongue(bx, by, dx, dy, px, py, w, h);
-        inner += svgTongue(bx, by, dx, dy, px, py, w * 0.5, h * 0.58);
-      }
-    }
-    edge(m + ei, ei, W - m - ei, ei, 0, 1, 1, 0);              // top
-    edge(m + ei, H - ei, W - m - ei, H - ei, 0, -1, 1, 0);     // bottom
-    edge(ei, m + ei, ei, H - m - ei, 1, 0, 0, 1);              // left
-    edge(W - ei, m + ei, W - ei, H - m - ei, -1, 0, 0, 1);     // right
-    return `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" width="100%" height="100%" xmlns="http://www.w3.org/2000/svg"><path d="${outer}" fill="#ff4d0a"/><path d="${inner}" fill="#ffd24a"/></svg>`;
-  })(300, 420);
-
   function buildSlot(slotEl, bgSel, frameSel, statsSel) {
     const isImg = frameSel.type === 'image';
-    const isFlame = frameSel.type === 'preset' && frameSel.id === 'flame';
     slotEl.innerHTML = `<div class="nw-cs-frame ${frameClass(frameSel)}">
         <div class="nw-cs-card ${bgSel.anim || ''}">
-        ${isFlame ? `<div class="nw-cs-flames">${FLAME_BORDER_SVG}</div>` : ''}
         <div class="nw-cs-content"></div>
         ${isImg ? `<div class="nw-cs-frimg" style="background-image:url('${srcOf(frameSel.key)}');"></div>` : ''}
         </div></div>`;
@@ -987,7 +936,7 @@
     if (cur.bg.type === 'image') cur.bg._img = await loadImg(srcOf(cur.bg.key));
     if (cur.frame.type === 'image') cur.frame._img = await loadImg(srcOf(cur.frame.key));
   }
-  const ANIM_FRAMES = { holo: 1, ice: 1, plasma: 1, flame: 1 };
+  const ANIM_FRAMES = { holo: 1, ice: 1, plasma: 1 };
   function isAnimatedSel(cur) {
     return (cur.frame.type === 'preset' && ANIM_FRAMES[cur.frame.id]) || (cur.bg.type === 'preset' && !!cur.bg.anim);
   }
