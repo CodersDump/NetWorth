@@ -11,26 +11,25 @@
 
 ## Now / high priority
 
-- `[feat] L` **Manual-mode tournaments (leaders + pool draft/auction) — Phase A done, B/C/D next.**
+- `[feat] L` **Manual-mode tournaments (leaders + pool draft/auction) — Phases A & B done, C/D next.**
   Full design: organizer names leaders, splits every player into ranked pools (drag/tap board -
-  **done, see Done section below**), leaders draft squads via a live organizer-paced point-budget
-  auction, then a squad-vs-squad group stage (round robin, N individual matches per tie) and knockout
-  (final/semi/3rd-place, N matches per tie, default 1 but configurable) auto-generate. Decided
-  mechanics (owner-confirmed): sub-match player picks within a tie are made by **each squad's own
-  leader**, not the organizer; a tie level on match-wins is broken by aggregate point differential
-  (cricket-NRR style) rather than requiring an odd match count; unsold auction players are resolved
-  manually by the organizer, no auto-assign rule. Also wanted alongside this: a tournament-scoped
-  (non-Elo) per-player score/leaderboard for the tournament only - Elo itself is untouched, still
-  updates globally per individual match exactly as today.
+  **done**), leaders draft squads via a live organizer-paced point-budget auction (**done**), then a
+  squad-vs-squad group stage (round robin, N individual matches per tie) and knockout (final/semi/3rd-
+  place, N matches per tie, default 1 but configurable) auto-generate. Decided mechanics (owner-
+  confirmed): sub-match player picks within a tie are made by **each squad's own leader**, not the
+  organizer; a tie level on match-wins is broken by aggregate point differential (cricket-NRR style)
+  rather than requiring an odd match count; unsold auction players are resolved manually by the
+  organizer, no auto-assign rule. Also wanted alongside this: a tournament-scoped (non-Elo) per-player
+  score/leaderboard for the tournament only - Elo itself is untouched, still updates globally per
+  individual match exactly as today.
   - **Phase A - DONE (see Done section, 2026-08-21).** Data model, leader/pool CRUD endpoints,
     `_authorize_tournament_organizer`, drag/tap pool board UI.
-  - **Phase B - next.** The auction engine: `start-auction`, `open-lot`, `bid` (atomic conditional
-    `update_item`, no new table - see the reasoning in the session that designed this), `close-lot`
-    (awards + auto-freezes into `squads_locked` once every leader's pool quotas are full), `skip-lot`,
-    `get_draft_state` (small polling payload, ~1.75s interval, paused on tab-hide/tab-switch). Highest-
-    risk phase - the only genuinely new mechanism (organizer-paced lots + real-time-ish bidding via
-    polling, not WebSocket, to fit the app's plain-REST architecture).
-  - **Phase C - after B.** Tie-based schedule generation: `build_tie`/`build_tie_round_robin`/
+  - **Phase B - DONE (see Done section, 2026-08-21).** The auction engine: `start-auction`, `open-lot`,
+    `bid` (atomic conditional `update_item`, no new table), `close-lot` (awards + auto-freezes into
+    `squads_locked` once every leader's pool quotas are full), `skip-lot`, `get_draft_state` (small
+    polling payload, ~1.75s interval, paused on tab-hide/tab-switch/leaving the tab). Auction room +
+    bidding UI.
+  - **Phase C - next.** Tie-based schedule generation: `build_tie`/`build_tie_round_robin`/
     `build_knockout_tie_round` (generalizing the existing `build_round_robin`/`build_knockout_round`),
     the score-based tie-decision rule, `compute_squad_standings`, the new per-tournament player-score
     computation, and the frontend tie-card/bracket rendering extension.
@@ -289,6 +288,68 @@
 
 ## Done
 
+- ✅ 2026-08-21 (v1.46.0-phaseB) — **Manual-mode tournaments (leaders + pool draft/auction), Phase B:
+  the auction engine + auction room/bidding UI (Owner request, "please go ahead").** Second slice of
+  the big tournament feature - turns a `pools_locked` manual-draft tournament into `squads_locked` via
+  an organizer-paced, leader-bid point-budget auction. Phase C (tie-based schedule generation) and
+  Phase D (auth-hardening pass + the `substitute_player` name-rebuild bugfix) are still to come.
+  **Backend** (`backend/lambdas/tournaments/index.py`): six new routes under `/tournament-draft{proxy+}`
+  - `POST .../start-auction` (organizer; requires `pools_locked`; builds the pool-ordered nomination
+  `queue` with leaders excluded since they're pre-owned, and seeds each leader's `pool_picks` with
+  their own pool already at 1 so the ordinary quota check works unmodified everywhere else, no special-
+  casing needed for "my own pool"), `POST .../open-lot` (organizer; rejects a second lot while one's
+  already open, rejects an already-decided player), `POST .../bid` (**leader-only**, new
+  `_authorize_leader()` helper matching a leader's `custom:player_id` against `item['leaders']`; the
+  only route in this Lambda that uses an atomic conditional `update_item` instead of the file's usual
+  read-modify-write `put_item` - `ConditionExpression='draft.current_lot.player_id=:pid AND
+  draft.current_lot.high_bid<:nb'`, `list_append` for `bid_history`; a losing race gets HTTP 409 via
+  `ConditionalCheckFailedException`, not a silently-overwritten bid - no new DynamoDB table needed
+  since at most one lot is ever open at a time, organizer-serialized), `POST .../close-lot` (organizer;
+  awards to the high bidder, deducts budget, increments `pool_picks`; once **every** leader's **every**
+  pool quota is met, auto-freezes: builds the `squads` dict from each leader's accumulated
+  `squad_member_ids`, `draft.status -> 'completed'`, tournament `status -> 'squads_locked'` - a leftover
+  un-opened/unsold queue player does NOT block this, only quota completion matters), `POST .../skip-lot`
+  (organizer; rejects a lot that already has a bid - must `close-lot` instead), `GET .../state` (leader
+  or organizer; deliberately small polling payload - `current_lot`, each leader's `remaining_budget`/
+  `pool_picks`, and just counts for `queue_length`/`decided_count`/`unsold_count` - not the full item,
+  since leaders' clients hit this every ~1.75s). Design deviation from the original plan doc: dropped
+  the persistent `queue.queue_index` field in favor of a dynamically-computed `_draft_decided_ids(draft)`
+  helper (union of every leader's `squad_member_ids` minus the leader themself, plus `unsold`) - simpler
+  and can't drift out of sync with the actual awarded/skipped state. Verified with
+  `/tmp/test_manual_draft_auction.py` (31 checks: queue/budget/pool_picks seeding, full authz matrix,
+  bid validation incl. budget/quota/tie/stale-bid rejection, a **genuine** atomic-conditional-update
+  collision forced via a monkeypatched `FakeTable.update_item` - not just the ordinary pre-validation
+  stale-bid path, which is a different code path entirely - confirming the real race-safety mechanism
+  returns 409 instead of silently overwriting, close/skip-lot behavior, the auto-freeze-into-
+  `squads_locked` transition with correct squad membership, and that a leftover queued/unsold player
+  doesn't block completion) plus the existing regression suite (all still passing).
+  **Frontend**: `renderManualDraftTournament()` gained `auction` and `squads_locked` branches. Auction
+  room (`renderDraftAuctionRoom`): a queue picker grouped by pool (organizer-only in intent, shown to
+  everyone per this feature's established "show to all, let the server 403" convention - same as
+  Phase A's pool board), a live current-lot/leaders-status panel (`#draft-live-status`), and - only for
+  a logged-in leader - a bid box with quick +10/+20/+50 buttons that read the live high bid off a
+  `data-high-bid` attribute rather than a stale closure value. Polling (`startDraftPolling`/
+  `stopDraftPolling`/`pollDraftStateTick`, ~1.75s): starts when the auction view renders, stops when
+  leaving the Tournaments tab (`activateTab`) or the tournament leaves `auction` status, no-ops while
+  `document.visibilityState !== 'visible'` and fires an immediate extra refresh on the existing
+  `visibilitychange` listener the moment the tab wakes back up. Each poll tick (and a successful bid
+  response) only replaces the `#draft-live-status` subtree via `outerHTML` - the bid input box is a
+  **separate, never-touched container**, so an in-progress bid keystroke is never lost; verified in
+  Playwright by tagging the actual input DOM node before a live-status update and confirming it's the
+  *same* node afterward (not just a coincidentally-matching value). `close-lot`/`skip-lot`/`open-lot`
+  and the "Start auction" button all trigger a full `renderTournament(data)` refresh (consistent with
+  every other write in this app), which also cleanly restarts or permanently stops polling depending on
+  the new status. `squads_locked` renders a simple read-only roster per squad (schedule generation is
+  Phase C). Verified with a new Playwright pass against the real served `frontend/` tree: queue picker
+  rendering, open/bid/close/skip flows via a stubbed `authedFetch`, close/skip button enable-state
+  syncing with bid presence, the bid-bump-button-reads-live-value behavior, the squads_locked roster
+  view, and the polling lifecycle (`isDraftPollingActiveFor()` - a small inspector added since the
+  timer's own tracking variable is a script-scoped `let`, not a `window` property) starting on auction
+  render and stopping on tab switch - plus a real (non-mocked) 4-second wait confirming the actual
+  `setInterval` fires on schedule, not just via manually-invoked handlers. The existing Phase A
+  Playwright suite (`/tmp/test_draft_ui.js`) still passes unmodified.
+  Files: `backend/lambdas/tournaments/index.py`, `frontend/js/app.js`. No `template.yaml` change needed
+  - the Phase A `/tournament-draft{proxy+}` API Gateway resource tree already covers these new routes.
 - ✅ 2026-08-21 (v1.45.0-phaseA) — **Manual-mode tournaments (leaders + pool draft/auction), Phase A:
   data model + leader/pool endpoints + drag/tap pool board (Owner request).** First slice of the
   big "leaders draft squads via a live auction, then group stage + knockout auto-generate" feature -

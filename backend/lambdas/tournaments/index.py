@@ -28,6 +28,7 @@ import os
 import uuid
 import random
 import boto3
+from botocore.exceptions import ClientError
 from datetime import datetime, timezone
 from string import ascii_uppercase
 
@@ -496,6 +497,18 @@ def handle_draft_route(event):
         return set_pool_assignment(tournament_id, event, claims)
     if len(parts) == 2 and parts[1] == 'lock-pools' and method == 'POST':
         return lock_pools(tournament_id, event, claims)
+    if len(parts) == 2 and parts[1] == 'start-auction' and method == 'POST':
+        return start_auction(tournament_id, event, claims)
+    if len(parts) == 2 and parts[1] == 'open-lot' and method == 'POST':
+        return open_lot(tournament_id, event, claims)
+    if len(parts) == 2 and parts[1] == 'bid' and method == 'POST':
+        return submit_bid(tournament_id, event, claims)
+    if len(parts) == 2 and parts[1] == 'close-lot' and method == 'POST':
+        return close_lot(tournament_id, event, claims)
+    if len(parts) == 2 and parts[1] == 'skip-lot' and method == 'POST':
+        return skip_lot(tournament_id, event, claims)
+    if len(parts) == 2 and parts[1] == 'state' and method == 'GET':
+        return get_draft_state(tournament_id, event, claims)
 
     return _response(404, {'error': 'not found'})
 
@@ -750,6 +763,293 @@ def lock_pools(tournament_id, event, claims):
     item['status'] = 'pools_locked'
     tournaments_table.put_item(Item=item)
     return _response(200, item)
+
+
+# ---------- manual draft mode: the auction (Phase B) ----------
+#
+# Organizer-paced: the organizer opens one player ("lot") at a time, any
+# registered leader can bid (and re-raise their own bid) while it's open,
+# and the organizer closes it to award the player to the current highest
+# bidder. Leaders' clients poll GET .../state every ~1.75s while a lot is
+# open - see docs/BACKLOG.md for why polling was chosen over a WebSocket.
+#
+# Concurrency: at most one lot is open at a time (organizer-serialized), so
+# the only real race is two leaders bidding on the SAME open lot at nearly
+# the same moment. submit_bid() below handles that with a conditional
+# DynamoDB update_item (not a read-modify-write put_item like every other
+# route in this file) - the loser of the race gets a 409 and their next
+# poll shows the real current high bid, rather than silently overwriting
+# someone else's higher bid.
+
+def _draft_decided_ids(draft):
+    """Every player_id that's no longer available to auction: already won
+    by a leader (everyone in a squad_member_ids list except the leader
+    entry itself, which is pre-seeded with the leader's own id), or marked
+    unsold."""
+    sold = set()
+    for lid, info in draft['leaders'].items():
+        sold.update(pid for pid in info['squad_member_ids'] if pid != lid)
+    return sold | set(draft.get('unsold', []))
+
+
+def _authorize_leader(item, claims):
+    """Caller must be one of THIS tournament's registered leaders (matched
+    by their linked player_id) - used for bid, not for organizer-only
+    auction actions (open/close/skip lot, which stay on
+    _authorize_tournament_organizer)."""
+    caller_pid = claims.get('custom:player_id')
+    if not caller_pid or caller_pid not in (item.get('leaders') or []):
+        return _response(403, {'error': 'you are not a registered leader for this draft'}), None
+    return None, caller_pid
+
+
+def start_auction(tournament_id, event, claims):
+    item, err = _draft_get_tournament(tournament_id)
+    if err:
+        return err
+    denied = _authorize_tournament_organizer(item, claims)
+    if denied:
+        return denied
+    if item.get('status') != 'pools_locked':
+        return _response(400, {'error': 'pools must be locked before starting the auction'})
+
+    leaders = item.get('leaders') or []
+    pool_of = {}
+    for name, plist in item['pools']['assignments'].items():
+        for pid in plist:
+            pool_of[pid] = name
+
+    pool_names = sorted(item['pools']['assignments'].keys(), key=int)
+    # Pool-ordered nomination queue - leaders themselves are never queued,
+    # they're already "won" by themselves (pool_picks seeded below).
+    queue = [{'player_id': pid, 'pool': name}
+             for name in pool_names for pid in item['pools']['assignments'][name]
+             if pid not in leaders]
+
+    budget = item['manual_draft']['budget_per_leader']
+    draft_leaders = {}
+    for lid in leaders:
+        pool_picks = {name: 0 for name in pool_names}
+        own_pool = pool_of.get(lid)
+        if own_pool is not None:
+            # A leader who's already in a pool only needs to pick ONE MORE
+            # from it, not picks_per_pool more - seeding their own pick to
+            # 1 here means the ordinary "pool_picks[p] >= picks_per_pool"
+            # check works unmodified everywhere else, no special-casing.
+            pool_picks[own_pool] = 1
+        draft_leaders[lid] = {
+            'remaining_budget': budget,
+            'pool_picks': pool_picks,
+            'squad_member_ids': [lid],
+        }
+
+    item['draft'] = {
+        'status': 'in_progress',
+        'queue': queue,
+        'current_lot': None,
+        'leaders': draft_leaders,
+        'unsold': [],
+    }
+    item['status'] = 'auction'
+    tournaments_table.put_item(Item=item)
+    return _response(200, item)
+
+
+def open_lot(tournament_id, event, claims):
+    item, err = _draft_get_tournament(tournament_id)
+    if err:
+        return err
+    denied = _authorize_tournament_organizer(item, claims)
+    if denied:
+        return denied
+    if item.get('status') != 'auction' or (item.get('draft') or {}).get('status') != 'in_progress':
+        return _response(400, {'error': 'this tournament is not in an active auction'})
+    draft = item['draft']
+    if draft.get('current_lot'):
+        return _response(400, {'error': 'a lot is already open - close or skip it before opening another'})
+
+    body = json.loads(event.get('body') or '{}')
+    player_id = body.get('player_id')
+    if not player_id:
+        return _response(400, {'error': 'player_id is required'})
+
+    queue_entry = next((q for q in draft['queue'] if q['player_id'] == player_id), None)
+    if not queue_entry:
+        return _response(400, {'error': 'that player is not in this auction'})
+    if player_id in _draft_decided_ids(draft):
+        return _response(400, {'error': 'that player has already been sold or marked unsold'})
+
+    draft['current_lot'] = {
+        'player_id': player_id,
+        'pool': queue_entry['pool'],
+        'status': 'open',
+        'high_bid': 0,
+        'high_bidder_id': None,
+        'opened_at': datetime.now(timezone.utc).isoformat(),
+        'bid_history': [],
+    }
+    tournaments_table.put_item(Item=item)
+    return _response(200, item)
+
+
+def submit_bid(tournament_id, event, claims):
+    item, err = _draft_get_tournament(tournament_id)
+    if err:
+        return err
+    denied, caller_pid = _authorize_leader(item, claims)
+    if denied:
+        return denied
+    if item.get('status') != 'auction' or (item.get('draft') or {}).get('status') != 'in_progress':
+        return _response(400, {'error': 'this tournament is not in an active auction'})
+    draft = item['draft']
+    current_lot = draft.get('current_lot')
+    if not current_lot or current_lot.get('status') != 'open':
+        return _response(400, {'error': 'no lot is currently open'})
+
+    body = json.loads(event.get('body') or '{}')
+    try:
+        amount = int(body.get('amount'))
+    except (TypeError, ValueError):
+        return _response(400, {'error': 'amount must be a number'})
+    if amount <= current_lot['high_bid']:
+        return _response(400, {'error': f"amount must be higher than the current bid ({current_lot['high_bid']})"})
+
+    leader = draft['leaders'].get(caller_pid)
+    if not leader:
+        return _response(404, {'error': 'leader state not found for you in this draft'})
+    if amount > leader['remaining_budget']:
+        return _response(400, {'error': 'amount exceeds your remaining budget'})
+    picks_per_pool = item['manual_draft']['picks_per_pool']
+    pool = current_lot['pool']
+    if leader['pool_picks'].get(pool, 0) >= picks_per_pool:
+        return _response(400, {'error': f'you have already filled your quota for pool {pool}'})
+
+    # Atomic conditional write - NOT a read-modify-write put_item like
+    # every other route in this file. Two leaders racing to raise the same
+    # lot serialize correctly here: the loser gets ConditionalCheckFailed
+    # (-> 409) instead of silently clobbering the winner's higher bid.
+    entry = {'leader_id': caller_pid, 'amount': amount, 'at': datetime.now(timezone.utc).isoformat()}
+    try:
+        tournaments_table.update_item(
+            Key={'tournament_id': tournament_id},
+            UpdateExpression=(
+                'SET draft.current_lot.high_bid = :nb, '
+                'draft.current_lot.high_bidder_id = :lid, '
+                'draft.current_lot.bid_history = list_append(draft.current_lot.bid_history, :entry)'
+            ),
+            ConditionExpression='draft.current_lot.player_id = :pid AND draft.current_lot.high_bid < :nb',
+            ExpressionAttributeValues={':nb': amount, ':lid': caller_pid, ':pid': current_lot['player_id'], ':entry': [entry]},
+        )
+    except ClientError as e:
+        if e.response.get('Error', {}).get('Code') == 'ConditionalCheckFailedException':
+            return _response(409, {'error': 'someone bid higher (or the lot changed) just before this - refresh and try again'})
+        raise
+
+    updated = tournaments_table.get_item(Key={'tournament_id': tournament_id}).get('Item')
+    return _response(200, updated)
+
+
+def close_lot(tournament_id, event, claims):
+    item, err = _draft_get_tournament(tournament_id)
+    if err:
+        return err
+    denied = _authorize_tournament_organizer(item, claims)
+    if denied:
+        return denied
+    if item.get('status') != 'auction' or (item.get('draft') or {}).get('status') != 'in_progress':
+        return _response(400, {'error': 'this tournament is not in an active auction'})
+    draft = item['draft']
+    current_lot = draft.get('current_lot')
+    if not current_lot or current_lot.get('status') != 'open':
+        return _response(400, {'error': 'no lot is currently open'})
+    winner_id = current_lot.get('high_bidder_id')
+    if not winner_id:
+        return _response(400, {'error': 'nobody has bid on this player yet - use skip-lot instead of close-lot'})
+
+    pool = current_lot['pool']
+    player_id = current_lot['player_id']
+    amount = current_lot['high_bid']
+    leader = draft['leaders'][winner_id]
+    leader['remaining_budget'] -= amount
+    leader['pool_picks'][pool] = leader['pool_picks'].get(pool, 0) + 1
+    leader['squad_member_ids'].append(player_id)
+    draft['current_lot'] = None
+
+    picks_per_pool = item['manual_draft']['picks_per_pool']
+    all_quotas_met = all(
+        count >= picks_per_pool
+        for info in draft['leaders'].values()
+        for count in info['pool_picks'].values()
+    )
+    if all_quotas_met:
+        draft['status'] = 'completed'
+        squads = {}
+        for lid, info in draft['leaders'].items():
+            member_ids = info['squad_member_ids']
+            members_data = [players_table.get_item(Key={'player_id': pid}).get('Item') for pid in member_ids]
+            leader_player = players_table.get_item(Key={'player_id': lid}).get('Item')
+            leader_name = leader_player['name'] if leader_player else lid
+            squads[lid] = {
+                'entity_id': str(uuid.uuid4()),
+                'name': f"Team {leader_name}",
+                'members': member_ids,
+                'member_ratings': [(p.get('rating', 1000) if p else 1000) for p in members_data],
+                'locked': True,
+            }
+        item['squads'] = squads
+        item['status'] = 'squads_locked'
+
+    tournaments_table.put_item(Item=item)
+    return _response(200, item)
+
+
+def skip_lot(tournament_id, event, claims):
+    item, err = _draft_get_tournament(tournament_id)
+    if err:
+        return err
+    denied = _authorize_tournament_organizer(item, claims)
+    if denied:
+        return denied
+    if item.get('status') != 'auction' or (item.get('draft') or {}).get('status') != 'in_progress':
+        return _response(400, {'error': 'this tournament is not in an active auction'})
+    draft = item['draft']
+    current_lot = draft.get('current_lot')
+    if not current_lot or current_lot.get('status') != 'open':
+        return _response(400, {'error': 'no lot is currently open'})
+    if current_lot.get('high_bidder_id'):
+        return _response(400, {'error': 'this player already has a bid - use close-lot to award them, not skip-lot'})
+
+    draft.setdefault('unsold', []).append(current_lot['player_id'])
+    draft['current_lot'] = None
+    tournaments_table.put_item(Item=item)
+    return _response(200, item)
+
+
+def get_draft_state(tournament_id, event, claims):
+    """The polling endpoint - a small payload (no bid_history/full item)
+    since leaders' clients hit this every ~1.75s while a lot is open."""
+    item, err = _draft_get_tournament(tournament_id)
+    if err:
+        return err
+    caller_pid = claims.get('custom:player_id')
+    is_leader = bool(caller_pid) and caller_pid in (item.get('leaders') or [])
+    if not is_leader:
+        denied = _authorize_tournament_organizer(item, claims)
+        if denied:
+            return denied
+    draft = item.get('draft')
+    if not draft:
+        return _response(400, {'error': 'the auction has not started yet'})
+    decided = _draft_decided_ids(draft)
+    return _response(200, {
+        'status': draft['status'],
+        'current_lot': draft.get('current_lot'),
+        'leaders': {lid: {'remaining_budget': info['remaining_budget'], 'pool_picks': info['pool_picks']}
+                    for lid, info in draft['leaders'].items()},
+        'queue_length': len(draft['queue']),
+        'decided_count': len(decided),
+        'unsold_count': len(draft.get('unsold', [])),
+    })
 
 
 # ---------- reads ----------
