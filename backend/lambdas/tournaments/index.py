@@ -509,6 +509,14 @@ def handle_draft_route(event):
         return skip_lot(tournament_id, event, claims)
     if len(parts) == 2 and parts[1] == 'state' and method == 'GET':
         return get_draft_state(tournament_id, event, claims)
+    if len(parts) == 2 and parts[1] == 'generate-schedule' and method == 'POST':
+        return generate_schedule(tournament_id, event, claims)
+    if len(parts) == 2 and parts[1] == 'pick-tie-player' and method == 'POST':
+        return pick_tie_player(tournament_id, event, claims)
+    if len(parts) == 2 and parts[1] == 'group-tie-score' and method == 'POST':
+        return record_group_tie_score(tournament_id, event, claims)
+    if len(parts) == 2 and parts[1] == 'knockout-tie-score' and method == 'POST':
+        return record_knockout_tie_score(tournament_id, event, claims)
 
     return _response(404, {'error': 'not found'})
 
@@ -1052,6 +1060,435 @@ def get_draft_state(tournament_id, event, claims):
     })
 
 
+# ---------- manual draft mode: tie-based schedule (Phase C) ----------
+#
+# Once every leader's squad is locked, `generate_schedule` builds a single
+# round-robin of squad-vs-squad "ties" (`group_stage`), each holding
+# `group_matches_per_tie` individual matches. Each match is scored with the
+# SAME `_submit_game`/Elo pipeline every other match in this Lambda already
+# uses (a tie's match is just a fixture-shaped dict - `player_a`/
+# `player_b`/`games`/`games_won_a`/`games_won_b`/`played`/`winner_id` -
+# nested one level deeper under a tie instead of a subgroup) - Elo is
+# completely untouched, still updates globally per individual match exactly
+# as today. What's new is the TIE container around those matches: each
+# side's own leader nominates who plays each match slot (`pick_tie_player`,
+# not the organizer), and the tie itself is decided by match-wins first,
+# aggregate point differential as a cricket-NRR-style tiebreak
+# (`_update_tie_progress`) - a genuine deadlock on both is left `decided:
+# False` for the organizer to resolve manually, the same philosophy as
+# unsold auction players in Phase B. Once every group-stage tie is decided,
+# a knockout tie-bracket seeds from squad standings automatically.
+
+def build_tie(squad_a_id, squad_b_id, matches_per_tie):
+    return {
+        'tie_id': str(uuid.uuid4()),
+        'squad_a': squad_a_id,
+        'squad_b': squad_b_id,
+        'matches': [
+            {'match_id': str(uuid.uuid4()), 'player_a': None, 'player_b': None,
+             'games': [], 'games_won_a': 0, 'games_won_b': 0, 'played': False, 'winner_id': None}
+            for _ in range(matches_per_tie)
+        ],
+        'wins_a': 0, 'wins_b': 0, 'point_diff_a': 0, 'point_diff_b': 0,
+        'decided': False, 'winner_squad_id': None,
+    }
+
+
+def build_tie_round_robin(squad_ids, matches_per_tie):
+    ties = []
+    for i in range(len(squad_ids)):
+        for j in range(i + 1, len(squad_ids)):
+            ties.append(build_tie(squad_ids[i], squad_ids[j], matches_per_tie))
+    return ties
+
+
+def _bye_tie(squad_id):
+    """Mirrors _bye_match: auto-decided the instant it's created, no
+    matches to play - the lone squad advances untouched."""
+    return {
+        'tie_id': str(uuid.uuid4()), 'squad_a': squad_id, 'squad_b': None,
+        'matches': [], 'wins_a': 0, 'wins_b': 0, 'point_diff_a': 0, 'point_diff_b': 0,
+        'decided': True, 'winner_squad_id': squad_id, 'bye': True,
+    }
+
+
+def build_knockout_tie_round(squad_ids, matches_per_tie):
+    """Generalizes build_knockout_round: same power-of-2/byes-needed
+    bracket-seeding logic, ties instead of plain matches."""
+    n = len(squad_ids)
+    next_pow2 = 1
+    while next_pow2 < n:
+        next_pow2 *= 2
+    byes_needed = next_pow2 - n
+
+    ties = []
+    i = 0
+    byes_given = 0
+    while i < len(squad_ids):
+        if byes_given < byes_needed:
+            ties.append(_bye_tie(squad_ids[i]))
+            byes_given += 1
+            i += 1
+        else:
+            a = squad_ids[i]
+            b = squad_ids[i + 1] if i + 1 < len(squad_ids) else None
+            ties.append(_bye_tie(a) if b is None else build_tie(a, b, matches_per_tie))
+            i += 2
+    return ties
+
+
+def _update_tie_progress(tie):
+    """Recomputes wins_a/wins_b/point_diff_a/point_diff_b from the tie's
+    played matches, and decides the tie once every match has been played:
+    match-wins first, aggregate point differential (cricket-NRR style) as
+    the tiebreak. A genuine deadlock on both is left `decided: False` for
+    the organizer to resolve manually - same philosophy as an unsold
+    auction player in Phase B, never guessed at silently."""
+    matches = tie['matches']
+    wins_a = sum(1 for m in matches if m['played'] and m['winner_id'] == (m['player_a'] or {}).get('player_id'))
+    wins_b = sum(1 for m in matches if m['played'] and m['winner_id'] == (m['player_b'] or {}).get('player_id'))
+    diff_a = sum(sum(g['score_a'] for g in m['games']) - sum(g['score_b'] for g in m['games'])
+                 for m in matches if m['played'])
+    tie['wins_a'], tie['wins_b'] = wins_a, wins_b
+    tie['point_diff_a'], tie['point_diff_b'] = diff_a, -diff_a
+
+    if not all(m['played'] for m in matches):
+        return
+    if wins_a > wins_b:
+        tie['decided'], tie['winner_squad_id'] = True, tie['squad_a']
+    elif wins_b > wins_a:
+        tie['decided'], tie['winner_squad_id'] = True, tie['squad_b']
+    elif diff_a > 0:
+        tie['decided'], tie['winner_squad_id'] = True, tie['squad_a']
+    elif diff_a < 0:
+        tie['decided'], tie['winner_squad_id'] = True, tie['squad_b']
+    else:
+        tie['decided'], tie['winner_squad_id'] = False, None  # genuine deadlock
+
+
+def _score_tie_match(item, tie, match_index, score_a, score_b, override, point_log, stage_label):
+    """Submits one individual match's score within a tie. Raises ValueError
+    on any validation failure (caught by the calling route and turned into
+    a 400) - reuses _submit_game unchanged since a tie's match is shaped
+    exactly like every other fixture/knockout match in this file."""
+    matches = tie['matches']
+    if match_index < 0 or match_index >= len(matches):
+        raise ValueError('invalid match_index')
+    match = matches[match_index]
+    if match['played']:
+        raise ValueError('this match is already decided')
+    if not match.get('player_a') or not match.get('player_b'):
+        raise ValueError('both squads must nominate a player for this match before it can be scored')
+
+    best_of = item.get('best_of', 1)
+    target = item.get('points_to_win', 21)
+    decided = _submit_game(match, score_a, score_b, best_of, target, override)
+    if decided:
+        total_a = sum(g['score_a'] for g in match['games'])
+        total_b = sum(g['score_b'] for g in match['games'])
+        winner = 'A' if match['games_won_a'] > match['games_won_b'] else 'B'
+        update_elo_and_log('singles', match['player_a'], match['player_b'], total_a, total_b,
+                            item['group_id'], item['tournament_id'], stage_label,
+                            winner_override=winner, games=match['games'], point_log=point_log)
+        _update_tie_progress(tie)
+
+
+def _find_tie(item, tie_id):
+    """A tie_id is a UUID unique across the whole tournament, so it can be
+    looked up without the caller needing to say which stage/round it's
+    in - group stage, any knockout round, or the third-place match."""
+    for tie in (item.get('group_stage') or {}).get('ties', []):
+        if tie['tie_id'] == tie_id:
+            return tie
+    for rnd in (item.get('knockout') or {}).get('rounds', []):
+        for tie in rnd:
+            if tie.get('tie_id') == tie_id:
+                return tie
+    tpm = (item.get('knockout') or {}).get('third_place_match')
+    if tpm and tpm.get('tie_id') == tie_id:
+        return tpm
+    return None
+
+
+def _authorize_tie_scorer(item, tie, claims):
+    """Organizer, or one of THIS tie's own two squad leaders - matches the
+    plan's "organizer or either squad's leader" auth level for score
+    submission (this whole route tree is Cognito-gated, unlike the legacy
+    /tournaments{proxy+} scoring routes which have no auth at all)."""
+    denied = _authorize_tournament_organizer(item, claims)
+    if not denied:
+        return None
+    caller_pid = claims.get('custom:player_id')
+    if caller_pid and caller_pid in (tie.get('squad_a'), tie.get('squad_b')):
+        return None
+    return _response(403, {'error': "only the organizer or one of this tie's two squad leaders can submit a score"})
+
+
+def compute_squad_standings(item):
+    """Squad-level standings: sorted by (ties_won desc, aggregate point
+    differential desc) - same score-based rule used to decide a single
+    tie, one level up."""
+    squads = item.get('squads') or {}
+    stats = {sid: {'squad_id': sid, 'name': sq.get('name', sid), 'ties_won': 0, 'ties_lost': 0, 'point_diff': 0}
+              for sid, sq in squads.items()}
+    for tie in (item.get('group_stage') or {}).get('ties', []):
+        if not tie.get('decided'):
+            continue
+        a, b = tie.get('squad_a'), tie.get('squad_b')
+        if a in stats:
+            stats[a]['point_diff'] += tie.get('point_diff_a', 0)
+        if b in stats:
+            stats[b]['point_diff'] += tie.get('point_diff_b', 0)
+        winner = tie.get('winner_squad_id')
+        if winner == a and a in stats:
+            stats[a]['ties_won'] += 1
+            if b in stats:
+                stats[b]['ties_lost'] += 1
+        elif winner == b and b in stats:
+            stats[b]['ties_won'] += 1
+            if a in stats:
+                stats[a]['ties_lost'] += 1
+    standings = list(stats.values())
+    standings.sort(key=lambda s: (-s['ties_won'], -s['point_diff']))
+    return standings
+
+
+def compute_player_tournament_scores(item):
+    """A tournament-scoped, non-Elo per-player score/leaderboard - a
+    read-time-only aggregation (like compute_all_standings, never
+    persisted) over every individual tie-match a player appeared in, group
+    stage or knockout. Deliberately separate from Elo, which is untouched -
+    update_elo_and_log already ran, exactly as today, the moment each match
+    was scored."""
+    stats = {}
+
+    def touch(pid, name):
+        if pid not in stats:
+            stats[pid] = {'player_id': pid, 'name': name, 'matches_played': 0, 'wins': 0, 'losses': 0, 'point_diff': 0}
+        return stats[pid]
+
+    def apply_match(m):
+        if not m['played'] or not m.get('player_a') or not m.get('player_b'):
+            return
+        a, b = m['player_a'], m['player_b']
+        sa = touch(a['player_id'], a.get('name', a['player_id']))
+        sb = touch(b['player_id'], b.get('name', b['player_id']))
+        total_a = sum(g['score_a'] for g in m['games'])
+        total_b = sum(g['score_b'] for g in m['games'])
+        sa['matches_played'] += 1
+        sb['matches_played'] += 1
+        sa['point_diff'] += (total_a - total_b)
+        sb['point_diff'] += (total_b - total_a)
+        if m['winner_id'] == a['player_id']:
+            sa['wins'] += 1
+            sb['losses'] += 1
+        elif m['winner_id'] == b['player_id']:
+            sb['wins'] += 1
+            sa['losses'] += 1
+
+    for tie in (item.get('group_stage') or {}).get('ties', []):
+        for m in tie.get('matches', []):
+            apply_match(m)
+    for rnd in (item.get('knockout') or {}).get('rounds', []):
+        for tie in rnd:
+            for m in tie.get('matches', []):
+                apply_match(m)
+    tpm = (item.get('knockout') or {}).get('third_place_match')
+    if tpm:
+        for m in tpm.get('matches', []):
+            apply_match(m)
+
+    result = list(stats.values())
+    result.sort(key=lambda s: (-s['wins'], -s['point_diff']))
+    return result
+
+
+def generate_schedule(tournament_id, event, claims):
+    item, err = _draft_get_tournament(tournament_id)
+    if err:
+        return err
+    denied = _authorize_tournament_organizer(item, claims)
+    if denied:
+        return denied
+    if item.get('status') != 'squads_locked':
+        return _response(400, {'error': 'squads must be locked before generating the schedule'})
+
+    squad_ids = list((item.get('squads') or {}).keys())
+    if len(squad_ids) < 2:
+        return _response(400, {'error': 'need at least 2 squads to generate a schedule'})
+
+    matches_per_tie = item['manual_draft']['group_matches_per_tie']
+    item['group_stage'] = {'matches_per_tie': matches_per_tie, 'ties': build_tie_round_robin(squad_ids, matches_per_tie)}
+    item['status'] = 'group_stage'
+    tournaments_table.put_item(Item=item)
+    return _response(200, item)
+
+
+def pick_tie_player(tournament_id, event, claims):
+    """A leader nominates which of their own squad's members plays a given
+    match slot within a tie - deliberately NOT an organizer action (owner-
+    confirmed decision: each side's own leader picks their own player)."""
+    item, err = _draft_get_tournament(tournament_id)
+    if err:
+        return err
+    if item.get('status') not in ('group_stage', 'knockout', 'completed'):
+        # 'completed' stays allowed so the third-place match can still be
+        # nominated/played after the final itself is already decided -
+        # matches record_knockout_tie_score's own status check below.
+        return _response(400, {'error': 'this tournament has no active ties right now'})
+
+    body = json.loads(event.get('body') or '{}')
+    tie_id = body.get('tie_id')
+    match_index = body.get('match_index')
+    player_id = body.get('player_id')
+    if not tie_id or match_index is None or not player_id:
+        return _response(400, {'error': 'tie_id, match_index, player_id are required'})
+
+    tie = _find_tie(item, tie_id)
+    if not tie:
+        return _response(404, {'error': 'tie not found'})
+    try:
+        match_index = int(match_index)
+    except (TypeError, ValueError):
+        return _response(400, {'error': 'match_index must be a number'})
+    if match_index < 0 or match_index >= len(tie['matches']):
+        return _response(400, {'error': 'invalid match_index'})
+    match = tie['matches'][match_index]
+    if match['played']:
+        return _response(400, {'error': 'this match is already decided - the lineup can no longer change'})
+
+    caller_pid = claims.get('custom:player_id')
+    if caller_pid == tie.get('squad_a'):
+        side = 'a'
+    elif caller_pid == tie.get('squad_b'):
+        side = 'b'
+    else:
+        return _response(403, {'error': "only this tie's two squad leaders can set their own lineup"})
+
+    squad = (item.get('squads') or {}).get(caller_pid)
+    if not squad or player_id not in squad.get('members', []):
+        return _response(400, {'error': 'that player is not a member of your squad'})
+
+    player = players_table.get_item(Key={'player_id': player_id}).get('Item')
+    entity = {'player_id': player_id, 'name': player['name'] if player else player_id}
+    if side == 'a':
+        match['player_a'] = entity
+    else:
+        match['player_b'] = entity
+
+    tournaments_table.put_item(Item=item)
+    return _response(200, item)
+
+
+def _generate_knockout_from_group_stage(item):
+    standings = compute_squad_standings(item)
+    seeded_squad_ids = [s['squad_id'] for s in standings]
+    matches_per_tie = item['manual_draft']['knockout_matches_per_tie']
+    item['knockout'] = {'matches_per_tie': matches_per_tie, 'rounds': [build_knockout_tie_round(seeded_squad_ids, matches_per_tie)]}
+    item['status'] = 'knockout'
+
+
+def record_group_tie_score(tournament_id, event, claims):
+    item, err = _draft_get_tournament(tournament_id)
+    if err:
+        return err
+    if item.get('status') != 'group_stage':
+        return _response(400, {'error': 'tournament is not in group stage'})
+
+    body = json.loads(event.get('body') or '{}')
+    tie_id = body.get('tie_id')
+    match_index = body.get('match_index')
+    score_a = body.get('score_a')
+    score_b = body.get('score_b')
+    override = bool(body.get('override'))
+    point_log = body.get('point_log')
+    if not tie_id or match_index is None or score_a is None or score_b is None:
+        return _response(400, {'error': 'tie_id, match_index, score_a, score_b are required'})
+
+    tie = next((t for t in item.get('group_stage', {}).get('ties', []) if t['tie_id'] == tie_id), None)
+    if not tie:
+        return _response(404, {'error': 'tie not found'})
+
+    denied = _authorize_tie_scorer(item, tie, claims)
+    if denied:
+        return denied
+
+    try:
+        _score_tie_match(item, tie, int(match_index), int(score_a), int(score_b), override, point_log, 'group')
+    except ValueError as e:
+        return _response(400, {'error': str(e)})
+
+    if all(t.get('decided') for t in item['group_stage']['ties']):
+        _generate_knockout_from_group_stage(item)
+
+    tournaments_table.put_item(Item=item)
+    return _response(200, item)
+
+
+def _advance_knockout_ties_if_round_complete(item):
+    """Mirrors record_knockout_score's round-advancement + third-place-
+    match auto-creation (L1471-1502-ish, pre-Phase-C line numbers), but for
+    ties instead of plain matches."""
+    rounds = item['knockout']['rounds']
+    current_round = rounds[-1]
+    if not all(t.get('decided') for t in current_round):
+        return
+
+    if len(current_round) == 1:
+        item['status'] = 'completed'
+        item['champion_squad_id'] = current_round[0]['winner_squad_id']
+        return
+
+    matches_per_tie = item['knockout'].get('matches_per_tie', 1)
+    winners = [t['winner_squad_id'] for t in current_round]
+    rounds.append(build_knockout_tie_round(winners, matches_per_tie))
+
+    if len(current_round) == 2 and 'third_place_match' not in item['knockout']:
+        losers = []
+        for t in current_round:
+            losers.append(t['squad_b'] if t['winner_squad_id'] == t['squad_a'] else t['squad_a'])
+        item['knockout']['third_place_match'] = build_tie(losers[0], losers[1], matches_per_tie)
+
+
+def record_knockout_tie_score(tournament_id, event, claims):
+    item, err = _draft_get_tournament(tournament_id)
+    if err:
+        return err
+    if item.get('status') not in ('knockout', 'completed'):
+        return _response(400, {'error': 'tournament is not in knockout stage'})
+
+    body = json.loads(event.get('body') or '{}')
+    tie_id = body.get('tie_id')
+    match_index = body.get('match_index')
+    score_a = body.get('score_a')
+    score_b = body.get('score_b')
+    override = bool(body.get('override'))
+    point_log = body.get('point_log')
+    if not tie_id or match_index is None or score_a is None or score_b is None:
+        return _response(400, {'error': 'tie_id, match_index, score_a, score_b are required'})
+
+    tie = _find_tie(item, tie_id)
+    if not tie:
+        return _response(404, {'error': 'tie not found'})
+    is_third_place = (item.get('knockout') or {}).get('third_place_match') is tie
+
+    denied = _authorize_tie_scorer(item, tie, claims)
+    if denied:
+        return denied
+
+    try:
+        _score_tie_match(item, tie, int(match_index), int(score_a), int(score_b), override, point_log,
+                          'third_place' if is_third_place else 'knockout')
+    except ValueError as e:
+        return _response(400, {'error': str(e)})
+
+    if not is_third_place and tie.get('decided'):
+        _advance_knockout_ties_if_round_complete(item)
+
+    tournaments_table.put_item(Item=item)
+    return _response(200, item)
+
+
 # ---------- reads ----------
 
 def list_tournaments(event):
@@ -1084,6 +1521,12 @@ def get_tournament(tournament_id):
         return _response(404, {'error': 'tournament not found'})
     if 'subgroups' in item:
         item['standings'] = compute_all_standings(item)
+    if item.get('format') == 'manual_draft' and 'group_stage' in item:
+        # Read-time-only, same as `standings` above - never persisted, so
+        # these can't drift out of sync with the ties/matches they're
+        # computed from.
+        item['squad_standings'] = compute_squad_standings(item)
+        item['player_tournament_stats'] = compute_player_tournament_scores(item)
     return _response(200, item)
 
 
