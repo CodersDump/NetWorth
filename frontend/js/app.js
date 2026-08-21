@@ -7434,13 +7434,36 @@ let userPool = null;
       } else if (t.status === 'squads_locked') {
         stopDraftPolling();
         html += renderDraftSquadsReview(t);
+      } else if (t.status === 'group_stage' || t.status === 'knockout' || t.status === 'completed') {
+        stopDraftPolling();
+        html += renderDraftScheduleView(t);
       } else {
         stopDraftPolling();
-        html += '<p class="card-sub">This tournament has moved past the auction stage. (Group-stage and knockout views are coming in a later update.)</p>';
+        html += '<p class="card-sub">Unknown tournament state.</p>';
       }
 
       el.innerHTML = html;
       if (t.status === 'auction') startDraftPolling(t.tournament_id);
+      // squad_standings/player_tournament_stats only come from the plain
+      // GET /tournaments/{id} read (get_tournament attaches them there,
+      // never on a write response - same "never persisted, always
+      // computed fresh" convention as the legacy `standings` field) - so
+      // the very first paint of a schedule view is missing them until this
+      // background fetch lands and re-renders.
+      if ((t.status === 'group_stage' || t.status === 'knockout' || t.status === 'completed') && !t.squad_standings) {
+        fetchAndRenderTournamentDetail(t.tournament_id);
+      }
+    }
+
+    async function fetchAndRenderTournamentDetail(tournamentId) {
+      try {
+        const res = await fetch(`${API_BASE_URL}/tournaments/${tournamentId}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        // Guard against a stale background refresh landing after the user
+        // has already navigated to a different tournament.
+        if (currentTournamentData && currentTournamentData.tournament_id === tournamentId) renderTournament(data);
+      } catch (err) { /* best-effort background refresh - ignore failures */ }
     }
 
     function renderDraftLeaderPicker(t) {
@@ -7852,12 +7875,188 @@ let userPool = null;
     function renderDraftSquadsReview(t) {
       const squads = t.squads || {};
       let html = '<div class="card" style="margin-top:10px;"><h4 style="font-size:14px;margin:0 0 6px;">Squads</h4>';
-      html += '<p class="card-sub" style="margin:0 0 8px;">The auction is complete. Group-stage and knockout scheduling are coming in a later update.</p>';
+      html += '<p class="card-sub" style="margin:0 0 8px;">The auction is complete.</p>';
       Object.entries(squads).forEach(([, squad]) => {
         html += `<div style="margin-bottom:10px;"><strong>${escapeHtml(squad.name)}</strong><br>${(squad.members || []).map(pid => escapeHtml(draftPlayerName(pid))).join(', ')}</div>`;
       });
+      html += `<button type="button" onclick="generateDraftSchedule('${t.tournament_id}')">Generate schedule</button>
+        <div id="draft-generate-schedule-status" class="result"></div>`;
       html += '</div>';
       return html;
+    }
+
+    async function generateDraftSchedule(tournamentId) {
+      const statusEl = document.getElementById('draft-generate-schedule-status');
+      if (statusEl) statusEl.textContent = 'Generating...';
+      const { res, data, error } = await authedFetch(`${API_BASE_URL}/tournament-draft/${tournamentId}/generate-schedule`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}'
+      });
+      if (!res.ok) { if (statusEl) statusEl.textContent = `Error: ${error}`; nwAlert(error || (data && data.error) || 'Could not generate the schedule'); return; }
+      renderTournament(data);
+    }
+
+    /* ---------- manual-draft mode: tie-based schedule (Phase C) ----------
+     * Once squads are locked, the organizer generates a squad-vs-squad
+     * round robin (`group_stage`); each tie holds `group_matches_per_tie`
+     * individual matches. Each side's own leader nominates who plays each
+     * match slot (never the organizer) via `pickTiePlayer`; once both
+     * sides have nominated, either the organizer or one of the tie's own
+     * leaders can submit the score. Once every group-stage tie is decided,
+     * the backend auto-generates a knockout tie-bracket seeded from squad
+     * standings - this view just re-renders from whatever `t.status`/
+     * `t.knockout` says, it doesn't drive the transition itself. */
+
+    function draftSquadName(t, squadId) {
+      const sq = (t.squads || {})[squadId];
+      return sq ? sq.name : squadId;
+    }
+
+    function renderDraftScheduleView(t) {
+      let html = '';
+      if (t.status === 'completed' && t.champion_squad_id) {
+        html += `<div class="card" style="margin-top:10px;text-align:center;"><h4 style="font-size:16px;margin:0;">Champion: ${escapeHtml(draftSquadName(t, t.champion_squad_id))}</h4></div>`;
+      }
+      if (t.squad_standings && t.squad_standings.length) html += renderSquadStandingsTable(t.squad_standings);
+      if (t.group_stage) html += renderTieSection('Group stage', t.group_stage.ties, t, 'group');
+      if (t.knockout && t.knockout.rounds) {
+        t.knockout.rounds.forEach((rnd, i) => {
+          const label = (i === t.knockout.rounds.length - 1 && rnd.length === 1) ? 'Final' : `Knockout - round ${i + 1}`;
+          html += renderTieSection(label, rnd, t, 'knockout');
+        });
+        if (t.knockout.third_place_match) html += renderTieSection('Third place', [t.knockout.third_place_match], t, 'knockout');
+      }
+      if (t.player_tournament_stats && t.player_tournament_stats.length) html += renderPlayerTournamentStatsTable(t.player_tournament_stats);
+      return html;
+    }
+
+    function renderSquadStandingsTable(standings) {
+      let html = '<div class="card" style="margin-top:10px;"><h4 style="font-size:14px;margin:0 0 6px;">Squad standings</h4>';
+      html += '<table style="width:100%;font-size:13px;border-collapse:collapse;"><thead><tr>' +
+        '<th style="text-align:left;">Squad</th><th>Ties won</th><th>Ties lost</th><th>Point diff</th></tr></thead><tbody>';
+      standings.forEach(s => {
+        html += `<tr><td>${escapeHtml(s.name)}</td><td style="text-align:center;">${s.ties_won}</td>` +
+          `<td style="text-align:center;">${s.ties_lost}</td><td style="text-align:center;">${s.point_diff > 0 ? '+' : ''}${s.point_diff}</td></tr>`;
+      });
+      html += '</tbody></table></div>';
+      return html;
+    }
+
+    function renderPlayerTournamentStatsTable(stats) {
+      let html = '<div class="card" style="margin-top:10px;"><h4 style="font-size:14px;margin:0 0 6px;">Player leaderboard (this tournament only, not Elo)</h4>';
+      html += '<table style="width:100%;font-size:13px;border-collapse:collapse;"><thead><tr>' +
+        '<th style="text-align:left;">Player</th><th>Played</th><th>W</th><th>L</th><th>Point diff</th></tr></thead><tbody>';
+      stats.forEach(s => {
+        html += `<tr><td>${escapeHtml(s.name)}</td><td style="text-align:center;">${s.matches_played}</td>` +
+          `<td style="text-align:center;">${s.wins}</td><td style="text-align:center;">${s.losses}</td>` +
+          `<td style="text-align:center;">${s.point_diff > 0 ? '+' : ''}${s.point_diff}</td></tr>`;
+      });
+      html += '</tbody></table></div>';
+      return html;
+    }
+
+    function renderTieSection(title, ties, t, stageKind) {
+      let html = `<div class="card" style="margin-top:10px;"><h4 style="font-size:14px;margin:0 0 8px;">${escapeHtml(title)}</h4>`;
+      ties.forEach(tie => { html += renderTieCard(tie, t, stageKind); });
+      html += '</div>';
+      return html;
+    }
+
+    function renderTieCard(tie, t, stageKind) {
+      const nameA = draftSquadName(t, tie.squad_a);
+      if (tie.bye) {
+        return `<div style="padding:8px 0;border-bottom:1px solid var(--border);"><strong>${escapeHtml(nameA)}</strong> advances on a bye</div>`;
+      }
+      const nameB = draftSquadName(t, tie.squad_b);
+      const myPid = myPlayerId();
+      const iLeadA = myPid === tie.squad_a;
+      const iLeadB = myPid === tie.squad_b;
+      let html = `<div style="padding:8px 0;border-bottom:1px solid var(--border);">
+        <div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;font-size:13px;margin-bottom:6px;">
+          <strong>${escapeHtml(nameA)} ${tie.wins_a} - ${tie.wins_b} ${escapeHtml(nameB)}</strong>
+          <span class="card-sub">${tie.decided ? 'Decided' : 'In progress'}${(tie.point_diff_a || 0) !== 0 ? ` (diff ${tie.point_diff_a > 0 ? '+' : ''}${tie.point_diff_a})` : ''}</span>
+        </div>`;
+      (tie.matches || []).forEach((m, idx) => { html += renderTieMatchRow(tie, m, idx, t, stageKind, iLeadA, iLeadB); });
+      html += '</div>';
+      return html;
+    }
+
+    function renderTieMatchRow(tie, m, idx, t, stageKind, iLeadA, iLeadB) {
+      const squadAMembers = ((t.squads || {})[tie.squad_a] || {}).members || [];
+      const squadBMembers = ((t.squads || {})[tie.squad_b] || {}).members || [];
+      let aCell, bCell;
+      if (m.played) {
+        aCell = escapeHtml(m.player_a.name);
+        bCell = escapeHtml(m.player_b.name);
+      } else {
+        aCell = iLeadA
+          ? draftPlayerPickerHtml(t.tournament_id, tie.tie_id, idx, squadAMembers, m.player_a)
+          : (m.player_a ? escapeHtml(m.player_a.name) : '<span class="card-sub">TBD</span>');
+        bCell = iLeadB
+          ? draftPlayerPickerHtml(t.tournament_id, tie.tie_id, idx, squadBMembers, m.player_b)
+          : (m.player_b ? escapeHtml(m.player_b.name) : '<span class="card-sub">TBD</span>');
+      }
+      let scoreCell;
+      if (m.played) {
+        const totalA = (m.games || []).reduce((s, g) => s + g.score_a, 0);
+        const totalB = (m.games || []).reduce((s, g) => s + g.score_b, 0);
+        scoreCell = `<strong>${totalA} - ${totalB}</strong>`;
+      } else if (m.player_a && m.player_b) {
+        scoreCell = `<input type="number" id="tie-score-a-${tie.tie_id}-${idx}" placeholder="A" style="width:50px;"> - ` +
+          `<input type="number" id="tie-score-b-${tie.tie_id}-${idx}" placeholder="B" style="width:50px;"> ` +
+          `<button type="button" class="secondary" onclick="submitDraftTieScore('${t.tournament_id}','${tie.tie_id}',${idx},'${stageKind}')">Submit</button>`;
+      } else {
+        scoreCell = '<span class="card-sub">waiting on lineup</span>';
+      }
+      return `<div style="display:flex;gap:8px;align-items:center;font-size:13px;padding:3px 0;flex-wrap:wrap;">
+        <span style="min-width:20px;color:var(--text-secondary);">#${idx + 1}</span>
+        <span style="flex:1;min-width:100px;">${aCell}</span>
+        <span>vs</span>
+        <span style="flex:1;min-width:100px;">${bCell}</span>
+        <span>${scoreCell}</span>
+      </div>`;
+    }
+
+    function draftPlayerPickerHtml(tournamentId, tieId, matchIndex, members, currentEntity) {
+      const currentId = currentEntity ? currentEntity.player_id : '';
+      let html = `<select onchange="pickTiePlayer('${tournamentId}','${tieId}',${matchIndex}, this.value)"><option value="">- pick -</option>`;
+      members.forEach(pid => {
+        html += `<option value="${pid}" ${pid === currentId ? 'selected' : ''}>${escapeHtml(draftPlayerName(pid))}</option>`;
+      });
+      html += '</select>';
+      return html;
+    }
+
+    async function pickTiePlayer(tournamentId, tieId, matchIndex, playerId) {
+      if (!playerId) return;
+      const { res, data, error } = await authedFetch(`${API_BASE_URL}/tournament-draft/${tournamentId}/pick-tie-player`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tie_id: tieId, match_index: matchIndex, player_id: playerId })
+      });
+      if (!res.ok) { nwAlert(error || (data && data.error) || 'Could not set that lineup pick'); return; }
+      renderTournament(data);
+    }
+
+    async function submitDraftTieScore(tournamentId, tieId, matchIndex, stageKind, override, pointLog) {
+      const scoreAEl = document.getElementById(`tie-score-a-${tieId}-${matchIndex}`);
+      const scoreBEl = document.getElementById(`tie-score-b-${tieId}-${matchIndex}`);
+      const score_a = scoreAEl ? scoreAEl.value : undefined;
+      const score_b = scoreBEl ? scoreBEl.value : undefined;
+      const routeSuffix = stageKind === 'knockout' ? 'knockout-tie-score' : 'group-tie-score';
+      const { res, data, error } = await authedFetch(`${API_BASE_URL}/tournament-draft/${tournamentId}/${routeSuffix}`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tie_id: tieId, match_index: matchIndex, score_a, score_b, override: !!override, point_log: pointLog || undefined })
+      });
+      if (res.ok) {
+        renderTournament(data);
+        loadPlayers();
+        fetchAndRenderTournamentDetail(tournamentId); // layers in fresh standings shortly after
+      } else if (!override && data && data.error && data.error.startsWith('invalid game score')) {
+        if (await nwConfirm(`${data.error}\n\nThis doesn't match the tournament's configured scoring rules. Submit ${score_a}-${score_b} anyway as the actual result?`)) {
+          await submitDraftTieScore(tournamentId, tieId, matchIndex, stageKind, true, pointLog);
+        }
+      } else {
+        nwAlert((data && data.error) || error || 'Could not submit that score');
+      }
     }
 
     let pendingTournamentPayload = null;

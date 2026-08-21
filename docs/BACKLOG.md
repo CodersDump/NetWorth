@@ -11,17 +11,17 @@
 
 ## Now / high priority
 
-- `[feat] L` **Manual-mode tournaments (leaders + pool draft/auction) — Phases A & B done, C/D next.**
+- `[feat] L` **Manual-mode tournaments (leaders + pool draft/auction) — Phases A, B & C done, D next.**
   Full design: organizer names leaders, splits every player into ranked pools (drag/tap board -
   **done**), leaders draft squads via a live organizer-paced point-budget auction (**done**), then a
   squad-vs-squad group stage (round robin, N individual matches per tie) and knockout (final/semi/3rd-
-  place, N matches per tie, default 1 but configurable) auto-generate. Decided mechanics (owner-
-  confirmed): sub-match player picks within a tie are made by **each squad's own leader**, not the
-  organizer; a tie level on match-wins is broken by aggregate point differential (cricket-NRR style)
-  rather than requiring an odd match count; unsold auction players are resolved manually by the
+  place, N matches per tie, default 1 but configurable) auto-generate (**done**). Decided mechanics
+  (owner-confirmed): sub-match player picks within a tie are made by **each squad's own leader**, not
+  the organizer; a tie level on match-wins is broken by aggregate point differential (cricket-NRR
+  style) rather than requiring an odd match count; unsold auction players are resolved manually by the
   organizer, no auto-assign rule. Also wanted alongside this: a tournament-scoped (non-Elo) per-player
   score/leaderboard for the tournament only - Elo itself is untouched, still updates globally per
-  individual match exactly as today.
+  individual match exactly as today (**done**).
   - **Phase A - DONE (see Done section, 2026-08-21).** Data model, leader/pool CRUD endpoints,
     `_authorize_tournament_organizer`, drag/tap pool board UI.
   - **Phase B - DONE (see Done section, 2026-08-21).** The auction engine: `start-auction`, `open-lot`,
@@ -29,11 +29,14 @@
     `squads_locked` once every leader's pool quotas are full), `skip-lot`, `get_draft_state` (small
     polling payload, ~1.75s interval, paused on tab-hide/tab-switch/leaving the tab). Auction room +
     bidding UI.
-  - **Phase C - next.** Tie-based schedule generation: `build_tie`/`build_tie_round_robin`/
-    `build_knockout_tie_round` (generalizing the existing `build_round_robin`/`build_knockout_round`),
-    the score-based tie-decision rule, `compute_squad_standings`, the new per-tournament player-score
-    computation, and the frontend tie-card/bracket rendering extension.
-  - **Phase D - last.** Auth-hardening test matrix across every new route, plus a real fix for
+  - **Phase C - DONE (see Done section, 2026-08-21).** Tie-based schedule generation:
+    `build_tie`/`build_tie_round_robin`/`build_knockout_tie_round` (generalizing the existing
+    `build_round_robin`/`build_knockout_round`), `generate_schedule`, `pick_tie_player` (leader-only
+    lineup nomination), `record_group_tie_score`/`record_knockout_tie_score` (score-based tie decision,
+    auto-advance, third-place auto-creation), `compute_squad_standings`, `compute_player_tournament_scores`
+    (the tournament-scoped non-Elo leaderboard). Tie-card UI with per-leader lineup pickers, standings
+    tables.
+  - **Phase D - next.** Auth-hardening test matrix across every new route, plus a real fix for
     `substitute_player`'s squad-name-rebuild bug (`apply_substitution`, currently only correct for
     2-member entities - silently drops names for squads >2 members).
   - Two small, fully independent asks captured alongside this (not gated on the phases above):
@@ -288,6 +291,74 @@
 
 ## Done
 
+- ✅ 2026-08-21 (v1.47.0-phaseC) — **Manual-mode tournaments (leaders + pool draft/auction), Phase C:
+  tie-based schedule generation + tie-card UI (Owner request, "work on the next phase as well").**
+  Third slice of the tournament feature - turns `squads_locked` into a full squad-vs-squad round robin
+  followed by an auto-seeded knockout, all the way to a champion. Phase D (auth-hardening pass + the
+  `substitute_player` name-rebuild bugfix) is the only piece left.
+  **Backend** (`backend/lambdas/tournaments/index.py`): a "tie" is the new container - two squads,
+  `group_matches_per_tie` (or `knockout_matches_per_tie`) individual match slots, running `wins_a/b` +
+  `point_diff_a/b`, and a `decided`/`winner_squad_id` outcome. Deliberately reuses the *exact* fixture
+  shape (`player_a`/`player_b`/`games`/`games_won_a`/`games_won_b`/`played`/`winner_id`) every other
+  match in this file already uses for each individual match inside a tie, so `_submit_game` and
+  `update_elo_and_log` needed **zero changes** - Elo is completely untouched, still updates globally per
+  individual match exactly as today; only the tie CONTAINER around those matches is new.
+  `POST .../generate-schedule` (organizer, requires `squads_locked`, rejects <2 squads) builds a full
+  round robin of ties via `build_tie_round_robin`. `POST .../pick-tie-player` lets **only that tie's own
+  two squad leaders** (never the organizer - owner-confirmed) nominate which of their own squad's
+  members plays a given match slot; rejects nominating an opposing squad's player or changing an
+  already-played match's lineup. `POST .../group-tie-score` / `.../knockout-tie-score` (organizer or
+  either of the tie's own two leaders - new `_authorize_tie_scorer`) submit one match's score via
+  `_score_tie_match`, which rejects scoring before both sides have nominated, then re-derives the tie's
+  `wins_a/b`/`point_diff_a/b` and decides it once every match slot is played
+  (`_update_tie_progress`): match-wins first, aggregate point differential (cricket-NRR style) as the
+  tiebreak - a genuine deadlock on both is left `decided: False` for the organizer to resolve manually,
+  same philosophy as an unsold Phase-B auction player, never guessed at silently. `tie_id` is a UUID
+  unique across the whole tournament, so `_find_tie` locates a tie in group stage, any knockout round,
+  or the third-place match without the caller needing to say which. Once every group-stage tie is
+  decided, `_generate_knockout_from_group_stage` auto-seeds a knockout tie-bracket from
+  `compute_squad_standings` (ties_won desc, point_diff desc) via `build_knockout_tie_round` (byes
+  generalized the same power-of-2 way `build_knockout_round` already handles them - `_bye_tie` mirrors
+  `_bye_match`). `_advance_knockout_ties_if_round_complete` mirrors the existing single-match knockout's
+  round-advance + third-place-auto-creation logic, but for ties: a 1-tie round sets `status: 'completed'`
+  + `champion_squad_id`; a 2-tie round also spins up the third-place match (kept playable even after
+  `status` flips to `completed`, matching the legacy knockout route's own status check, so the final can
+  finish before the third-place tie is played). `compute_player_tournament_scores` (new) is the
+  tournament-scoped, **non-Elo** per-player leaderboard asked for alongside this feature - a read-time-
+  only aggregation over every individual tie-match, exactly like `compute_all_standings`/
+  `compute_squad_standings`, never persisted so it can't drift stale. `get_tournament` now attaches
+  `squad_standings` + `player_tournament_stats` for a manual-draft tournament once a schedule exists -
+  same "computed fresh on every read, never written to the item" convention the legacy `standings`
+  field already uses. Verified with `/tmp/test_manual_draft_schedule.py` (24 checks: schedule generation
+  incl. the <2-squads rejection, the full lineup-nomination authz matrix, scoring authz + validation
+  incl. rejecting a score before both sides nominate and re-scoring an already-decided match, a genuine
+  point-diff-tiebreak tie (1-1 on wins, decided by aggregate point differential) with real Elo deltas and
+  a real match-log entry confirming the shared pipeline actually ran, full knockout progression through
+  a 2-tie semifinal round -> third-place auto-creation -> final -> champion_squad_id, a dedicated 3-squad
+  case exercising the bye path, and `get_tournament`'s standings-attachment behavior) plus the existing
+  regression suite (all still passing, including Phase A/B's own suites).
+  **Frontend**: `renderDraftSquadsReview` (the `squads_locked` view) gained a "Generate schedule"
+  button. New `group_stage`/`knockout`/`completed` branches in `renderManualDraftTournament` dispatch to
+  `renderDraftScheduleView`, which renders (in order) a champion banner once `completed`, a squad-
+  standings table, a tie section per stage (`renderTieSection` -> `renderTieCard` -> one
+  `renderTieMatchRow` per match slot - a bye tie renders as a one-liner, no match rows), and a player-
+  leaderboard table. Each match row shows a `<select>` lineup picker (`draftPlayerPickerHtml`) **only**
+  to the viewer if they lead one of this tie's two squads, and **only** offers that leader's own squad's
+  members - the other side (and everyone else) sees plain text or "TBD". Score inputs only appear once
+  both sides have nominated a player for that slot; submitting reuses the existing "offer to override an
+  invalid game score" confirm-retry pattern already used by the legacy knockout/group score submitters.
+  `squad_standings`/`player_tournament_stats` only ever arrive via the plain, unauthenticated `GET
+  /tournaments/{id}` read (never on a write response, matching the backend's "never persisted" design),
+  so the very first paint of a schedule view is missing them until a new `fetchAndRenderTournamentDetail`
+  background fetch lands and re-renders - guarded against a stale response landing after the viewer has
+  already navigated elsewhere. Verified with a new Playwright pass against the real served `frontend/`
+  tree: the Generate-schedule button, tie cards rendering both squad names, the lineup picker correctly
+  scoped to "my own squad only", a full pick -> both-nominated -> score-submit flow via stubbed
+  `authedFetch`, the bye-tie one-liner, the squad-standings table, and the champion banner + player
+  leaderboard on a completed tournament. The existing Phase A (`/tmp/test_draft_ui.js`) and Phase B
+  (`/tmp/test_draft_auction_ui.js`) Playwright suites still pass unmodified.
+  Files: `backend/lambdas/tournaments/index.py`, `frontend/js/app.js`. No `template.yaml` change needed -
+  the existing `/tournament-draft{proxy+}` API Gateway resource tree already covers these new routes.
 - ✅ 2026-08-21 (v1.46.0-phaseB) — **Manual-mode tournaments (leaders + pool draft/auction), Phase B:
   the auction engine + auction room/bidding UI (Owner request, "please go ahead").** Second slice of
   the big tournament feature - turns a `pools_locked` manual-draft tournament into `squads_locked` via
