@@ -538,8 +538,12 @@ def handle_draft_route(event):
         return get_draft_state(tournament_id, event, claims)
     if len(parts) == 2 and parts[1] == 'generate-schedule' and method == 'POST':
         return generate_schedule(tournament_id, event, claims)
+    if len(parts) == 2 and parts[1] == 'regenerate-schedule' and method == 'POST':
+        return regenerate_schedule(tournament_id, event, claims)
     if len(parts) == 2 and parts[1] == 'rename-squad' and method == 'POST':
         return rename_squad(tournament_id, event, claims)
+    if len(parts) == 2 and parts[1] == 'set-squad-pairs' and method == 'POST':
+        return set_squad_pairs(tournament_id, event, claims)
     if len(parts) == 2 and parts[1] == 'move-squad-player' and method == 'POST':
         return move_squad_player(tournament_id, event, claims)
     if len(parts) == 2 and parts[1] == 'substitute-squad-player' and method == 'POST':
@@ -601,7 +605,7 @@ def create_manual_draft_tournament(event, claims):
         group_matches_per_tie = int(body.get('group_matches_per_tie', 2))
         knockout_matches_per_tie = int(body.get('knockout_matches_per_tie', 1))
         num_groups = int(body.get('num_groups', 1))
-        advance_per_group = int(body.get('advance_per_group', 2))
+        advance_per_group = int(body.get('advance_per_group', 1))
     except (TypeError, ValueError):
         return _response(400, {'error': 'budget_per_leader, num_pools, picks_per_pool, group_matches_per_tie, '
                                          'knockout_matches_per_tie, num_groups, advance_per_group must be numbers'})
@@ -609,6 +613,10 @@ def create_manual_draft_tournament(event, claims):
     match_type = body.get('match_type', 'singles')
     if match_type not in ('singles', 'doubles'):
         return _response(400, {'error': "match_type must be 'singles' or 'doubles'"})
+
+    group_mode = body.get('group_mode', 'squads')
+    if group_mode not in ('squads', 'cross_squad'):
+        return _response(400, {'error': "group_mode must be 'squads' or 'cross_squad'"})
 
     if num_pools < 2:
         return _response(400, {'error': 'num_pools must be at least 2'})
@@ -646,6 +654,7 @@ def create_manual_draft_tournament(event, claims):
             'match_type': match_type,
             'num_groups': num_groups,
             'advance_per_group': advance_per_group,
+            'group_mode': group_mode,
         },
         'leaders': [],
         'pools': {
@@ -1394,6 +1403,17 @@ def _find_tie(item, tie_id):
     return None
 
 
+def _tie_side_leader_id(item, side_id):
+    """Resolves a tie's squad_a/squad_b value to the leader id who's
+    allowed to act for it. For the regular squads-per-group mode side_id
+    already IS the leader id (unchanged). For cross-squad group mode
+    (owner request, 2026-08-21), side_id is a rep_id (a squad's pre-fixed
+    pair for this one group) - resolves to that rep's parent_squad_id,
+    which IS the leader id, so that squad's own leader can still act for
+    their rep exactly as if it were their whole squad."""
+    return (item.get('reps') or {}).get(side_id, {}).get('parent_squad_id', side_id)
+
+
 def _authorize_tie_scorer(item, tie, claims):
     """Organizer, or one of THIS tie's own two squad leaders - matches the
     plan's "organizer or either squad's leader" auth level for score
@@ -1403,7 +1423,8 @@ def _authorize_tie_scorer(item, tie, claims):
     if not denied:
         return None
     caller_pid = claims.get('custom:player_id')
-    if caller_pid and caller_pid in (tie.get('squad_a'), tie.get('squad_b')):
+    side_leaders = (_tie_side_leader_id(item, tie.get('squad_a')), _tie_side_leader_id(item, tie.get('squad_b')))
+    if caller_pid and caller_pid in side_leaders:
         return None
     return _response(403, {'error': "only the organizer or one of this tie's two squad leaders can submit a score"})
 
@@ -1416,7 +1437,13 @@ def compute_squad_standings(item, squad_ids=None):
     every squad in the tournament - every tie-walking line below already
     guards with `if a in stats`/`if b in stats`, so restricting which
     squads have a stats entry is the only change needed to scope it."""
-    squads = item.get('squads') or {}
+    # Merges in item['reps'] alongside item['squads'] - cross-squad group
+    # mode (owner request, 2026-08-21) plays ties between REP entities (a
+    # squad's pre-fixed pair/player for one specific group), not whole
+    # squads, so a tie's squad_a/squad_b may be a rep_id. item.get('reps')
+    # is always {} for every tournament not using this mode, so this is a
+    # no-op everywhere else.
+    squads = {**(item.get('squads') or {}), **(item.get('reps') or {})}
     if squad_ids is not None:
         squads = {sid: sq for sid, sq in squads.items() if sid in squad_ids}
     stats = {sid: {'squad_id': sid, 'name': sq.get('name', sid), 'ties_won': 0, 'ties_lost': 0, 'point_diff': 0}
@@ -1438,6 +1465,43 @@ def compute_squad_standings(item, squad_ids=None):
             stats[b]['ties_won'] += 1
             if a in stats:
                 stats[a]['ties_lost'] += 1
+    standings = list(stats.values())
+    standings.sort(key=lambda s: (-s['ties_won'], -s['point_diff']))
+    return standings
+
+
+def compute_squad_standings_by_parent(item):
+    """Cross-squad group mode sibling of compute_squad_standings: rolls
+    each real squad's several rep entities (one fixed pair/player per
+    group - see _build_cross_squad_group_stage) back up into a single row
+    per real squad. The plain per-rep table isn't meaningful on its own
+    here since two reps from the same squad never play each other and
+    land in different groups - this is the "who's actually winning"
+    table for the tournament as a whole."""
+    reps = item.get('reps') or {}
+    squads = item.get('squads') or {}
+    stats = {sid: {'squad_id': sid, 'name': sq.get('name', sid), 'ties_won': 0, 'ties_lost': 0, 'point_diff': 0}
+              for sid, sq in squads.items()}
+    for tie in (item.get('group_stage') or {}).get('ties', []):
+        if not tie.get('decided'):
+            continue
+        a, b = tie.get('squad_a'), tie.get('squad_b')
+        parent_a = reps.get(a, {}).get('parent_squad_id', a)
+        parent_b = reps.get(b, {}).get('parent_squad_id', b)
+        if parent_a in stats:
+            stats[parent_a]['point_diff'] += tie.get('point_diff_a', 0)
+        if parent_b in stats:
+            stats[parent_b]['point_diff'] += tie.get('point_diff_b', 0)
+        winner = tie.get('winner_squad_id')
+        winner_parent = reps.get(winner, {}).get('parent_squad_id', winner)
+        if winner_parent == parent_a and parent_a in stats:
+            stats[parent_a]['ties_won'] += 1
+            if parent_b in stats:
+                stats[parent_b]['ties_lost'] += 1
+        elif winner_parent == parent_b and parent_b in stats:
+            stats[parent_b]['ties_won'] += 1
+            if parent_a in stats:
+                stats[parent_a]['ties_lost'] += 1
     standings = list(stats.values())
     standings.sort(key=lambda s: (-s['ties_won'], -s['point_diff']))
     return standings
@@ -1547,6 +1611,67 @@ def rename_squad(tournament_id, event, claims):
         return _response(403, {'error': "only the organizer or this squad's own leader can rename it"})
 
     squad['name'] = name
+    tournaments_table.put_item(Item=item)
+    return _response(200, item)
+
+
+def set_squad_pairs(tournament_id, event, claims):
+    """Cross-squad group mode only (owner request, 2026-08-21): before the
+    group stage is generated, each squad's own leader (or the organizer)
+    fixes that squad's own doubles pairs (or, for singles, its own solo
+    reps) upfront - exactly manual_draft.num_groups of them, one per group
+    the squad will be represented in. _build_cross_squad_group_stage then
+    sends exactly one of these pre-fixed units into every group, instead
+    of leaders picking who plays match-by-match like the regular squads-
+    per-group mode does. Can be set/edited any time up through group_stage
+    as long as nothing in the CURRENT schedule has been played yet - same
+    safety net as regenerate_schedule, since re-splitting after real
+    results existed would be incoherent."""
+    item, err = _draft_get_tournament(tournament_id)
+    if err:
+        return err
+    if item.get('status') not in ('squads_locked', 'group_stage'):
+        return _response(400, {'error': 'squad pairs can only be set once squads are locked, before the group stage has been played'})
+    if item.get('status') == 'group_stage':
+        existing_ties = (item.get('group_stage') or {}).get('ties', [])
+        if any(m.get('played') for t in existing_ties for m in (t.get('matches') or [])):
+            return _response(400, {'error': 'cannot change squad pairs - some matches in the current schedule have already been played'})
+
+    body = json.loads(event.get('body') or '{}')
+    squad_id = body.get('squad_id')
+    pairs = body.get('pairs')
+    if not squad_id or not isinstance(pairs, list) or not pairs:
+        return _response(400, {'error': 'squad_id and a non-empty pairs list are required'})
+
+    squad = (item.get('squads') or {}).get(squad_id)
+    if not squad:
+        return _response(400, {'error': 'unknown squad_id'})
+
+    caller_pid = claims.get('custom:player_id')
+    if caller_pid != squad_id and _authorize_tournament_organizer(item, claims) is not None:
+        return _response(403, {'error': "only the organizer or this squad's own leader can set its pairs"})
+
+    num_groups = int(item.get('manual_draft', {}).get('num_groups', 1))
+    if len(pairs) != num_groups:
+        return _response(400, {'error': f'this tournament has {num_groups} group{"s" if num_groups != 1 else ""} - '
+                                         f'set exactly {num_groups} pair{"s" if num_groups != 1 else ""} (one per group), got {len(pairs)}'})
+
+    match_type = item.get('manual_draft', {}).get('match_type', 'singles')
+    expected_size = 2 if match_type == 'doubles' else 1
+    squad_members = set(squad.get('members', []))
+    seen = set()
+    for pair in pairs:
+        if not isinstance(pair, list) or len(pair) != expected_size:
+            return _response(400, {'error': f'this is a {match_type} tournament - each pair needs exactly {expected_size} '
+                                             f'player{"s" if expected_size > 1 else ""}'})
+        for pid in pair:
+            if pid not in squad_members:
+                return _response(400, {'error': f'{pid} is not a member of this squad'})
+            if pid in seen:
+                return _response(400, {'error': f'{pid} appears in more than one pair'})
+            seen.add(pid)
+
+    squad['pairs'] = pairs
     tournaments_table.put_item(Item=item)
     return _response(200, item)
 
@@ -1685,16 +1810,13 @@ def substitute_squad_player(tournament_id, event, claims):
     return _response(200, item)
 
 
-def generate_schedule(tournament_id, event, claims):
-    item, err = _draft_get_tournament(tournament_id)
-    if err:
-        return err
-    denied = _authorize_tournament_organizer(item, claims)
-    if denied:
-        return denied
-    if item.get('status') != 'squads_locked':
-        return _response(400, {'error': 'squads must be locked before generating the schedule'})
-
+def _build_group_stage(item):
+    """Shared schedule-building logic, used both by generate_schedule (the
+    first time, from squads_locked) and regenerate_schedule (an organizer
+    fix-up re-run, from group_stage, before anything's been played).
+    Mutates item in place (sets item['group_stage']). Returns None on
+    success, or an error _response on failure - the caller is responsible
+    for status transitions and persisting."""
     squad_ids = list((item.get('squads') or {}).keys())
     if len(squad_ids) < 2:
         return _response(400, {'error': 'need at least 2 squads to generate a schedule'})
@@ -1718,6 +1840,16 @@ def generate_schedule(tournament_id, event, claims):
         # rather than inventing a parallel mechanism.
         if num_groups > len(squad_ids):
             return _response(400, {'error': f'cannot split {len(squad_ids)} squads into {num_groups} groups'})
+        if len(squad_ids) < num_groups * 2:
+            # A group with only 1 squad in it has no one to play - no ties,
+            # no matches, nothing on screen. Caught here (not just "more
+            # groups than squads") after an owner hit exactly this: 4
+            # squads split into 4 groups quietly produced 4 empty,
+            # unplayable groups instead of an error.
+            max_groups = len(squad_ids) // 2
+            return _response(400, {'error': f'each group needs at least 2 squads to play any matches - {len(squad_ids)} '
+                                             f'squads split into {num_groups} groups would leave at least one group with '
+                                             f'only 1 squad. Use at most {max_groups} group{"s" if max_groups != 1 else ""}.'})
         group_names = list(ascii_uppercase[:num_groups])
         shuffled = list(squad_ids)
         random.shuffle(shuffled)
@@ -1730,8 +1862,195 @@ def generate_schedule(tournament_id, event, claims):
                 tie['group'] = name
                 all_ties.append(tie)
         item['group_stage'] = {'matches_per_tie': matches_per_tie, 'ties': all_ties, 'groups': groups}
+    return None
+
+
+def _fill_cross_squad_match_players(item, ties):
+    """Cross-squad group mode (owner request, 2026-08-21): a tie's two
+    sides are fixed rep entities (a squad's pre-set pair/player - see
+    set_squad_pairs), already fully known the instant the tie is built -
+    there's no leader lineup to nominate match-by-match (pick_tie_player),
+    so every match's players get filled in immediately here instead.
+    Applies wherever cross-squad ties get built: the group stage itself,
+    the first knockout round, later knockout rounds, and the third-place
+    match. No-op (leaves matches with player_a/player_b=None, exactly as
+    the regular squads-per-group mode does) for any tournament without rep
+    entities, and for bye ties, which have no matches at all."""
+    reps = item.get('reps') or {}
+    if not reps:
+        return
+    for tie in ties:
+        if tie.get('bye'):
+            continue
+        rep_a, rep_b = reps.get(tie.get('squad_a')), reps.get(tie.get('squad_b'))
+        if not rep_a or not rep_b:
+            continue
+        for m in tie.get('matches', []):
+            if m['player_a'] is None:
+                m['player_a'] = {'player_id': rep_a['entity_id'], 'name': rep_a['name'],
+                                  'members': list(rep_a['members']), 'member_ratings': list(rep_a['member_ratings'])}
+            if m['player_b'] is None:
+                m['player_b'] = {'player_id': rep_b['entity_id'], 'name': rep_b['name'],
+                                  'members': list(rep_b['members']), 'member_ratings': list(rep_b['member_ratings'])}
+
+
+def _build_cross_squad_group_stage(item):
+    """Cross-squad group mode (owner request, 2026-08-21): instead of
+    splitting WHOLE squads across groups, each squad contributes exactly
+    one fixed rep unit (a pre-set doubles pair, or a solo player for
+    singles - see set_squad_pairs) to EVERY group, so a group ends up
+    with one rep from each squad rather than 2+ whole squads. Mutates
+    item in place (sets item['reps'] and item['group_stage'], the latter
+    tagged group_stage.cross_squad=True so the frontend/knockout/champion
+    logic downstream know to resolve rep_id -> parent squad). Returns
+    None on success, or an error _response on failure."""
+    squads = item.get('squads') or {}
+    squad_ids = list(squads.keys())
+    if len(squad_ids) < 1:
+        return _response(400, {'error': 'need at least 1 squad to generate cross-squad groups'})
+
+    num_groups = int(item.get('manual_draft', {}).get('num_groups', 1))
+    if num_groups < 1:
+        return _response(400, {'error': 'num_groups must be at least 1'})
+
+    match_type = item.get('manual_draft', {}).get('match_type', 'singles')
+    expected_size = 2 if match_type == 'doubles' else 1
+
+    for sid in squad_ids:
+        pairs = squads[sid].get('pairs')
+        if not pairs or len(pairs) != num_groups:
+            return _response(400, {'error': f"squad '{squads[sid].get('name', sid)}' needs exactly {num_groups} pair"
+                                             f"{'s' if num_groups != 1 else ''} set (one per group) before groups can be "
+                                             f"generated - set its pairs first"})
+        for pair in pairs:
+            if not isinstance(pair, list) or len(pair) != expected_size:
+                return _response(400, {'error': f"squad '{squads[sid].get('name', sid)}' has a pair of the wrong size "
+                                                 f"for this {match_type} tournament (expected {expected_size} "
+                                                 f"player{'s' if expected_size != 1 else ''} per pair)"})
+
+    group_names = list(ascii_uppercase[:num_groups])
+    groups = {n: [] for n in group_names}
+    reps = {}
+
+    for sid in squad_ids:
+        squad = squads[sid]
+        member_ratings = dict(zip(squad.get('members', []), squad.get('member_ratings', [])))
+        rep_ids_for_squad = []
+        for i, pair in enumerate(squad['pairs']):
+            names = []
+            for pid in pair:
+                p = players_table.get_item(Key={'player_id': pid}).get('Item')
+                names.append(p['name'] if p else pid)
+            rep_id = f"{sid}::rep{i}"
+            reps[rep_id] = {
+                'entity_id': rep_id,
+                'name': ' & '.join(names) if expected_size == 2 else names[0],
+                'members': list(pair),
+                'member_ratings': [member_ratings.get(pid, 1000) for pid in pair],
+                'parent_squad_id': sid,
+                'locked': True,
+            }
+            rep_ids_for_squad.append(rep_id)
+        # Randomize which of this squad's reps lands in which group - a
+        # squad's own reps are otherwise built in a fixed order (rep0,
+        # rep1, ...), and always mapping rep0 -> Group A would be an
+        # arbitrary, non-random assignment.
+        random.shuffle(rep_ids_for_squad)
+        for group_name, rep_id in zip(group_names, rep_ids_for_squad):
+            groups[group_name].append(rep_id)
+
+    matches_per_tie = int(item['manual_draft']['group_matches_per_tie'])
+    all_ties = []
+    for name, members in groups.items():
+        for tie in build_tie_round_robin(members, matches_per_tie):
+            tie['group'] = name
+            all_ties.append(tie)
+
+    item['reps'] = reps
+    _fill_cross_squad_match_players(item, all_ties)
+    item['group_stage'] = {'matches_per_tie': matches_per_tie, 'ties': all_ties, 'groups': groups, 'cross_squad': True}
+    return None
+
+
+def generate_schedule(tournament_id, event, claims):
+    item, err = _draft_get_tournament(tournament_id)
+    if err:
+        return err
+    denied = _authorize_tournament_organizer(item, claims)
+    if denied:
+        return denied
+    if item.get('status') != 'squads_locked':
+        return _response(400, {'error': 'squads must be locked before generating the schedule'})
+
+    if item.get('manual_draft', {}).get('group_mode') == 'cross_squad':
+        build_err = _build_cross_squad_group_stage(item)
+    else:
+        build_err = _build_group_stage(item)
+    if build_err:
+        return build_err
 
     item['status'] = 'group_stage'
+    tournaments_table.put_item(Item=item)
+    return _response(200, item)
+
+
+def regenerate_schedule(tournament_id, event, claims):
+    """Organizer repair action: re-run schedule generation for a tournament
+    already in the group stage, optionally changing num_groups/
+    advance_per_group first. Exists because a group-count mistake only
+    becomes obvious once real squad names are on screen (e.g. num_groups
+    equal to the squad count silently produced one-squad, zero-match
+    groups) - the organizer needs a way to fix that without re-running the
+    whole leader/pool/auction process, since squads are already locked and
+    this leaves them untouched. Only allowed while genuinely nothing in the
+    current group stage has been played yet, so a real match result is
+    never silently discarded."""
+    item, err = _draft_get_tournament(tournament_id)
+    if err:
+        return err
+    denied = _authorize_tournament_organizer(item, claims)
+    if denied:
+        return denied
+    if item.get('status') != 'group_stage':
+        return _response(400, {'error': 'can only regenerate the schedule while still in the group stage'})
+
+    existing_ties = (item.get('group_stage') or {}).get('ties', [])
+    if any(m.get('played') for t in existing_ties for m in (t.get('matches') or [])):
+        return _response(400, {'error': 'cannot regenerate - some matches in the current schedule have already been played'})
+
+    body = json.loads(event.get('body') or '{}')
+    manual_draft = item.setdefault('manual_draft', {})
+    if 'num_groups' in body:
+        try:
+            new_num_groups = int(body['num_groups'])
+        except (TypeError, ValueError):
+            return _response(400, {'error': 'num_groups must be a number'})
+        if new_num_groups < 1:
+            return _response(400, {'error': 'num_groups must be at least 1'})
+        manual_draft['num_groups'] = new_num_groups
+    if 'advance_per_group' in body:
+        try:
+            new_advance = int(body['advance_per_group'])
+        except (TypeError, ValueError):
+            return _response(400, {'error': 'advance_per_group must be a number'})
+        if new_advance < 1:
+            return _response(400, {'error': 'advance_per_group must be at least 1'})
+        manual_draft['advance_per_group'] = new_advance
+    if 'group_mode' in body:
+        new_group_mode = body['group_mode']
+        if new_group_mode not in ('squads', 'cross_squad'):
+            return _response(400, {'error': "group_mode must be 'squads' or 'cross_squad'"})
+        manual_draft['group_mode'] = new_group_mode
+        if new_group_mode == 'squads':
+            item.pop('reps', None)  # switching back out of cross-squad mode - stale rep entities would otherwise linger unused
+
+    if manual_draft.get('group_mode') == 'cross_squad':
+        build_err = _build_cross_squad_group_stage(item)
+    else:
+        build_err = _build_group_stage(item)
+    if build_err:
+        return build_err
+
     tournaments_table.put_item(Item=item)
     return _response(200, item)
 
@@ -1915,7 +2234,9 @@ def _advance_squads_to_knockout_from_groups(item):
 
     seeded_squad_ids = [q['squad_id'] for q in qualifiers]
     matches_per_tie = int(item['manual_draft']['knockout_matches_per_tie'])
-    item['knockout'] = {'matches_per_tie': matches_per_tie, 'rounds': [build_knockout_tie_round(seeded_squad_ids, matches_per_tie)]}
+    first_round = build_knockout_tie_round(seeded_squad_ids, matches_per_tie)
+    _fill_cross_squad_match_players(item, first_round)  # no-op unless this is cross-squad group mode
+    item['knockout'] = {'matches_per_tie': matches_per_tie, 'rounds': [first_round]}
     item['status'] = 'knockout'
 
 
@@ -1971,18 +2292,30 @@ def _advance_knockout_ties_if_round_complete(item):
 
     if len(current_round) == 1:
         item['status'] = 'completed'
-        item['champion_squad_id'] = current_round[0]['winner_squad_id']
+        winner_id = current_round[0]['winner_squad_id']
+        # Cross-squad group mode (owner request, 2026-08-21): the knockout
+        # winner is a rep entity (a specific pre-fixed pair), not a real
+        # squad - resolve it back to its parent squad so the champion
+        # banner still names a squad, and separately keep the winning
+        # rep_id for display of exactly which pair won it.
+        item['champion_squad_id'] = _tie_side_leader_id(item, winner_id)
+        if winner_id in (item.get('reps') or {}):
+            item['champion_rep_id'] = winner_id
         return
 
     matches_per_tie = int(item['knockout'].get('matches_per_tie', 1))
     winners = [t['winner_squad_id'] for t in current_round]
-    rounds.append(build_knockout_tie_round(winners, matches_per_tie))
+    next_round = build_knockout_tie_round(winners, matches_per_tie)
+    _fill_cross_squad_match_players(item, next_round)  # no-op unless this is cross-squad group mode
+    rounds.append(next_round)
 
     if len(current_round) == 2 and 'third_place_match' not in item['knockout']:
         losers = []
         for t in current_round:
             losers.append(t['squad_b'] if t['winner_squad_id'] == t['squad_a'] else t['squad_a'])
-        item['knockout']['third_place_match'] = build_tie(losers[0], losers[1], matches_per_tie)
+        third_place = build_tie(losers[0], losers[1], matches_per_tie)
+        _fill_cross_squad_match_players(item, [third_place])  # no-op unless this is cross-squad group mode
+        item['knockout']['third_place_match'] = third_place
 
 
 def record_knockout_tie_score(tournament_id, event, claims):
@@ -2096,8 +2429,15 @@ def get_tournament(tournament_id):
     if item.get('format') == 'manual_draft' and 'group_stage' in item:
         # Read-time-only, same as `standings` above - never persisted, so
         # these can't drift out of sync with the ties/matches they're
-        # computed from.
-        item['squad_standings'] = compute_squad_standings(item)
+        # computed from. Cross-squad group mode (owner request,
+        # 2026-08-21): the overall table needs to roll each squad's several
+        # rep entities back up into one row per real squad - the plain
+        # per-rep table isn't meaningful on its own since two reps of the
+        # same squad never play each other.
+        if (item.get('group_stage') or {}).get('cross_squad'):
+            item['squad_standings'] = compute_squad_standings_by_parent(item)
+        else:
+            item['squad_standings'] = compute_squad_standings(item)
         groups = (item.get('group_stage') or {}).get('groups')
         if groups:
             # Real separate groups (owner request, 2026-08-21): a combined
