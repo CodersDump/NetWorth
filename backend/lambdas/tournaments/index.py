@@ -2148,6 +2148,16 @@ def substitute_player(tournament_id, event):
     if not item:
         return _response(404, {'error': 'tournament not found'})
 
+    if item.get('format') == 'manual_draft':
+        # Manual-draft squads aren't built or named like a legacy
+        # subgroups/knockout entity (see apply_substitution below - it
+        # expects entity['members']/'name' in the ' & '.join(...) shape
+        # every other format uses) and group_stage/knockout here holds
+        # ties (squad_a/squad_b + nested matches), not the player_a/
+        # player_b entity shape apply_substitution walks. Reject cleanly
+        # instead of crashing or silently mangling a squad's name.
+        return _response(400, {'error': 'player substitution is not supported for manual-draft squads yet'})
+
     new_player = players_table.get_item(Key={'player_id': new_player_id}).get('Item')
     if not new_player:
         return _response(404, {'error': 'new player not found'})
@@ -2160,17 +2170,21 @@ def substitute_player(tournament_id, event):
             return False
         idx = members.index(old_player_id)
         members[idx] = new_player_id
-        if len(members) == 2:
-            names = []
-            for pid in members:
-                if pid == new_player_id:
-                    names.append(new_player['name'])
-                else:
-                    p = players_table.get_item(Key={'player_id': pid}).get('Item')
-                    names.append(p['name'] if p else pid)
-            entity['name'] = ' & '.join(names)
-        else:
-            entity['name'] = new_player['name']
+        # Always rebuild from every CURRENT member's current name, however
+        # many members there are - matches the ' & '.join(...) convention
+        # every team entity is created with (create_tournament L301),
+        # whether the team has 1, 2, or N members. A previous version only
+        # did this for exactly 2 members and otherwise overwrote the whole
+        # team's name with just the incoming player's name, silently
+        # dropping every other member's name for teams of 3+.
+        names = []
+        for pid in members:
+            if pid == new_player_id:
+                names.append(new_player['name'])
+            else:
+                p = players_table.get_item(Key={'player_id': pid}).get('Item')
+                names.append(p['name'] if p else pid)
+        entity['name'] = ' & '.join(names)
         return True
 
     updated_any = False
