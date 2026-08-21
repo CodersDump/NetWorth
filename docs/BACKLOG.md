@@ -54,15 +54,22 @@
   - **Organizer-assign leader dropdown now excludes quota-full leaders — DONE (see Done section,
     2026-08-21).** Owner request: convenience fix so the dropdown never offers a leader an assignment
     the backend would just reject.
-  - **NEXT (not started): post-auction squad editing, doubles pairing within a tie, and real
-    mid-tournament substitution for squads.** Owner asked (2026-08-21) for manual-draft tournaments to
-    not be a "hard stop" once the auction completes: (1) let the organizer edit/rebalance squad rosters
-    after the auction but before the schedule is generated: (2) let a leader field a DOUBLES pair (two
-    of their own players) for a tie match instead of only ever picking one player at a time — every tie
-    match is currently hard-coded singles (`player_a`/`player_b` are single player ids); (3) build real
-    substitution support for squads — `substitute_player` currently just refuses any manual-draft
-    tournament outright (the Phase D fix above; that was a crash-prevention stopgap, not the feature).
-    All three were explicitly requested together; not yet designed or started.
+  - **"Not a hard stop": squad roster editing, doubles pairing within a tie, real mid-tournament
+    substitution — DONE (see Done section, 2026-08-21, v1.51.0).** Owner asked (2026-08-21) for
+    manual-draft tournaments to not be a hard stop once the auction completes: (1) `move-squad-player`
+    lets the organizer rebalance squads between the auction and schedule generation; (2)
+    `manual_draft.match_type` ('singles'/'doubles', settable at creation) plus a generalized
+    `pick_tie_player` let a leader field a nominated PAIR for a doubles tournament's tie matches, not
+    just one player at a time; (3) `substitute-squad-player` is real mid-tournament substitution
+    (squads_locked through knockout), clearing any not-yet-played lineup pick for the outgoing player
+    while leaving already-played match history untouched — replacing the old flat 400 rejection.
+  - **Roster-exclusion gap for a non-playing organizer — FIXED (see Done section, 2026-08-21,
+    v1.51.0).** Owner-reported real bug: every group member lands in `pools.unassigned` automatically
+    at tournament creation, and `lock_pools` refuses to proceed until that tray is empty — an organizer
+    who is the group owner/admin but isn't personally playing (health reasons, etc) had no way to
+    excuse themselves (or anyone else not participating) from that required roster, and got
+    permanently stuck unable to lock pools. New `remove-player` route (pools_open only, rejects
+    removing a current leader) plus an "x" control on each unassigned/pool chip.
   - Two small, fully independent asks captured alongside this (not gated on the phases above):
     organizer can create a brand-new player profile inline during pool setup (**done** - Phase A
     reuses the existing `/register-and-join` route, no new backend code needed) and an admin "rename
@@ -314,6 +321,72 @@
 ---
 
 ## Done
+
+- ✅ 2026-08-21 (v1.51.0) — **Manual-mode tournaments: squad roster editing/substitution/doubles
+  pairing ("not a hard stop"), plus a real fix for a non-playing organizer getting stuck unable to
+  lock pools.** Two owner requests handled together.
+  **(1) The "not a hard stop" ask** (owner, after hitting the Decimal crash live: "user should be able
+  to set their teams as well as in pairing as well not a hard stop at it" — clarified via multi-select
+  to mean all three: post-auction roster editing, doubles pairing, real substitution).
+  `move_squad_player` (new route `POST /tournament-draft/{id}/move-squad-player`, organizer-only,
+  `squads_locked` only) moves a picked (non-leader) squad member to a different squad — no budget
+  bookkeeping needed since the auction is already over, just a plain roster edit; restricted to before
+  the schedule exists because once ties reference `squad_a`/`squad_b` by id, moving a player to a
+  different squad mid-tournament would change who's on which side of an already-scheduled fixture,
+  which isn't coherent. `substitute_squad_player` (new route `POST
+  /tournament-draft/{id}/substitute-squad-player`, organizer-only, `squads_locked` through `knockout`)
+  is real substitution: swaps a current squad member out for a brand-new replacement who isn't already
+  on any squad, rejects substituting the leader themselves, and — the one non-obvious part — walks
+  every group-stage/knockout tie this squad appears in and clears any not-yet-played match slot where
+  the outgoing player was already (but not yet) nominated, back to `None`, so a departed player can't
+  still take the court; an already-*played* match's recorded player snapshot is left untouched,
+  mirroring the legacy `substitute_player`'s own "don't touch history" behavior. Logs each swap to a
+  new `item['squad_substitutions']` audit trail. Doubles pairing needed a new
+  `manual_draft.match_type` field ('singles'/'doubles', settable at tournament creation, defaults to
+  'singles' so every existing tournament is unaffected): `pick_tie_player` now accepts either a single
+  `player_id` (singles) or a `player_ids` pair (doubles) matching the tournament's configured type,
+  validates both nominees are on the caller's own squad and distinct, and builds a synthetic pair
+  entity (`{player_id: <fresh uuid>, name: "X & Y", members: [p1, p2], member_ratings: [...]}`) — the
+  same shape the legacy manual-teams doubles path already produces. Two follow-on fixes were required
+  for the pair entity to work correctly rather than just render: `_score_tie_match` was hardcoding
+  `update_elo_and_log('singles', ...)` regardless of the tournament's actual match type, which would
+  have silently used the wrong K-factor/pairing-count Elo path for every doubles match — now reads
+  `manual_draft.match_type` and passes it through. `compute_player_tournament_scores`'s `apply_match`
+  assumed `entity['player_id']` was always a real player (true for singles, but for a doubles pair
+  that id is the pair's own synthetic uuid, not a person) — generalized to credit every id in
+  `entity['members']` individually, with a small name-splitting helper so each player gets their own
+  name in the tournament leaderboard rather than the pair's combined "X & Y" label. Frontend: a new
+  "Edit squads" panel (`renderSquadRosterEditPanel`) offers the move control at `squads_locked` and a
+  substitute-only control (moving between squads is dropped once a schedule exists) through
+  `group_stage`/`knockout` — both organizer-only routes render unconditionally for any viewer and rely
+  on the existing server-403 convention this app already uses for "Lock pools"/"Generate schedule".
+  `draftPlayerPickerHtml` now branches on `match_type`: doubles renders two `<select>`s plus an
+  explicit "Set pair" button (deliberately not firing on every `onchange`, which would submit a
+  lopsided pair) via a new `pickTiePlayerPair`. The tournament-creation form's existing (previously
+  manual-draft-hidden) `#tournament_match_type` field is now shown and wired through for manual-draft
+  too. New `/tmp/test_squad_roster_editing.py` (12 checks: move/substitute auth and phase gating, the
+  pending-slot-clearing behavior, and that an already-played match is never touched by a later
+  substitution), `/tmp/test_doubles_tie_pairing.py` (8 checks: pair validation, the correct entity
+  shape, the doubles Elo path actually running, and per-member leaderboard credit), and a new
+  `/tmp/test_squad_editing_ui.js` Playwright pass (panel rendering, leaders excluded from the
+  move/substitute lists, the move-only-pre-schedule / substitute-anytime split) — plus the full
+  existing backend and Playwright suites re-verified passing.
+  **(2) Roster-exclusion gap for a non-playing organizer** (owner-reported live bug: "it does not give
+  option to select who all are playing for that selected group... i'm not playing due to health
+  reason but i needed to be owner... tried to proceed to auction but said all players must be
+  segregated in pool"). Root cause: `create_manual_draft_tournament` dumps every group member into
+  `pools.unassigned` at creation with no way to take anyone back out, and `lock_pools` refuses to
+  proceed until that tray is empty — an organizer who is the group owner/admin but isn't personally
+  playing had no way to excuse themselves (or anyone else not participating) from that required
+  roster, and would get permanently stuck. Fixed with a new `POST
+  /tournament-draft/{id}/remove-player` route (organizer-only, `pools_open` only, rejects removing a
+  player who is currently a leader with a clear error rather than silently cascading) that strips a
+  player out of the unassigned tray or whatever pool they're in — they're simply never required to
+  reappear anywhere. Frontend: a small "×" button on every pool-board chip while pools are open, with
+  a confirm dialog. New `/tmp/test_remove_draft_player.py` (7 checks, including the exact end-to-end
+  reproduction: owner removes themselves, assigns everyone else, and `lock_pools` now succeeds) and a
+  Playwright check in the new `/tmp/test_squad_editing_ui.js` (the "×" renders, calls the route with
+  the right `player_id`, and the board re-renders without the removed player).
 
 - ✅ 2026-08-21 (v1.50.0) — **Manual-mode tournaments: pool/auction privacy, a real production crash
   fix, and an organizer-assign convenience fix.** Three owner requests handled together in one pass.
