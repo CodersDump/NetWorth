@@ -322,7 +322,7 @@ _NetWorth - matches Lambda (singles + doubles)_
 | `compute_partner_distribution` | player_id, items, top_n | 2536 | For the radar/spider chart: one player's doubles partners, sorted by |
 | `_response` | status_code, body_dict | 2583 | — |
 
-#### `tournaments` — 2222 LOC
+#### `tournaments` — 2236 LOC
 _NetWorth - tournaments Lambda (singles or doubles)_
 
 **Module constants:** `K_FACTOR`, `COMEBACK_BONUS_THRESHOLD`, `COMEBACK_BONUS_PER_POINT`, `COMEBACK_BONUS_CAP`, `CONFIRMATION_CODE`
@@ -393,7 +393,7 @@ _NetWorth - tournaments Lambda (singles or doubles)_
 | `get_pairing_count` | team_ids | 2038 | How many prior doubles matches has this exact 2-player team played |
 | `update_elo_and_log` | match_type, entity_a, entity_b, score_a, scor | 2056 | — |
 | `substitute_player` | tournament_id, event | 2134 | Swap a player out of a team for all of that team's FUTURE (unplayed) |
-| `_response` | status_code, body_dict | 2213 | — |
+| `_response` | status_code, body_dict | 2227 | — |
 
 #### `finance` — 1571 LOC
 _NetWorth - finance Lambda_

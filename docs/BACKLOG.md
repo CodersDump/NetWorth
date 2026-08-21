@@ -11,7 +11,7 @@
 
 ## Now / high priority
 
-- `[feat] L` **Manual-mode tournaments (leaders + pool draft/auction) — Phases A, B & C done, D next.**
+- `[feat] L` **Manual-mode tournaments (leaders + pool draft/auction) — Phases A-D all done, feature complete.**
   Full design: organizer names leaders, splits every player into ranked pools (drag/tap board -
   **done**), leaders draft squads via a live organizer-paced point-budget auction (**done**), then a
   squad-vs-squad group stage (round robin, N individual matches per tie) and knockout (final/semi/3rd-
@@ -42,9 +42,9 @@
     only, no lot needs to be open) - picks a queued player, a leader, and an amount, then performs the
     exact equivalent of open-lot + winning bid + close-lot in one call. Works standalone or mixed with
     live app-based bidding.
-  - **Phase D - next.** Auth-hardening test matrix across every new route, plus a real fix for
-    `substitute_player`'s squad-name-rebuild bug (`apply_substitution`, currently only correct for
-    2-member entities - silently drops names for squads >2 members).
+  - **Phase D - DONE (see Done section, 2026-08-21).** Auth-hardening test matrix across every route
+    from Phases A/B/C plus organizer-assign, and a real fix for `substitute_player` (both the
+    squad-name-rebuild bug and a newly-found crash on manual-draft tournaments).
   - Two small, fully independent asks captured alongside this (not gated on the phases above):
     organizer can create a brand-new player profile inline during pool setup (**done** - Phase A
     reuses the existing `/register-and-join` route, no new backend code needed) and an admin "rename
@@ -297,6 +297,58 @@
 
 ## Done
 
+- ✅ 2026-08-21 (v1.49.0-phaseD) — **Manual-mode tournaments, Phase D: auth-hardening matrix +
+  `substitute_player` fixes (Owner request, "proceed further") - the whole feature is now complete.**
+  Last slice of the tournament feature from `cuddly-forging-ocean.md`'s plan: an authorization sweep
+  across every route added in Phases A/B/C plus organizer-assign, and the `substitute_player` bugfix the
+  plan flagged from the start.
+  **Auth matrix** (`/tmp/test_draft_auth_matrix.py`, 17 checks, no application code changed by this part
+  - it confirmed existing behavior and closed test-coverage gaps the per-phase suites had left):
+  anonymous (no `claims` at all) is rejected across all 15 manual-draft routes spanning every phase, not
+  just tournament creation - `handle_draft_route`'s single top-of-function check already covered this
+  uniformly, now proven route-by-route rather than assumed. A group **`admin`** role (distinct from
+  `owner`, never separately exercised before) can set leaders and lock pools, confirming
+  `_authorize_tournament_organizer`'s role check truly isn't owner-only. **SuperAdmin** (a caller who
+  isn't even a member of the tournament's group) is confirmed to bypass the organizer check on every
+  organizer-only route across every phase: start-auction, open-lot, organizer-assign (including driving
+  a full auction to `squads_locked` this way), generate-schedule. `get_draft_state` is confirmed to work
+  for an organizer who is **not** also a leader (the existing Phase B test's "organizer" happened to
+  always double as a leader, so that path was never actually isolated before). `pick_tie_player` is
+  confirmed to have **no** organizer/SuperAdmin bypass at all - by design, only the tie's own leader can
+  nominate their own squad's player, the one route in this whole tree that deliberately behaves
+  differently from every other organizer-adjacent route. `group-tie-score`'s "organizer OR either tie
+  leader" dual auth is exercised specifically via the organizer/SuperAdmin side, plus a plain member
+  (neither) still gets 403.
+  **`substitute_player` bugfix** (`backend/lambdas/tournaments/index.py`): two real issues, one already
+  known from the plan and one found while investigating it. (1) `apply_substitution`'s name-rebuild only
+  special-cased exactly 2 members - a 3+-member entity had its **entire** team name silently overwritten
+  with just the incoming player's name, dropping every other member. Fixed by always rebuilding from
+  every current member's current name via `' & '.join(...)`, matching the exact convention
+  `create_tournament` already uses at team-creation time regardless of team size - the len==2 special
+  case is gone, one code path now handles 1, 2, or N members correctly. (2) While tracing whether this
+  was actually reachable, found that `substitute_player` was never guarded against `format='manual_draft'`
+  tournaments at all - its loop walks `item['knockout']['rounds']` expecting each entry to be a legacy
+  `{player_a, player_b}` fixture, but a manual-draft knockout's `rounds` entries are **ties**
+  (`{squad_a, squad_b, matches: [...]}`), which don't have a `player_a` key at that level - so calling
+  `POST /tournaments/{id}/substitute` on any manual-draft tournament that had reached the knockout stage
+  raised a raw, unhandled `KeyError` (a 500, not a clean error). Fixed with an explicit early check that
+  rejects manual-draft tournaments with a clear 400 ("player substitution is not supported for
+  manual-draft squads yet") instead of crashing - squad substitution isn't designed or requested yet, so
+  refusing honestly is the right scope, not a half-built workaround. Verified with a new
+  `/tmp/test_substitute_squad.py` (5 checks: the existing 2-member case still works unchanged, a
+  hand-built 3-member entity now rebuilds its full name correctly instead of getting clobbered, the new
+  manual-draft 400 guard, and the existing 404 error paths for an unknown team/player still work) plus
+  the manual-draft guard is exercised a second time from the auth-matrix test above. The `format`-based
+  early return means the actual crash site's `player_a`/`player_b` shape mismatch is naturally never
+  reached - no attempt was made to teach `apply_substitution` to understand ties, since that's real new
+  feature work nobody has asked for, not this bugfix's scope.
+  Full existing regression suite (Phase A/B/C backend `/tmp/test_manual_draft_*.py` +
+  `/tmp/test_organizer_assign.py`, and Phase A/B/C/organizer-assign frontend Playwright suites) re-run
+  and still passing - Phase D touched only `substitute_player`/`apply_substitution`, nothing else in the
+  file or in `frontend/js/app.js` changed.
+  Files: `backend/lambdas/tournaments/index.py`. No frontend change (no UI currently calls
+  `/tournaments/{id}/substitute` for a manual-draft tournament, so there was nothing to wire up - the
+  fix is purely defensive/correctness). No `template.yaml` change needed.
 - ✅ 2026-08-21 (v1.48.0-organizer-assign) — **Manual-mode tournaments: organizer-assign, out-of-band
   bidding (Owner request, "i need somewhere where the organiser itself enters the bidding amount and
   assigns to the leader, in case not all of them opens or access the app").** Real-world gap in the
