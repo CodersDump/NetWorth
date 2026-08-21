@@ -442,3 +442,37 @@
 }
 .nw-modal-btn.nw-primary { background: var(--court); border-color: var(--court); color: #fff; }
 .nw-modal-btn.nw-danger { background: var(--smash); border-color: var(--smash); color: #fff; }
+
+/* ---- Manual-draft tournament: leader picker + drag/tap pool board.
+   Tap-to-select-then-tap-to-drop is the PRIMARY interaction (works on
+   phones, where this app is mostly used); native HTML5 drag-and-drop is
+   layered on top only under `pointer: fine` as a progressive enhancement,
+   since touch input never fires dragstart/drop events. ---- */
+.draft-pool-board {
+  display: flex; flex-wrap: wrap; gap: 10px; margin-top: 10px;
+}
+.draft-pool-col {
+  flex: 1 1 160px; min-width: 150px;
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 8px; min-height: 90px;
+}
+.draft-pool-col.draft-dragover { border-color: var(--court); box-shadow: 0 0 0 2px var(--court) inset; }
+.draft-pool-col h4 {
+  margin: 0 0 6px; font-size: 13px; font-family: 'Rajdhani', sans-serif; font-weight: 700;
+  color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.03em;
+}
+.draft-pool-col.draft-unassigned-tray { background: var(--surface); border-style: dashed; }
+.draft-chip {
+  display: inline-flex; align-items: center; gap: 4px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 999px;
+  padding: 4px 10px; margin: 3px 4px 3px 0; font-size: 13px; cursor: pointer;
+  user-select: none; transition: transform 0.1s ease, border-color 0.1s ease, background 0.1s ease;
+}
+.draft-chip:active { transform: scale(0.96); }
+.draft-chip.draft-chip-selected { border-color: var(--court); background: var(--court); color: #fff; }
+.draft-chip.draft-chip-leader { border-color: var(--shuttle); font-weight: 700; }
+.draft-leader-banner-row { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0; }
+.draft-leader-banner {
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 8px 12px; font-size: 13px; font-weight: 600;
+}

@@ -1291,8 +1291,43 @@
             <select id="tournament_format">
               <option value="knockout">Random knockout bracket</option>
               <option value="groups_then_knockout">Groups, then knockout</option>
+              <option value="manual_draft">Manual mode (leaders + pool draft/auction)</option>
             </select>
           </label>
+          <div id="manual-draft-options" style="display:none; margin-top:8px; border:1px solid var(--border); border-radius:var(--radius); padding:10px;">
+            <p class="card-sub" style="margin:0 0 8px;">Pick leaders, split everyone into ranked pools, then leaders draft squads via a live point-budget auction. Group stage and knockout are generated automatically once squads lock.</p>
+            <div class="row">
+              <div>
+                <label>Points each leader can spend
+                  <input type="number" id="draft_budget" value="1000" min="1">
+                </label>
+              </div>
+              <div>
+                <label>Number of pools
+                  <input type="number" id="draft_num_pools" value="4" min="2">
+                </label>
+              </div>
+            </div>
+            <div class="row">
+              <div>
+                <label>Picks per pool (per leader)
+                  <input type="number" id="draft_picks_per_pool" value="2" min="1">
+                </label>
+              </div>
+            </div>
+            <div class="row">
+              <div>
+                <label>Group-stage matches per tie
+                  <input type="number" id="draft_group_matches_per_tie" value="2" min="1">
+                </label>
+              </div>
+              <div>
+                <label>Knockout matches per tie
+                  <input type="number" id="draft_knockout_matches_per_tie" value="1" min="1">
+                </label>
+              </div>
+            </div>
+          </div>
           <label>Match type
             <select id="tournament_match_type">
               <option value="doubles">Doubles</option>

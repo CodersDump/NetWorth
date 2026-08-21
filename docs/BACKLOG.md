@@ -11,6 +11,37 @@
 
 ## Now / high priority
 
+- `[feat] L` **Manual-mode tournaments (leaders + pool draft/auction) — Phase A done, B/C/D next.**
+  Full design: organizer names leaders, splits every player into ranked pools (drag/tap board -
+  **done, see Done section below**), leaders draft squads via a live organizer-paced point-budget
+  auction, then a squad-vs-squad group stage (round robin, N individual matches per tie) and knockout
+  (final/semi/3rd-place, N matches per tie, default 1 but configurable) auto-generate. Decided
+  mechanics (owner-confirmed): sub-match player picks within a tie are made by **each squad's own
+  leader**, not the organizer; a tie level on match-wins is broken by aggregate point differential
+  (cricket-NRR style) rather than requiring an odd match count; unsold auction players are resolved
+  manually by the organizer, no auto-assign rule. Also wanted alongside this: a tournament-scoped
+  (non-Elo) per-player score/leaderboard for the tournament only - Elo itself is untouched, still
+  updates globally per individual match exactly as today.
+  - **Phase A - DONE (see Done section, 2026-08-21).** Data model, leader/pool CRUD endpoints,
+    `_authorize_tournament_organizer`, drag/tap pool board UI.
+  - **Phase B - next.** The auction engine: `start-auction`, `open-lot`, `bid` (atomic conditional
+    `update_item`, no new table - see the reasoning in the session that designed this), `close-lot`
+    (awards + auto-freezes into `squads_locked` once every leader's pool quotas are full), `skip-lot`,
+    `get_draft_state` (small polling payload, ~1.75s interval, paused on tab-hide/tab-switch). Highest-
+    risk phase - the only genuinely new mechanism (organizer-paced lots + real-time-ish bidding via
+    polling, not WebSocket, to fit the app's plain-REST architecture).
+  - **Phase C - after B.** Tie-based schedule generation: `build_tie`/`build_tie_round_robin`/
+    `build_knockout_tie_round` (generalizing the existing `build_round_robin`/`build_knockout_round`),
+    the score-based tie-decision rule, `compute_squad_standings`, the new per-tournament player-score
+    computation, and the frontend tie-card/bracket rendering extension.
+  - **Phase D - last.** Auth-hardening test matrix across every new route, plus a real fix for
+    `substitute_player`'s squad-name-rebuild bug (`apply_substitution`, currently only correct for
+    2-member entities - silently drops names for squads >2 members).
+  - Two small, fully independent asks captured alongside this (not gated on the phases above):
+    organizer can create a brand-new player profile inline during pool setup (**done** - Phase A
+    reuses the existing `/register-and-join` route, no new backend code needed) and an admin "rename
+    a player's real name" control (**done, shipped as v1.44.2** - `PUT /players/{id}` already accepted
+    a `name` change, only the admin UI was missing).
 - `[feat] M` **Finance approval for group owners — DONE (verified 2026-08-19).** This entry said
   "blocked on group-scoped finance" but the blocker was cleared during the Stage 2/3 work below and
   the doc was never updated to say so. Verified end-to-end this session: `finance_access` is in
@@ -258,6 +289,47 @@
 
 ## Done
 
+- ✅ 2026-08-21 (v1.45.0-phaseA) — **Manual-mode tournaments (leaders + pool draft/auction), Phase A:
+  data model + leader/pool endpoints + drag/tap pool board (Owner request).** First slice of the
+  big "leaders draft squads via a live auction, then group stage + knockout auto-generate" feature -
+  see the phased plan for the full design. This phase only covers `pools_open -> pools_locked`; the
+  auction engine (Phase B), tie-based schedule generator (Phase C), and an auth-hardening pass
+  (Phase D) are still to come.
+  **Backend** (`backend/lambdas/tournaments/index.py`): new `format: 'manual_draft'` tournament shape
+  (`manual_draft` config, `leaders`, `pools.assignments`/`pools.unassigned`) alongside the existing
+  `knockout`/`groups_then_knockout` formats - no new DynamoDB table, everything nests onto the same
+  tournament item. New Cognito-authorized route tree `/tournament-draft{proxy+}` (separate from
+  `/tournaments{proxy+}`, which is `AuthorizationType: NONE` at the gateway and so never gets real
+  caller identity - matches the same reasoning as the existing `/create-tournament` resource):
+  `POST /tournament-draft` (create), `POST .../leaders`, `POST .../add-player` (wires an existing or
+  freshly `/register-and-join`'d player into the unassigned tray), `PUT .../pools` (full-replace one
+  pool's membership - a player moved into a pool is stripped from wherever they were before, and a
+  player dropped from a pool with no `player_ids` re-adding them returns to `unassigned`, so nobody is
+  ever silently lost or duplicated), `POST .../lock-pools` (validates every player is assigned and
+  each pool has enough non-leader-owned members for every other leader to fill their pick quota from
+  it). New `_authorize_tournament_organizer()` - ported from `groups/index.py`'s
+  `_authorize_group_action` (SuperAdmin, or owner/admin of the tournament's group) - tournaments had
+  **no role-based auth anywhere** before this (not even DELETE, which is gated only by the shared
+  `CONFIRMATION_CODE` secret). Verified with `/tmp/test_manual_draft_pools.py` (18 checks: shell
+  creation, add-player, leader/pool validation, move-between-pools correctness, lock-quota rejection,
+  and a full authz matrix) plus the existing regression suite (all still passing, confirming the new
+  dispatch branch doesn't disturb `/create-tournament`/`/tournaments{proxy+}`).
+  **Frontend**: `#tournament_format` gained a "Manual mode" option with its own config block (budget,
+  pool count, picks/pool, matches-per-tie x2 - the last two aren't used until Phase C but are captured
+  at creation so they don't need a later migration). `renderTournament()` now dispatches manual-draft
+  tournaments to `renderManualDraftTournament()`, which renders a leader checklist and a pool board:
+  tap-a-player-then-tap-a-pool is the primary interaction (works on phones - this app's actual usage),
+  native HTML5 drag-and-drop is layered on top for `draggable`-capable pointers as a bonus, not a
+  requirement (this app had no drag-and-drop before). "Add new player" reuses the existing
+  `/register-and-join` route rather than inventing new player-creation logic. Verified with a
+  Playwright pass against the real served `frontend/` tree (not `file://`): format-toggle visibility,
+  every new function defined, pool/chip DOM renders correctly from a hand-built tournament object,
+  leader-chip styling, tap-select -> tap-pool triggers exactly one correctly-shaped `PUT .../pools`
+  call, and a regression check that a normal (non-manual-draft) tournament still renders unaffected.
+  Files: `backend/lambdas/tournaments/index.py`, `infrastructure/template.yaml` (new
+  `TournamentDraftResource`/`{proxy+}` API Gateway tree, Cognito-authorized, same `TournamentsFunction`
+  - no new Lambda or IAM policy needed), `frontend/index.html`, `frontend/js/app.js`,
+  `frontend/css/styles.css`.
 - ✅ 2026-08-21 — **Staging deploy never set `--cache-control` on the frontend sync (prod's did) -
   likely explanation for v1.44's FAB "working on mobile but not desktop" report.**
   Owner reported the new floating record-match button rendered top-left and unpinned on desktop

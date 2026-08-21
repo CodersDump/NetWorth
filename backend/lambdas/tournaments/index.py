@@ -138,8 +138,39 @@ def _is_valid_completed_game(score_a, score_b, target):
 
 def _caller_claims(event):
     """Same pattern as matches lambda - see that file's comment for
-    context. Only present on the new isolated /create-tournament route."""
+    context. Present on /create-tournament and, as of manual-draft mode,
+    on the whole /tournament-draft{proxy+} tree - NOT on plain
+    /tournaments{proxy+}, which is AuthorizationType: NONE at the gateway
+    and so never gets requestContext.authorizer.claims populated."""
     return (event.get('requestContext') or {}).get('authorizer', {}).get('claims') or {}
+
+
+def _is_super_admin(claims):
+    """Ported from groups/index.py - identical logic, kept in sync by hand
+    (no shared Lambda layer exists yet, see KNOWN_ISSUES #6)."""
+    groups = (claims.get('cognito:groups') or '').split(',')
+    return 'SuperAdmin' in groups
+
+
+def _authorize_tournament_organizer(item, claims):
+    """Shared check for every manual-draft organizer-only write (set
+    leaders, assign/lock pools, and later run the auction): SuperAdmin, or
+    already owner/admin of THIS tournament's group. Ported from
+    groups/index.py's _authorize_group_action - tournaments/index.py had no
+    role-based check anywhere before manual-draft mode (not even DELETE,
+    which is gated only by the shared CONFIRMATION_CODE secret, not
+    identity). Returns None if allowed, or an error response if not -
+    callers just do `if denied: return denied`."""
+    if _is_super_admin(claims):
+        return None
+    caller_player_id = claims.get('custom:player_id')
+    group = groups_table.get_item(Key={'group_id': item['group_id']}).get('Item')
+    if not group:
+        return _response(404, {'error': 'group not found'})
+    caller_role = group.get('roles', {}).get(caller_player_id) if caller_player_id else None
+    if caller_role not in ('owner', 'admin'):
+        return _response(403, {'error': "you must be an owner or admin of this tournament's group to manage the draft"})
+    return None
 
 
 def create_tournament_enforced(event):
@@ -159,6 +190,13 @@ def handler(event, context):
         # isolated route this session).
         if event.get('resource') == '/create-tournament' and method == 'POST':
             return create_tournament_enforced(event)
+
+        # Manual-draft mode (leaders + pools + auction) lives on its own
+        # Cognito-authorized resource tree, /tournament-draft{proxy+} - see
+        # _caller_claims' comment for why this can't just be bolted onto
+        # /tournaments{proxy+}.
+        if (event.get('resource') or '').startswith('/tournament-draft'):
+            return handle_draft_route(event)
 
         if not parts:
             if method == 'POST':
@@ -420,6 +458,298 @@ def _bye_match(entity):
         'winner_id': entity['player_id'],
         'bye': True
     }
+
+
+# ---------- manual draft mode: leaders & pools (Phase A) ----------
+#
+# A "manual_draft" tournament is built in stages, unlike the existing
+# knockout/groups_then_knockout formats which build their whole entity
+# list + bracket at creation time:
+#   pools_open -> pools_locked -> auction -> squads_locked -> group_stage
+#   -> knockout -> completed
+# This section covers only the first two states (pools_open/pools_locked -
+# leader selection + the drag/tap pool board). The auction engine
+# (pools_locked -> auction -> squads_locked) and the tie-based schedule
+# generator (squads_locked -> group_stage -> knockout) are later phases;
+# see docs/BACKLOG.md for the phased plan.
+
+def handle_draft_route(event):
+    method = event.get('httpMethod')
+    proxy = (event.get('pathParameters') or {}).get('proxy', '')
+    parts = [p for p in proxy.split('/') if p] if proxy else []
+
+    claims = _caller_claims(event)
+    if not claims:
+        return _response(403, {'error': 'log in to manage a tournament draft'})
+
+    if not parts:
+        if method == 'POST':
+            return create_manual_draft_tournament(event, claims)
+        return _response(404, {'error': 'not found'})
+
+    tournament_id = parts[0]
+    if len(parts) == 2 and parts[1] == 'leaders' and method == 'POST':
+        return set_leaders(tournament_id, event, claims)
+    if len(parts) == 2 and parts[1] == 'add-player' and method == 'POST':
+        return add_draft_player(tournament_id, event, claims)
+    if len(parts) == 2 and parts[1] == 'pools' and method == 'PUT':
+        return set_pool_assignment(tournament_id, event, claims)
+    if len(parts) == 2 and parts[1] == 'lock-pools' and method == 'POST':
+        return lock_pools(tournament_id, event, claims)
+
+    return _response(404, {'error': 'not found'})
+
+
+def _draft_get_tournament(tournament_id):
+    """Shared load+validate for every route below: must exist and must be
+    a manual_draft tournament. Returns (item, None) or (None, error_response)."""
+    item = tournaments_table.get_item(Key={'tournament_id': tournament_id}).get('Item')
+    if not item:
+        return None, _response(404, {'error': 'tournament not found'})
+    if item.get('format') != 'manual_draft':
+        return None, _response(400, {'error': 'this is not a manual-draft tournament'})
+    return item, None
+
+
+def _draft_everyone(item):
+    """Every player currently accounted for in this tournament's pool
+    board - the union of the unassigned tray and every pool's members."""
+    everyone = set(item['pools']['unassigned'])
+    for plist in item['pools']['assignments'].values():
+        everyone.update(plist)
+    return everyone
+
+
+def create_manual_draft_tournament(event, claims):
+    """Creates the shell for a manual-mode tournament: leaders, pools, the
+    auction, squads, and the eventual group_stage/knockout are all empty/
+    absent until the routes below (and later phases) fill them in - no
+    entities or bracket exist yet, unlike the existing knockout/
+    groups_then_knockout formats which build those at creation time."""
+    body = json.loads(event.get('body') or '{}')
+    group_id = body.get('group_id')
+    name = (body.get('name') or '').strip()
+    if not group_id or not name:
+        return _response(400, {'error': 'group_id and name are required'})
+
+    group = groups_table.get_item(Key={'group_id': group_id}).get('Item')
+    if not group:
+        return _response(404, {'error': 'group not found'})
+
+    denied = _authorize_tournament_organizer({'group_id': group_id}, claims)
+    if denied:
+        return denied
+
+    try:
+        budget_per_leader = int(body.get('budget_per_leader', 1000))
+        num_pools = int(body.get('num_pools', 4))
+        picks_per_pool = int(body.get('picks_per_pool', 2))
+        group_matches_per_tie = int(body.get('group_matches_per_tie', 2))
+        knockout_matches_per_tie = int(body.get('knockout_matches_per_tie', 1))
+    except (TypeError, ValueError):
+        return _response(400, {'error': 'budget_per_leader, num_pools, picks_per_pool, group_matches_per_tie, '
+                                         'knockout_matches_per_tie must be numbers'})
+
+    if num_pools < 2:
+        return _response(400, {'error': 'num_pools must be at least 2'})
+    if picks_per_pool < 1:
+        return _response(400, {'error': 'picks_per_pool must be at least 1'})
+    if budget_per_leader < 1:
+        return _response(400, {'error': 'budget_per_leader must be positive'})
+    if group_matches_per_tie < 1 or knockout_matches_per_tie < 1:
+        return _response(400, {'error': 'matches_per_tie values must be at least 1'})
+
+    member_ids = list(group.get('member_ids', []))
+    if len(member_ids) < num_pools:
+        return _response(400, {'error': 'the group needs at least as many members as pools'})
+
+    tournament_id = str(uuid.uuid4())
+    pool_names = [str(n) for n in range(1, num_pools + 1)]
+    item = {
+        'tournament_id': tournament_id,
+        'group_id': group_id,
+        'name': name,
+        'format': 'manual_draft',
+        'status': 'pools_open',
+        'created_at': datetime.now(timezone.utc).isoformat(),
+        'created_by': claims.get('email'),
+        'manual_draft': {
+            'budget_per_leader': budget_per_leader,
+            'num_pools': num_pools,
+            'picks_per_pool': picks_per_pool,
+            'group_matches_per_tie': group_matches_per_tie,
+            'knockout_matches_per_tie': knockout_matches_per_tie,
+        },
+        'leaders': [],
+        'pools': {
+            'locked': False,
+            'assignments': {p: [] for p in pool_names},
+            'unassigned': member_ids,
+        },
+    }
+    tournaments_table.put_item(Item=item)
+    return _response(200, item)
+
+
+def set_leaders(tournament_id, event, claims):
+    item, err = _draft_get_tournament(tournament_id)
+    if err:
+        return err
+    denied = _authorize_tournament_organizer(item, claims)
+    if denied:
+        return denied
+    if item.get('status') != 'pools_open':
+        return _response(400, {'error': 'leaders can only be set while pools are still open'})
+
+    body = json.loads(event.get('body') or '{}')
+    leader_ids = body.get('leader_ids')
+    if not leader_ids or not isinstance(leader_ids, list):
+        return _response(400, {'error': 'leader_ids (a non-empty list) is required'})
+    if len(set(leader_ids)) != len(leader_ids):
+        return _response(400, {'error': 'a player appears more than once in leader_ids'})
+
+    invalid = [pid for pid in leader_ids if pid not in _draft_everyone(item)]
+    if invalid:
+        return _response(400, {'error': f'these player_ids are not in this tournament: {invalid}'})
+
+    item['leaders'] = leader_ids
+    tournaments_table.put_item(Item=item)
+    return _response(200, item)
+
+
+def add_draft_player(tournament_id, event, claims):
+    """Lets the organizer drop a player into the unassigned tray while
+    pools are still open - typically right after using the existing
+    /register-and-join route (groups/index.py) to create a brand-new
+    profile for someone who isn't in the system yet. No new player-
+    creation logic needed here, this just wires an existing player_id into
+    the pool board."""
+    item, err = _draft_get_tournament(tournament_id)
+    if err:
+        return err
+    denied = _authorize_tournament_organizer(item, claims)
+    if denied:
+        return denied
+    if item.get('status') != 'pools_open':
+        return _response(400, {'error': 'players can only be added while pools are still open'})
+
+    body = json.loads(event.get('body') or '{}')
+    player_id = body.get('player_id')
+    if not player_id:
+        return _response(400, {'error': 'player_id is required'})
+    if not players_table.get_item(Key={'player_id': player_id}).get('Item'):
+        return _response(404, {'error': 'player not found'})
+    if player_id in _draft_everyone(item):
+        return _response(400, {'error': 'that player is already in this tournament'})
+
+    item['pools']['unassigned'].append(player_id)
+    tournaments_table.put_item(Item=item)
+    return _response(200, item)
+
+
+def set_pool_assignment(tournament_id, event, claims):
+    """Full replace of one pool's member list - the simplest, idempotent
+    contract for a drag/tap board that re-sends a pool's whole new
+    membership on every move. Any player moved INTO this pool is
+    automatically removed from wherever they were before (another pool, or
+    the unassigned tray), so every player in _draft_everyone(item) still
+    appears in exactly one place after the write."""
+    item, err = _draft_get_tournament(tournament_id)
+    if err:
+        return err
+    denied = _authorize_tournament_organizer(item, claims)
+    if denied:
+        return denied
+    if item['pools'].get('locked'):
+        return _response(400, {'error': 'pools are already locked'})
+
+    body = json.loads(event.get('body') or '{}')
+    pool = str(body.get('pool', ''))
+    player_ids = body.get('player_ids')
+    if pool not in item['pools']['assignments']:
+        return _response(400, {'error': f'unknown pool: {pool}'})
+    if player_ids is None or not isinstance(player_ids, list):
+        return _response(400, {'error': 'player_ids (a list, may be empty) is required'})
+    if len(set(player_ids)) != len(player_ids):
+        return _response(400, {'error': 'a player appears more than once in this pool'})
+
+    everyone = _draft_everyone(item)
+    invalid = [pid for pid in player_ids if pid not in everyone]
+    if invalid:
+        return _response(400, {'error': f'these player_ids are not part of this tournament: {invalid}'})
+
+    old_list = item['pools']['assignments'][pool]
+    item['pools']['assignments'][pool] = list(player_ids)
+    moved_in = set(player_ids)
+    removed = set(old_list) - moved_in
+
+    # Anyone newly assigned to this pool is stripped out of every other
+    # pool/the unassigned tray, wherever they were before.
+    for name in item['pools']['assignments']:
+        if name == pool:
+            continue
+        item['pools']['assignments'][name] = [pid for pid in item['pools']['assignments'][name] if pid not in moved_in]
+    item['pools']['unassigned'] = [pid for pid in item['pools']['unassigned'] if pid not in moved_in]
+
+    # Anyone who was in this pool but isn't in the new list dropped out of
+    # it - send them back to the unassigned tray (this is how a player
+    # gets un-assigned, not just moved), unless they're somehow already
+    # accounted for elsewhere (shouldn't happen, but don't duplicate them
+    # if so).
+    still_placed = set(item['pools']['unassigned'])
+    for plist in item['pools']['assignments'].values():
+        still_placed.update(plist)
+    for pid in removed:
+        if pid not in still_placed:
+            item['pools']['unassigned'].append(pid)
+
+    tournaments_table.put_item(Item=item)
+    return _response(200, item)
+
+
+def lock_pools(tournament_id, event, claims):
+    item, err = _draft_get_tournament(tournament_id)
+    if err:
+        return err
+    denied = _authorize_tournament_organizer(item, claims)
+    if denied:
+        return denied
+    if item['pools'].get('locked'):
+        return _response(400, {'error': 'pools are already locked'})
+    if item['pools']['unassigned']:
+        return _response(400, {'error': 'every player must be assigned to a pool before locking'})
+    if not item.get('leaders'):
+        return _response(400, {'error': 'set leaders before locking pools'})
+
+    picks_per_pool = item['manual_draft']['picks_per_pool']
+    pool_of = {}
+    for name, plist in item['pools']['assignments'].items():
+        for pid in plist:
+            pool_of[pid] = name
+
+    missing_leaders = [lid for lid in item['leaders'] if lid not in pool_of]
+    if missing_leaders:
+        return _response(400, {'error': f'these leaders are not assigned to a pool: {missing_leaders}'})
+
+    # Cheap early warning, not a hard guarantee: every pool needs enough
+    # non-leader-owned members for every leader who doesn't already belong
+    # to that pool to draft picks_per_pool from it. Leaders competing for
+    # the same players during the actual auction can still leave someone
+    # short later - that's handled at auction time, not here.
+    for name, plist in item['pools']['assignments'].items():
+        leaders_in_pool = sum(1 for lid in item['leaders'] if pool_of.get(lid) == name)
+        leaders_needing_full_quota = len(item['leaders']) - leaders_in_pool
+        available = len(plist) - leaders_in_pool
+        if leaders_needing_full_quota * picks_per_pool > available:
+            return _response(400, {'error': (
+                f'pool {name} does not have enough players for every leader to pick {picks_per_pool} from it '
+                f'(has {available} available, needs {leaders_needing_full_quota * picks_per_pool})'
+            )})
+
+    item['pools']['locked'] = True
+    item['status'] = 'pools_locked'
+    tournaments_table.put_item(Item=item)
+    return _response(200, item)
 
 
 # ---------- reads ----------
