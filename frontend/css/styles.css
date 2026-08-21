@@ -471,6 +471,11 @@
 .draft-chip:active { transform: scale(0.96); }
 .draft-chip.draft-chip-selected { border-color: var(--court); background: var(--court); color: #fff; }
 .draft-chip.draft-chip-leader { border-color: var(--shuttle); font-weight: 700; }
+.draft-chip-remove {
+  border: none; background: transparent; color: var(--text-secondary); cursor: pointer;
+  font-size: 14px; line-height: 1; padding: 0 0 0 2px; margin: 0;
+}
+.draft-chip-remove:hover { color: var(--smash); }
 .draft-leader-banner-row { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0; }
 .draft-leader-banner {
   background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius);

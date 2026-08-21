@@ -7207,7 +7207,10 @@ let userPool = null;
         const el = document.getElementById(id);
         if (el) el.style.display = isManualDraft ? 'none' : (id === 'tournament-participants-section' ? 'block' : el.style.display);
       });
-      document.getElementById('tournament_match_type').closest('label').style.display = isManualDraft ? 'none' : '';
+      // match_type (singles/doubles) is still meaningful for manual-draft
+      // ties - a leader nominates either one player or a pair per match
+      // slot depending on it (see pick-tie-player) - so it stays visible;
+      // pairing_mode only applies to the legacy manual-teams flow.
       document.getElementById('tournament_pairing_mode').closest('label').style.display = isManualDraft ? 'none' : '';
       document.getElementById('tournament_points_to_win').closest('label').style.display = isManualDraft ? 'none' : '';
       document.getElementById('tournament_best_of').closest('label').style.display = isManualDraft ? 'none' : '';
@@ -7381,6 +7384,7 @@ let userPool = null;
         picks_per_pool: document.getElementById('draft_picks_per_pool').value,
         group_matches_per_tie: document.getElementById('draft_group_matches_per_tie').value,
         knockout_matches_per_tie: document.getElementById('draft_knockout_matches_per_tie').value,
+        match_type: document.getElementById('tournament_match_type').value,
       };
       resultEl.textContent = 'Creating...';
       try {
@@ -7549,7 +7553,17 @@ let userPool = null;
       function chip(pid) {
         const isLeader = leaderSet.has(pid);
         const dragAttr = locked ? '' : `draggable="true" ondragstart="draftChipDragStart(event, '${pid}')"`;
-        return `<span class="draft-chip${isLeader ? ' draft-chip-leader' : ''}" data-player-id="${pid}" ${dragAttr} onclick="draftChipTapped('${pid}', event)">${escapeHtml(draftPlayerName(pid))}</span>`;
+        // Not-playing / withdraw control: the organizer (owner/admin) is
+        // often a group member but isn't personally playing - every group
+        // member lands in the roster automatically at tournament creation,
+        // and lock-pools refuses to proceed until everyone is placed
+        // somewhere. Without a way to excuse someone entirely, an organizer
+        // who isn't playing (health reasons, etc) could get permanently
+        // stuck unable to lock pools. The x lets them (or anyone else not
+        // participating) be dropped from the roster while pools are open.
+        const removeBtn = locked ? '' :
+          ` <button type="button" class="draft-chip-remove" title="Not playing - remove from this tournament" onclick="event.stopPropagation(); removeDraftPlayer('${t.tournament_id}', '${pid}')">&times;</button>`;
+        return `<span class="draft-chip${isLeader ? ' draft-chip-leader' : ''}" data-player-id="${pid}" ${dragAttr} onclick="draftChipTapped('${pid}', event)">${escapeHtml(draftPlayerName(pid))}${removeBtn}</span>`;
       }
 
       let html = `<div class="card" style="margin-top:10px;"><h4 style="font-size:14px;margin:0 0 6px;">Pools${locked ? ' (locked)' : ''}</h4>`;
@@ -7670,6 +7684,19 @@ let userPool = null;
       } catch (err) {
         if (statusEl) statusEl.textContent = `Failed: ${err.message}`;
       }
+    }
+
+    async function removeDraftPlayer(tournamentId, playerId) {
+      const statusEl = document.getElementById('draft-pool-status');
+      const name = draftPlayerName(playerId);
+      const ok = await nwConfirm(`Remove ${name} from this tournament? They won't need a pool/leader assignment and won't be draftable.`);
+      if (!ok) return;
+      if (statusEl) statusEl.textContent = 'Removing...';
+      const { res, data, error } = await authedFetch(`${API_BASE_URL}/tournament-draft/${tournamentId}/remove-player`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ player_id: playerId })
+      });
+      if (!res.ok) { if (statusEl) statusEl.textContent = `Error: ${error}`; nwAlert(error || (data && data.error) || 'Could not remove that player'); return; }
+      renderTournament(data);
     }
 
     async function lockDraftPools(tournamentId) {
@@ -8009,6 +8036,7 @@ let userPool = null;
       html += `<button type="button" onclick="generateDraftSchedule('${t.tournament_id}')">Generate schedule</button>
         <div id="draft-generate-schedule-status" class="result"></div>`;
       html += '</div>';
+      html += renderSquadRosterEditPanel(t, true);
       return html;
     }
 
@@ -8019,6 +8047,89 @@ let userPool = null;
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}'
       });
       if (!res.ok) { if (statusEl) statusEl.textContent = `Error: ${error}`; nwAlert(error || (data && data.error) || 'Could not generate the schedule'); return; }
+      renderTournament(data);
+    }
+
+    /* ---------- squad roster editing (not a hard stop) ----------
+     * Two organizer-only actions, layered on top of the existing squads:
+     * moving a picked (non-leader) player to a different squad - only
+     * coherent BEFORE a schedule exists, since afterward ties already
+     * reference squad_a/squad_b - and substituting a squad member for a
+     * brand-new replacement, which is safe at any point from squads_locked
+     * through knockout (real injury/unavailability substitution). Both
+     * routes are server-enforced organizer-only/phase-gated, so - matching
+     * this app's existing convention for organizer actions (e.g. "Lock
+     * pools", "Generate schedule") - the controls render for any viewer and
+     * a non-organizer simply gets the resulting 403 back as an alert. */
+    function renderSquadRosterEditPanel(t, allowMove) {
+      const squads = t.squads || {};
+      const squadIds = Object.keys(squads);
+      if (squadIds.length < 2) return '';
+      const pickedOptions = [];
+      squadIds.forEach(sid => {
+        (squads[sid].members || []).forEach(pid => {
+          if (pid === sid) return; // leaders can't be moved or substituted out
+          pickedOptions.push(`<option value="${pid}" data-squad="${sid}">${escapeHtml(draftPlayerName(pid))} (${escapeHtml(squads[sid].name)})</option>`);
+        });
+      });
+      if (!pickedOptions.length) return '';
+      const onSquadIds = new Set();
+      squadIds.forEach(sid => (squads[sid].members || []).forEach(pid => onSquadIds.add(pid)));
+      const freeAgentOptions = allPlayers.filter(p => !onSquadIds.has(p.player_id))
+        .map(p => `<option value="${p.player_id}">${escapeHtml(p.name)}</option>`).join('');
+
+      let html = '<div class="card" style="margin-top:10px;"><h4 style="font-size:14px;margin:0 0 6px;">Edit squads</h4>';
+      if (allowMove) {
+        const squadOptions = squadIds.map(sid => `<option value="${sid}">${escapeHtml(squads[sid].name)}</option>`).join('');
+        html += `<p class="card-sub" style="margin:0 0 4px;">Move a player to a different squad (before the schedule is generated).</p>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:10px;">
+            <select id="squad-move-player">${pickedOptions.join('')}</select>
+            <span>&rarr;</span>
+            <select id="squad-move-target">${squadOptions}</select>
+            <button type="button" class="secondary" onclick="moveSquadPlayer('${t.tournament_id}')">Move</button>
+          </div>`;
+      }
+      html += `<p class="card-sub" style="margin:0 0 4px;">Substitute a squad member for a new player (injury, unavailable, etc) - not on any squad already.</p>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
+          <select id="squad-sub-player">${pickedOptions.join('')}</select>
+          <span>&rarr;</span>
+          <select id="squad-sub-new">${freeAgentOptions || '<option value="">- no eligible replacement players -</option>'}</select>
+          <button type="button" class="secondary" onclick="substituteSquadPlayer('${t.tournament_id}')">Substitute</button>
+        </div>
+        <div id="squad-roster-edit-status" class="result"></div>
+      </div>`;
+      return html;
+    }
+
+    async function moveSquadPlayer(tournamentId) {
+      const playerSel = document.getElementById('squad-move-player');
+      const targetSel = document.getElementById('squad-move-target');
+      const statusEl = document.getElementById('squad-roster-edit-status');
+      if (!playerSel || !playerSel.value) { if (statusEl) statusEl.textContent = 'Pick a player to move.'; return; }
+      if (statusEl) statusEl.textContent = 'Moving...';
+      const { res, data, error } = await authedFetch(`${API_BASE_URL}/tournament-draft/${tournamentId}/move-squad-player`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ player_id: playerSel.value, to_squad_id: targetSel.value })
+      });
+      if (!res.ok) { if (statusEl) statusEl.textContent = `Error: ${error}`; nwAlert(error || (data && data.error) || 'Could not move that player'); return; }
+      renderTournament(data);
+    }
+
+    async function substituteSquadPlayer(tournamentId) {
+      const playerSel = document.getElementById('squad-sub-player');
+      const newSel = document.getElementById('squad-sub-new');
+      const statusEl = document.getElementById('squad-roster-edit-status');
+      if (!playerSel || !playerSel.value) { if (statusEl) statusEl.textContent = 'Pick a player to substitute out.'; return; }
+      if (!newSel || !newSel.value) { if (statusEl) statusEl.textContent = 'Pick a replacement player.'; return; }
+      const squadId = playerSel.selectedOptions[0].dataset.squad;
+      const ok = await nwConfirm(`Substitute ${draftPlayerName(playerSel.value)} out for ${draftPlayerName(newSel.value)}? Any not-yet-played match they were already picked for will need a new lineup pick.`);
+      if (!ok) return;
+      if (statusEl) statusEl.textContent = 'Substituting...';
+      const { res, data, error } = await authedFetch(`${API_BASE_URL}/tournament-draft/${tournamentId}/substitute-squad-player`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ squad_id: squadId, old_player_id: playerSel.value, new_player_id: newSel.value })
+      });
+      if (!res.ok) { if (statusEl) statusEl.textContent = `Error: ${error}`; nwAlert(error || (data && data.error) || 'Could not substitute that player'); return; }
       renderTournament(data);
     }
 
@@ -8053,6 +8164,7 @@ let userPool = null;
         if (t.knockout.third_place_match) html += renderTieSection('Third place', [t.knockout.third_place_match], t, 'knockout');
       }
       if (t.player_tournament_stats && t.player_tournament_stats.length) html += renderPlayerTournamentStatsTable(t.player_tournament_stats);
+      if (t.status !== 'completed') html += renderSquadRosterEditPanel(t, false); // substitution only - moving between squads no longer makes sense once ties exist
       return html;
     }
 
@@ -8110,16 +8222,17 @@ let userPool = null;
     function renderTieMatchRow(tie, m, idx, t, stageKind, iLeadA, iLeadB) {
       const squadAMembers = ((t.squads || {})[tie.squad_a] || {}).members || [];
       const squadBMembers = ((t.squads || {})[tie.squad_b] || {}).members || [];
+      const matchType = (t.manual_draft || {}).match_type || 'singles';
       let aCell, bCell;
       if (m.played) {
         aCell = escapeHtml(m.player_a.name);
         bCell = escapeHtml(m.player_b.name);
       } else {
         aCell = iLeadA
-          ? draftPlayerPickerHtml(t.tournament_id, tie.tie_id, idx, squadAMembers, m.player_a)
+          ? draftPlayerPickerHtml(t.tournament_id, tie.tie_id, idx, squadAMembers, m.player_a, matchType)
           : (m.player_a ? escapeHtml(m.player_a.name) : '<span class="card-sub">TBD</span>');
         bCell = iLeadB
-          ? draftPlayerPickerHtml(t.tournament_id, tie.tie_id, idx, squadBMembers, m.player_b)
+          ? draftPlayerPickerHtml(t.tournament_id, tie.tie_id, idx, squadBMembers, m.player_b, matchType)
           : (m.player_b ? escapeHtml(m.player_b.name) : '<span class="card-sub">TBD</span>');
       }
       let scoreCell;
@@ -8143,7 +8256,21 @@ let userPool = null;
       </div>`;
     }
 
-    function draftPlayerPickerHtml(tournamentId, tieId, matchIndex, members, currentEntity) {
+    function draftPlayerPickerHtml(tournamentId, tieId, matchIndex, members, currentEntity, matchType) {
+      if (matchType === 'doubles') {
+        // Doubles needs two players nominated together, not one at a time -
+        // two selects plus an explicit "Set pair" button (rather than firing
+        // on every onchange, which would submit a lopsided/incomplete pair).
+        const current = (currentEntity && currentEntity.members) || [];
+        const opts = (selected) => members.map(pid =>
+          `<option value="${pid}" ${pid === selected ? 'selected' : ''}>${escapeHtml(draftPlayerName(pid))}</option>`).join('');
+        const uid = `${tieId}-${matchIndex}`;
+        return `<div style="display:flex;gap:4px;flex-wrap:wrap;align-items:center;">
+          <select id="tie-pair-1-${uid}"><option value="">- player 1 -</option>${opts(current[0])}</select>
+          <select id="tie-pair-2-${uid}"><option value="">- player 2 -</option>${opts(current[1])}</select>
+          <button type="button" class="secondary" onclick="pickTiePlayerPair('${tournamentId}','${tieId}',${matchIndex})">Set pair</button>
+        </div>`;
+      }
       const currentId = currentEntity ? currentEntity.player_id : '';
       let html = `<select onchange="pickTiePlayer('${tournamentId}','${tieId}',${matchIndex}, this.value)"><option value="">- pick -</option>`;
       members.forEach(pid => {
@@ -8160,6 +8287,20 @@ let userPool = null;
         body: JSON.stringify({ tie_id: tieId, match_index: matchIndex, player_id: playerId })
       });
       if (!res.ok) { nwAlert(error || (data && data.error) || 'Could not set that lineup pick'); return; }
+      renderTournament(data);
+    }
+
+    async function pickTiePlayerPair(tournamentId, tieId, matchIndex) {
+      const uid = `${tieId}-${matchIndex}`;
+      const p1 = document.getElementById(`tie-pair-1-${uid}`);
+      const p2 = document.getElementById(`tie-pair-2-${uid}`);
+      if (!p1 || !p1.value || !p2 || !p2.value) { nwAlert('Pick both players for the pair first.'); return; }
+      if (p1.value === p2.value) { nwAlert('Pick two different players for the pair.'); return; }
+      const { res, data, error } = await authedFetch(`${API_BASE_URL}/tournament-draft/${tournamentId}/pick-tie-player`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tie_id: tieId, match_index: matchIndex, player_ids: [p1.value, p2.value] })
+      });
+      if (!res.ok) { nwAlert(error || (data && data.error) || 'Could not set that lineup pair'); return; }
       renderTournament(data);
     }
 

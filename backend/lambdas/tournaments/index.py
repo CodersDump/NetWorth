@@ -516,6 +516,8 @@ def handle_draft_route(event):
         return set_leaders(tournament_id, event, claims)
     if len(parts) == 2 and parts[1] == 'add-player' and method == 'POST':
         return add_draft_player(tournament_id, event, claims)
+    if len(parts) == 2 and parts[1] == 'remove-player' and method == 'POST':
+        return remove_draft_player(tournament_id, event, claims)
     if len(parts) == 2 and parts[1] == 'pools' and method == 'PUT':
         return set_pool_assignment(tournament_id, event, claims)
     if len(parts) == 2 and parts[1] == 'lock-pools' and method == 'POST':
@@ -536,6 +538,10 @@ def handle_draft_route(event):
         return get_draft_state(tournament_id, event, claims)
     if len(parts) == 2 and parts[1] == 'generate-schedule' and method == 'POST':
         return generate_schedule(tournament_id, event, claims)
+    if len(parts) == 2 and parts[1] == 'move-squad-player' and method == 'POST':
+        return move_squad_player(tournament_id, event, claims)
+    if len(parts) == 2 and parts[1] == 'substitute-squad-player' and method == 'POST':
+        return substitute_squad_player(tournament_id, event, claims)
     if len(parts) == 2 and parts[1] == 'pick-tie-player' and method == 'POST':
         return pick_tie_player(tournament_id, event, claims)
     if len(parts) == 2 and parts[1] == 'group-tie-score' and method == 'POST':
@@ -596,6 +602,10 @@ def create_manual_draft_tournament(event, claims):
         return _response(400, {'error': 'budget_per_leader, num_pools, picks_per_pool, group_matches_per_tie, '
                                          'knockout_matches_per_tie must be numbers'})
 
+    match_type = body.get('match_type', 'singles')
+    if match_type not in ('singles', 'doubles'):
+        return _response(400, {'error': "match_type must be 'singles' or 'doubles'"})
+
     if num_pools < 2:
         return _response(400, {'error': 'num_pools must be at least 2'})
     if picks_per_pool < 1:
@@ -625,6 +635,7 @@ def create_manual_draft_tournament(event, claims):
             'picks_per_pool': picks_per_pool,
             'group_matches_per_tie': group_matches_per_tie,
             'knockout_matches_per_tie': knockout_matches_per_tie,
+            'match_type': match_type,
         },
         'leaders': [],
         'pools': {
@@ -689,6 +700,44 @@ def add_draft_player(tournament_id, event, claims):
         return _response(400, {'error': 'that player is already in this tournament'})
 
     item['pools']['unassigned'].append(player_id)
+    tournaments_table.put_item(Item=item)
+    return _response(200, item)
+
+
+def remove_draft_player(tournament_id, event, claims):
+    """The inverse of add_draft_player: drops someone out of this
+    tournament's playing roster entirely, from wherever they currently sit
+    (the unassigned tray or a pool). Every group member lands in
+    pools.unassigned automatically when the tournament is created, and
+    lock_pools refuses to proceed until that tray is empty - with no way to
+    take someone out, an organizer who is the group owner/admin but isn't
+    personally playing (injury, health reasons, etc) has no way to get
+    themselves - or anyone else who isn't participating - out of that
+    required roster, and locking pools gets permanently stuck. This lets
+    the organizer explicitly excuse a member from the roster while pools
+    are still being formed."""
+    item, err = _draft_get_tournament(tournament_id)
+    if err:
+        return err
+    denied = _authorize_tournament_organizer(item, claims)
+    if denied:
+        return denied
+    if item.get('status') != 'pools_open':
+        return _response(400, {'error': 'players can only be removed while pools are still open'})
+
+    body = json.loads(event.get('body') or '{}')
+    player_id = body.get('player_id')
+    if not player_id:
+        return _response(400, {'error': 'player_id is required'})
+    if player_id not in _draft_everyone(item):
+        return _response(400, {'error': 'that player is not part of this tournament'})
+    if player_id in (item.get('leaders') or []):
+        return _response(400, {'error': 'this player is a leader - remove them from leaders first'})
+
+    item['pools']['unassigned'] = [pid for pid in item['pools']['unassigned'] if pid != player_id]
+    for name in item['pools']['assignments']:
+        item['pools']['assignments'][name] = [pid for pid in item['pools']['assignments'][name] if pid != player_id]
+
     tournaments_table.put_item(Item=item)
     return _response(200, item)
 
@@ -1307,7 +1356,12 @@ def _score_tie_match(item, tie, match_index, score_a, score_b, override, point_l
         total_a = sum(g['score_a'] for g in match['games'])
         total_b = sum(g['score_b'] for g in match['games'])
         winner = 'A' if match['games_won_a'] > match['games_won_b'] else 'B'
-        update_elo_and_log('singles', match['player_a'], match['player_b'], total_a, total_b,
+        # match_type comes from the tournament's own manual_draft config, not
+        # a hardcoded 'singles' - a doubles-configured tournament nominates
+        # player pairs (see pick_tie_player) and needs the doubles K-factor/
+        # pairing-count Elo path in update_elo_and_log, not the singles one.
+        match_type = item.get('manual_draft', {}).get('match_type', 'singles')
+        update_elo_and_log(match_type, match['player_a'], match['player_b'], total_a, total_b,
                             item['group_id'], item['tournament_id'], stage_label,
                             winner_override=winner, games=match['games'], point_log=point_log)
         _update_tie_progress(tie)
@@ -1391,20 +1445,44 @@ def compute_player_tournament_scores(item):
         if not m['played'] or not m.get('player_a') or not m.get('player_b'):
             return
         a, b = m['player_a'], m['player_b']
-        sa = touch(a['player_id'], a.get('name', a['player_id']))
-        sb = touch(b['player_id'], b.get('name', b['player_id']))
         total_a = sum(g['score_a'] for g in m['games'])
         total_b = sum(g['score_b'] for g in m['games'])
-        sa['matches_played'] += 1
-        sb['matches_played'] += 1
-        sa['point_diff'] += (total_a - total_b)
-        sb['point_diff'] += (total_b - total_a)
-        if m['winner_id'] == a['player_id']:
-            sa['wins'] += 1
-            sb['losses'] += 1
-        elif m['winner_id'] == b['player_id']:
-            sb['wins'] += 1
-            sa['losses'] += 1
+        a_won = m['winner_id'] == a['player_id']
+        b_won = m['winner_id'] == b['player_id']
+
+        def member_names(entity):
+            # a doubles pair entity's own 'name' is "X & Y" - split it back
+            # out per-member when the shape matches, so individual players
+            # get their own name in the tournament-scoped leaderboard rather
+            # than the pair's combined label; falls back to the player_id.
+            members = entity.get('members', [entity['player_id']])
+            parts = entity.get('name', '').split(' & ')
+            if len(members) == len(parts):
+                return dict(zip(members, parts))
+            return {pid: pid for pid in members}
+
+        # a/b are "entities" - a single player for a singles tournament, or a
+        # synthetic pair {player_id: <pair uuid>, members: [p1, p2]} for a
+        # doubles one (see pick_tie_player/build doubles entity). Either way,
+        # credit belongs to the real player_ids in `members`, not the pair's
+        # own synthetic id - matches how update_elo_and_log already resolves
+        # entity.get('members', [entity['player_id']]) for Elo.
+        for pid, nm in member_names(a).items():
+            s = touch(pid, nm)
+            s['matches_played'] += 1
+            s['point_diff'] += (total_a - total_b)
+            if a_won:
+                s['wins'] += 1
+            elif b_won:
+                s['losses'] += 1
+        for pid, nm in member_names(b).items():
+            s = touch(pid, nm)
+            s['matches_played'] += 1
+            s['point_diff'] += (total_b - total_a)
+            if b_won:
+                s['wins'] += 1
+            elif a_won:
+                s['losses'] += 1
 
     for tie in (item.get('group_stage') or {}).get('ties', []):
         for m in tie.get('matches', []):
@@ -1421,6 +1499,140 @@ def compute_player_tournament_scores(item):
     result = list(stats.values())
     result.sort(key=lambda s: (-s['wins'], -s['point_diff']))
     return result
+
+
+def move_squad_player(tournament_id, event, claims):
+    """Organizer-only roster rebalancing between two squads, before the
+    schedule exists - the auction is over, so there's no budget bookkeeping
+    to touch, just a plain roster move. Restricted to squads_locked only:
+    once ties are generated they reference squad_a/squad_b by id, and
+    moving a player to a DIFFERENT squad mid-tournament would change who's
+    on which side of an already-scheduled fixture, which isn't coherent -
+    substitute_squad_player (below) is the right tool once matches exist."""
+    item, err = _draft_get_tournament(tournament_id)
+    if err:
+        return err
+    denied = _authorize_tournament_organizer(item, claims)
+    if denied:
+        return denied
+    if item.get('status') != 'squads_locked':
+        return _response(400, {'error': 'squads can only be rebalanced after the auction, before the schedule is generated'})
+
+    body = json.loads(event.get('body') or '{}')
+    player_id = body.get('player_id')
+    to_squad_id = body.get('to_squad_id')
+    if not player_id or not to_squad_id:
+        return _response(400, {'error': 'player_id and to_squad_id are required'})
+
+    squads = item.get('squads') or {}
+    if to_squad_id not in squads:
+        return _response(400, {'error': 'unknown to_squad_id'})
+    if player_id in squads:
+        return _response(400, {'error': 'a squad leader cannot be moved to another squad'})
+
+    from_squad_id = next((sid for sid, sq in squads.items() if player_id in sq.get('members', [])), None)
+    if not from_squad_id:
+        return _response(400, {'error': 'that player is not a member of any squad'})
+    if from_squad_id == to_squad_id:
+        return _response(400, {'error': 'that player is already on this squad'})
+
+    from_squad, to_squad = squads[from_squad_id], squads[to_squad_id]
+    idx = from_squad['members'].index(player_id)
+    from_squad['members'].pop(idx)
+    rating = from_squad.get('member_ratings', []).pop(idx) if idx < len(from_squad.get('member_ratings', [])) else 1000
+    to_squad['members'].append(player_id)
+    to_squad.setdefault('member_ratings', []).append(rating)
+
+    tournaments_table.put_item(Item=item)
+    return _response(200, item)
+
+
+def substitute_squad_player(tournament_id, event, claims):
+    """Organizer-only real substitution for a manual-draft squad: swaps a
+    current squad member out for a brand-new replacement who isn't already
+    on any squad. Unlike move_squad_player, this doesn't touch which two
+    squads are facing each other, so it's safe at any point up to
+    'completed' - injury/unavailability mid-tournament is exactly the
+    'hard stop' the owner reported (substitute_player flatly rejects every
+    manual-draft tournament). Any FUTURE unplayed match slot where the
+    outgoing player was already (but not yet) nominated is cleared back to
+    None so the leader is prompted to re-pick - already-PLAYED matches keep
+    their recorded player snapshot untouched, exactly like the legacy
+    substitute_player's own "don't touch history" behavior."""
+    item, err = _draft_get_tournament(tournament_id)
+    if err:
+        return err
+    denied = _authorize_tournament_organizer(item, claims)
+    if denied:
+        return denied
+    if item.get('status') not in ('squads_locked', 'group_stage', 'knockout'):
+        return _response(400, {'error': 'squad substitution is only available from squads_locked through knockout'})
+
+    body = json.loads(event.get('body') or '{}')
+    squad_id = body.get('squad_id')
+    old_player_id = body.get('old_player_id')
+    new_player_id = body.get('new_player_id')
+    if not squad_id or not old_player_id or not new_player_id:
+        return _response(400, {'error': 'squad_id, old_player_id, new_player_id are required'})
+    if old_player_id == new_player_id:
+        return _response(400, {'error': 'old_player_id and new_player_id must be different'})
+
+    squads = item.get('squads') or {}
+    squad = squads.get(squad_id)
+    if not squad:
+        return _response(400, {'error': 'unknown squad_id'})
+    if old_player_id not in squad.get('members', []):
+        return _response(400, {'error': 'that player is not a member of this squad'})
+    if old_player_id == squad_id:
+        return _response(400, {'error': 'the squad leader cannot be substituted out - only picked members can be'})
+
+    everyone_on_a_squad = {pid for sq in squads.values() for pid in sq.get('members', [])}
+    if new_player_id in everyone_on_a_squad:
+        return _response(400, {'error': 'that replacement is already a member of a squad in this tournament'})
+    new_player = players_table.get_item(Key={'player_id': new_player_id}).get('Item')
+    if not new_player:
+        return _response(404, {'error': 'replacement player not found'})
+
+    idx = squad['members'].index(old_player_id)
+    squad['members'][idx] = new_player_id
+    if idx < len(squad.get('member_ratings', [])):
+        squad['member_ratings'][idx] = new_player.get('rating', 1000)
+
+    # Any not-yet-played match slot where the outgoing player was already
+    # nominated is no longer valid - clear it back to None (leaving the
+    # slot picked but unplayed would let a player who has left the squad
+    # still take the court). Walk every tie this squad appears in.
+    cleared = 0
+
+    def clear_pending(tie):
+        nonlocal cleared
+        if squad_id not in (tie.get('squad_a'), tie.get('squad_b')):
+            return
+        side_key = 'player_a' if tie.get('squad_a') == squad_id else 'player_b'
+        for m in tie.get('matches', []):
+            if m['played']:
+                continue
+            entity = m.get(side_key)
+            if entity and old_player_id in entity.get('members', [entity.get('player_id')]):
+                m[side_key] = None
+                cleared += 1
+
+    for tie in (item.get('group_stage') or {}).get('ties', []):
+        clear_pending(tie)
+    for rnd in (item.get('knockout') or {}).get('rounds', []):
+        for tie in rnd:
+            clear_pending(tie)
+    tpm = (item.get('knockout') or {}).get('third_place_match')
+    if tpm:
+        clear_pending(tpm)
+
+    item.setdefault('squad_substitutions', []).append({
+        'squad_id': squad_id, 'old_player_id': old_player_id, 'new_player_id': new_player_id,
+        'at': datetime.now(timezone.utc).isoformat(), 'by': claims.get('email'), 'pending_slots_cleared': cleared,
+    })
+
+    tournaments_table.put_item(Item=item)
+    return _response(200, item)
 
 
 def generate_schedule(tournament_id, event, claims):
@@ -1460,9 +1672,18 @@ def pick_tie_player(tournament_id, event, claims):
     body = json.loads(event.get('body') or '{}')
     tie_id = body.get('tie_id')
     match_index = body.get('match_index')
-    player_id = body.get('player_id')
-    if not tie_id or match_index is None or not player_id:
-        return _response(400, {'error': 'tie_id, match_index, player_id are required'})
+    # Singles tournaments send a single player_id; doubles ones send a
+    # player_ids pair (see manual_draft.match_type, set at creation). Accept
+    # either shape here and normalize to a list so the validation below is
+    # written once, not duplicated per match_type.
+    if body.get('player_ids') is not None:
+        player_ids = body.get('player_ids')
+    elif body.get('player_id'):
+        player_ids = [body.get('player_id')]
+    else:
+        player_ids = None
+    if not tie_id or match_index is None or not player_ids or not isinstance(player_ids, list):
+        return _response(400, {'error': 'tie_id, match_index, and player_id (or player_ids for doubles) are required'})
 
     tie = _find_tie(item, tie_id)
     if not tie:
@@ -1485,12 +1706,33 @@ def pick_tie_player(tournament_id, event, claims):
     else:
         return _response(403, {'error': "only this tie's two squad leaders can set their own lineup"})
 
-    squad = (item.get('squads') or {}).get(caller_pid)
-    if not squad or player_id not in squad.get('members', []):
-        return _response(400, {'error': 'that player is not a member of your squad'})
+    match_type = item.get('manual_draft', {}).get('match_type', 'singles')
+    expected_size = 2 if match_type == 'doubles' else 1
+    if len(player_ids) != expected_size:
+        return _response(400, {'error': f'this is a {match_type} tournament - nominate exactly {expected_size} '
+                                         f'player{"s" if expected_size > 1 else ""}'})
+    if len(set(player_ids)) != len(player_ids):
+        return _response(400, {'error': 'the same player cannot be nominated twice for one match'})
 
-    player = players_table.get_item(Key={'player_id': player_id}).get('Item')
-    entity = {'player_id': player_id, 'name': player['name'] if player else player_id}
+    squad = (item.get('squads') or {}).get(caller_pid)
+    squad_members = squad.get('members', []) if squad else []
+    not_in_squad = [pid for pid in player_ids if pid not in squad_members]
+    if not_in_squad:
+        return _response(400, {'error': f'these players are not members of your squad: {not_in_squad}'})
+
+    players = [players_table.get_item(Key={'player_id': pid}).get('Item') for pid in player_ids]
+    if match_type == 'doubles':
+        p1, p2 = players
+        entity = {
+            'player_id': str(uuid.uuid4()),
+            'name': f"{p1['name'] if p1 else player_ids[0]} & {p2['name'] if p2 else player_ids[1]}",
+            'members': player_ids,
+            'member_ratings': [(p.get('rating', 1000) if p else 1000) for p in players],
+        }
+    else:
+        p = players[0]
+        entity = {'player_id': player_ids[0], 'name': p['name'] if p else player_ids[0],
+                   'members': [player_ids[0]], 'member_ratings': [p.get('rating', 1000) if p else 1000]}
     if side == 'a':
         match['player_a'] = entity
     else:
