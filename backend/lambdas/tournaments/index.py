@@ -174,6 +174,27 @@ def _authorize_tournament_organizer(item, claims):
     return None
 
 
+def _authorize_pool_auction_viewer(item, claims):
+    """Who may see pool assignments / auction budgets & bids for a
+    manual-draft tournament (owner request: this must never reach the
+    public, unauthenticated GET /tournaments/{id} - anyone browsing
+    tournaments could otherwise see who's in which pool and every leader's
+    remaining budget/bid history - see _redact_pool_auction_detail, which
+    strips both from that route unconditionally). During the live
+    pool-forming/auction phase: organizer (SuperAdmin or group owner/admin)
+    OR any of this tournament's leaders - leaders need this to do their
+    job live. Once that phase has passed (squads_locked onward): organizer
+    only, by the owner's explicit choice - a leader who isn't also the
+    organizer no longer has access either."""
+    if _authorize_tournament_organizer(item, claims) is None:
+        return None
+    if item.get('status') in ('pools_open', 'pools_locked', 'auction'):
+        caller_pid = claims.get('custom:player_id')
+        if caller_pid and caller_pid in (item.get('leaders') or []):
+            return None
+    return _response(403, {'error': "you do not have access to this tournament's pool/auction detail"})
+
+
 def create_tournament_enforced(event):
     if not _caller_claims(event):
         return _response(403, {'error': 'log in to create a tournament'})
@@ -489,6 +510,8 @@ def handle_draft_route(event):
         return _response(404, {'error': 'not found'})
 
     tournament_id = parts[0]
+    if len(parts) == 1 and method == 'GET':
+        return get_draft_sensitive_detail(tournament_id, event, claims)
     if len(parts) == 2 and parts[1] == 'leaders' and method == 'POST':
         return set_leaders(tournament_id, event, claims)
     if len(parts) == 2 and parts[1] == 'add-player' and method == 'POST':
@@ -1106,16 +1129,15 @@ def skip_lot(tournament_id, event, claims):
 
 def get_draft_state(tournament_id, event, claims):
     """The polling endpoint - a small payload (no bid_history/full item)
-    since leaders' clients hit this every ~1.75s while a lot is open."""
+    since leaders' clients hit this every ~1.75s while a lot is open. Same
+    "organizer, or a leader only while the phase is live" rule as every
+    other pool/auction-detail read - see _authorize_pool_auction_viewer."""
     item, err = _draft_get_tournament(tournament_id)
     if err:
         return err
-    caller_pid = claims.get('custom:player_id')
-    is_leader = bool(caller_pid) and caller_pid in (item.get('leaders') or [])
-    if not is_leader:
-        denied = _authorize_tournament_organizer(item, claims)
-        if denied:
-            return denied
+    denied = _authorize_pool_auction_viewer(item, claims)
+    if denied:
+        return denied
     draft = item.get('draft')
     if not draft:
         return _response(400, {'error': 'the auction has not started yet'})
@@ -1129,6 +1151,25 @@ def get_draft_state(tournament_id, event, claims):
         'decided_count': len(decided),
         'unsold_count': len(draft.get('unsold', [])),
     })
+
+
+def get_draft_sensitive_detail(tournament_id, event, claims):
+    """The privileged counterpart to the public GET /tournaments/{id},
+    which now always redacts pools/draft for manual-draft tournaments (see
+    _redact_pool_auction_detail) - this Cognito-gated route is the only
+    place that data is ever served from, and only to whoever
+    _authorize_pool_auction_viewer allows. The frontend calls this
+    alongside the public read and merges the result in when it succeeds,
+    silently keeping the redacted stub on a 403 (that's the normal,
+    expected outcome for anyone who isn't the organizer or, while their
+    phase is live, a leader)."""
+    item, err = _draft_get_tournament(tournament_id)
+    if err:
+        return err
+    denied = _authorize_pool_auction_viewer(item, claims)
+    if denied:
+        return denied
+    return _response(200, {'pools': item.get('pools'), 'draft': item.get('draft')})
 
 
 # ---------- manual draft mode: tie-based schedule (Phase C) ----------
@@ -1151,6 +1192,14 @@ def get_draft_state(tournament_id, event, claims):
 # a knockout tie-bracket seeds from squad standings automatically.
 
 def build_tie(squad_a_id, squad_b_id, matches_per_tie):
+    # matches_per_tie usually arrives fresh out of item['manual_draft'] or
+    # item['knockout'] - DynamoDB round-trips every stored number as
+    # decimal.Decimal, not int, so range() below would raise "'Decimal'
+    # object cannot be interpreted as an integer" the moment this ran
+    # against a real table (the FakeTable test harness never round-trips
+    # through Decimal, which is why this went unnoticed until now). Cast
+    # defensively here rather than trusting every caller to remember to.
+    matches_per_tie = int(matches_per_tie)
     return {
         'tie_id': str(uuid.uuid4()),
         'squad_a': squad_a_id,
@@ -1388,7 +1437,7 @@ def generate_schedule(tournament_id, event, claims):
     if len(squad_ids) < 2:
         return _response(400, {'error': 'need at least 2 squads to generate a schedule'})
 
-    matches_per_tie = item['manual_draft']['group_matches_per_tie']
+    matches_per_tie = int(item['manual_draft']['group_matches_per_tie'])
     item['group_stage'] = {'matches_per_tie': matches_per_tie, 'ties': build_tie_round_robin(squad_ids, matches_per_tie)}
     item['status'] = 'group_stage'
     tournaments_table.put_item(Item=item)
@@ -1448,13 +1497,13 @@ def pick_tie_player(tournament_id, event, claims):
         match['player_b'] = entity
 
     tournaments_table.put_item(Item=item)
-    return _response(200, item)
+    return _response(200, _hide_pool_auction_from_non_organizer(item, claims))
 
 
 def _generate_knockout_from_group_stage(item):
     standings = compute_squad_standings(item)
     seeded_squad_ids = [s['squad_id'] for s in standings]
-    matches_per_tie = item['manual_draft']['knockout_matches_per_tie']
+    matches_per_tie = int(item['manual_draft']['knockout_matches_per_tie'])
     item['knockout'] = {'matches_per_tie': matches_per_tie, 'rounds': [build_knockout_tie_round(seeded_squad_ids, matches_per_tie)]}
     item['status'] = 'knockout'
 
@@ -1493,7 +1542,7 @@ def record_group_tie_score(tournament_id, event, claims):
         _generate_knockout_from_group_stage(item)
 
     tournaments_table.put_item(Item=item)
-    return _response(200, item)
+    return _response(200, _hide_pool_auction_from_non_organizer(item, claims))
 
 
 def _advance_knockout_ties_if_round_complete(item):
@@ -1510,7 +1559,7 @@ def _advance_knockout_ties_if_round_complete(item):
         item['champion_squad_id'] = current_round[0]['winner_squad_id']
         return
 
-    matches_per_tie = item['knockout'].get('matches_per_tie', 1)
+    matches_per_tie = int(item['knockout'].get('matches_per_tie', 1))
     winners = [t['winner_squad_id'] for t in current_round]
     rounds.append(build_knockout_tie_round(winners, matches_per_tie))
 
@@ -1557,7 +1606,7 @@ def record_knockout_tie_score(tournament_id, event, claims):
         _advance_knockout_ties_if_round_complete(item)
 
     tournaments_table.put_item(Item=item)
-    return _response(200, item)
+    return _response(200, _hide_pool_auction_from_non_organizer(item, claims))
 
 
 # ---------- reads ----------
@@ -1586,6 +1635,43 @@ def list_tournaments(event):
     return _response(200, {'tournaments': result})
 
 
+def _redact_pool_auction_detail(item):
+    """GET /tournaments/{id} is unauthenticated - literally anyone browsing
+    tournaments can call it, so pool assignments and auction budgets/bids
+    can never be safely returned here (owner request: keep both restricted
+    to the organizer, and to leaders only while their phase is live - see
+    _authorize_pool_auction_viewer). Replaces both with a minimal stub and
+    returns a NEW item dict - deliberately does not mutate the dict it was
+    given, since that dict may be the exact object a DynamoDB SDK stub (or,
+    in principle, a future caching layer) hands back by reference rather
+    than a fresh copy; mutating it in place would risk silently wiping the
+    real pool/auction data out from under any other in-flight read. The
+    Cognito-gated GET /tournament-draft/{id} (get_draft_sensitive_detail)
+    is the only route that ever returns the real thing."""
+    redacted = dict(item)
+    pools = item.get('pools')
+    if pools is not None:
+        redacted['pools'] = {'locked': pools.get('locked', False), 'redacted': True}
+    draft = item.get('draft')
+    if draft is not None:
+        redacted['draft'] = {'status': draft.get('status'), 'redacted': True}
+    return redacted
+
+
+def _hide_pool_auction_from_non_organizer(item, claims):
+    """pick_tie_player/record_group_tie_score/record_knockout_tie_score are
+    reachable by a tie's own leader (not just the organizer) - but only
+    ever once the pool/auction phase has already passed (their own status
+    checks guarantee that). Per _authorize_pool_auction_viewer, a leader's
+    access to pools/draft expires the moment that phase passes, so their
+    action responses here must not hand the real thing back either -
+    otherwise the browser's network tab would leak it even though no UI
+    ever renders it. Organizer callers still get it back unredacted."""
+    if _authorize_tournament_organizer(item, claims) is None:
+        return item
+    return _redact_pool_auction_detail(item)
+
+
 def get_tournament(tournament_id):
     item = tournaments_table.get_item(Key={'tournament_id': tournament_id}).get('Item')
     if not item:
@@ -1598,6 +1684,8 @@ def get_tournament(tournament_id):
         # computed from.
         item['squad_standings'] = compute_squad_standings(item)
         item['player_tournament_stats'] = compute_player_tournament_scores(item)
+    if item.get('format') == 'manual_draft':
+        item = _redact_pool_auction_detail(item)
     return _response(200, item)
 
 
