@@ -88,7 +88,7 @@ of `{proxy+}` at the same parent — that constraint drives most of the odd rout
 | ANY `/profile-secure/{proxy+}` | matches | COGNITO | Gated profile-data catch-all |
 | POST `/create-tournament` | tournaments | COGNITO | Create tournament |
 | GET/DELETE `/tournaments` `/tournaments/{proxy+}` | tournaments | NONE | List/get/delete + score submission |
-| ANY `/tournament-draft` `/tournament-draft/{proxy+}` | tournaments | COGNITO | Manual-draft mode: leaders, pool board (Phase A); auction (`start-auction`/`open-lot`/`bid`/`close-lot`/`skip-lot`/`state`, Phase B); tie-based schedule (`generate-schedule`/`pick-tie-player`/`group-tie-score`/`knockout-tie-score`, Phase C) |
+| ANY `/tournament-draft` `/tournament-draft/{proxy+}` | tournaments | COGNITO | Manual-draft mode: leaders, pool board (Phase A); auction (`start-auction`/`open-lot`/`bid`/`close-lot`/`skip-lot`/`state`, Phase B); tie-based schedule (`generate-schedule`/`pick-tie-player`/`group-tie-score`/`knockout-tie-score`, Phase C); `organizer-assign` — organizer directly awards a queued player to a chosen leader for a chosen amount, no open lot / leader bid required (for leaders without app access) |
 | ANY `/finance/{proxy+}` | finance | **NONE (legacy open)** | View-key/confirmation-code gated finance ops |
 | ANY `/finance-secure/{proxy+}` | finance | COGNITO | Same ops, Cognito-gated by finance role |
 | DELETE `/finance-delete/{record_type}/{record_id}` | finance | COGNITO | Triple-gated delete |
@@ -322,7 +322,7 @@ _NetWorth - matches Lambda (singles + doubles)_
 | `compute_partner_distribution` | player_id, items, top_n | 2536 | For the radar/spider chart: one player's doubles partners, sorted by |
 | `_response` | status_code, body_dict | 2583 | — |
 
-#### `tournaments` — 2151 LOC
+#### `tournaments` — 2222 LOC
 _NetWorth - tournaments Lambda (singles or doubles)_
 
 **Module constants:** `K_FACTOR`, `COMEBACK_BONUS_THRESHOLD`, `COMEBACK_BONUS_PER_POINT`, `COMEBACK_BONUS_CAP`, `CONFIRMATION_CODE`
@@ -345,53 +345,55 @@ _NetWorth - tournaments Lambda (singles or doubles)_
 | `build_knockout_round` | entities | 415 | — |
 | `_bye_match` | entity | 450 | — |
 | `handle_draft_route` | event | 477 | — |
-| `_draft_get_tournament` | tournament_id | 524 | Shared load+validate for every route below: must exist and must be |
-| `_draft_everyone` | item | 535 | Every player currently accounted for in this tournament's pool |
-| `create_manual_draft_tournament` | event, claims | 544 | Creates the shell for a manual-mode tournament: leaders, pools, the |
-| `set_leaders` | tournament_id, event, claims | 615 | — |
-| `add_draft_player` | tournament_id, event, claims | 641 | Lets the organizer drop a player into the unassigned tray while |
-| `set_pool_assignment` | tournament_id, event, claims | 671 | Full replace of one pool's member list - the simplest, idempotent |
-| `lock_pools` | tournament_id, event, claims | 731 | — |
-| `_draft_decided_ids` | draft | 792 | Every player_id that's no longer available to auction: already won |
-| `_authorize_leader` | item, claims | 803 | Caller must be one of THIS tournament's registered leaders (matched |
-| `start_auction` | tournament_id, event, claims | 814 | — |
-| `open_lot` | tournament_id, event, claims | 866 | — |
-| `submit_bid` | tournament_id, event, claims | 903 | — |
-| `close_lot` | tournament_id, event, claims | 960 | — |
-| `skip_lot` | tournament_id, event, claims | 1014 | — |
-| `get_draft_state` | tournament_id, event, claims | 1036 | The polling endpoint - a small payload (no bid_history/full item) |
-| `build_tie` | squad_a_id, squad_b_id, matches_per_tie | 1082 | — |
-| `build_tie_round_robin` | squad_ids, matches_per_tie | 1097 | — |
-| `_bye_tie` | squad_id | 1105 | Mirrors _bye_match: auto-decided the instant it's created, no |
-| `build_knockout_tie_round` | squad_ids, matches_per_tie | 1115 | Generalizes build_knockout_round: same power-of-2/byes-needed |
-| `_update_tie_progress` | tie | 1140 | Recomputes wins_a/wins_b/point_diff_a/point_diff_b from the tie's |
-| `_score_tie_match` | item, tie, match_index, score_a, score_b, ove | 1169 | Submits one individual match's score within a tie. Raises ValueError |
-| `_find_tie` | item, tie_id | 1196 | A tie_id is a UUID unique across the whole tournament, so it can be |
-| `_authorize_tie_scorer` | item, tie, claims | 1213 | Organizer, or one of THIS tie's own two squad leaders - matches the |
-| `compute_squad_standings` | item | 1227 | Squad-level standings: sorted by (ties_won desc, aggregate point |
-| `compute_player_tournament_scores` | item | 1256 | A tournament-scoped, non-Elo per-player score/leaderboard - a |
-| `generate_schedule` | tournament_id, event, claims | 1306 | — |
-| `pick_tie_player` | tournament_id, event, claims | 1327 | A leader nominates which of their own squad's members plays a given |
-| `_generate_knockout_from_group_stage` | item | 1383 | — |
-| `record_group_tie_score` | tournament_id, event, claims | 1391 | — |
-| `_advance_knockout_ties_if_round_complete` | item | 1428 | Mirrors record_knockout_score's round-advancement + third-place- |
-| `record_knockout_tie_score` | tournament_id, event, claims | 1453 | — |
-| `list_tournaments` | event | 1494 | — |
-| `get_tournament` | tournament_id | 1518 | — |
-| `recompute_all_ratings` |  | 1533 | Elo is path-dependent - each match's rating change depends on the |
-| `delete_tournament` | tournament_id, event | 1611 | Deletes this tournament AND every match record tagged with its |
-| `compute_standings` | fixtures, entities | 1645 | — |
-| `compute_all_standings` | item | 1677 | — |
-| `_submit_game` | fixture, score_a, score_b, best_of, target, o | 1683 | Append one game's score to a fixture/match. Returns True if the match is now decided. |
-| `record_group_score` | tournament_id, event | 1712 | — |
-| `inject_tiebreakers_if_needed` | item | 1766 | Checks each subgroup for a genuine tie (same wins AND point_diff) at |
-| `advance_to_knockout` | item | 1817 | — |
-| `record_knockout_score` | tournament_id, event | 1842 | — |
-| `compute_adaptive_k` | pairing_count | 1953 | Higher K for a fresh/novel doubles pairing (each match together is |
-| `get_pairing_count` | team_ids | 1967 | How many prior doubles matches has this exact 2-player team played |
-| `update_elo_and_log` | match_type, entity_a, entity_b, score_a, scor | 1985 | — |
-| `substitute_player` | tournament_id, event | 2063 | Swap a player out of a team for all of that team's FUTURE (unplayed) |
-| `_response` | status_code, body_dict | 2142 | — |
+| `_draft_get_tournament` | tournament_id | 526 | Shared load+validate for every route below: must exist and must be |
+| `_draft_everyone` | item | 537 | Every player currently accounted for in this tournament's pool |
+| `create_manual_draft_tournament` | event, claims | 546 | Creates the shell for a manual-mode tournament: leaders, pools, the |
+| `set_leaders` | tournament_id, event, claims | 617 | — |
+| `add_draft_player` | tournament_id, event, claims | 643 | Lets the organizer drop a player into the unassigned tray while |
+| `set_pool_assignment` | tournament_id, event, claims | 673 | Full replace of one pool's member list - the simplest, idempotent |
+| `lock_pools` | tournament_id, event, claims | 733 | — |
+| `_draft_decided_ids` | draft | 794 | Every player_id that's no longer available to auction: already won |
+| `_authorize_leader` | item, claims | 805 | Caller must be one of THIS tournament's registered leaders (matched |
+| `start_auction` | tournament_id, event, claims | 816 | — |
+| `open_lot` | tournament_id, event, claims | 868 | — |
+| `submit_bid` | tournament_id, event, claims | 905 | — |
+| `_maybe_freeze_squads` | item, draft | 962 | Shared by close_lot and organizer_assign: once every leader's every |
+| `close_lot` | tournament_id, event, claims | 993 | — |
+| `organizer_assign` | tournament_id, event, claims | 1025 | Lets the organizer record a winning bid and award a player entirely |
+| `skip_lot` | tournament_id, event, claims | 1085 | — |
+| `get_draft_state` | tournament_id, event, claims | 1107 | The polling endpoint - a small payload (no bid_history/full item) |
+| `build_tie` | squad_a_id, squad_b_id, matches_per_tie | 1153 | — |
+| `build_tie_round_robin` | squad_ids, matches_per_tie | 1168 | — |
+| `_bye_tie` | squad_id | 1176 | Mirrors _bye_match: auto-decided the instant it's created, no |
+| `build_knockout_tie_round` | squad_ids, matches_per_tie | 1186 | Generalizes build_knockout_round: same power-of-2/byes-needed |
+| `_update_tie_progress` | tie | 1211 | Recomputes wins_a/wins_b/point_diff_a/point_diff_b from the tie's |
+| `_score_tie_match` | item, tie, match_index, score_a, score_b, ove | 1240 | Submits one individual match's score within a tie. Raises ValueError |
+| `_find_tie` | item, tie_id | 1267 | A tie_id is a UUID unique across the whole tournament, so it can be |
+| `_authorize_tie_scorer` | item, tie, claims | 1284 | Organizer, or one of THIS tie's own two squad leaders - matches the |
+| `compute_squad_standings` | item | 1298 | Squad-level standings: sorted by (ties_won desc, aggregate point |
+| `compute_player_tournament_scores` | item | 1327 | A tournament-scoped, non-Elo per-player score/leaderboard - a |
+| `generate_schedule` | tournament_id, event, claims | 1377 | — |
+| `pick_tie_player` | tournament_id, event, claims | 1398 | A leader nominates which of their own squad's members plays a given |
+| `_generate_knockout_from_group_stage` | item | 1454 | — |
+| `record_group_tie_score` | tournament_id, event, claims | 1462 | — |
+| `_advance_knockout_ties_if_round_complete` | item | 1499 | Mirrors record_knockout_score's round-advancement + third-place- |
+| `record_knockout_tie_score` | tournament_id, event, claims | 1524 | — |
+| `list_tournaments` | event | 1565 | — |
+| `get_tournament` | tournament_id | 1589 | — |
+| `recompute_all_ratings` |  | 1604 | Elo is path-dependent - each match's rating change depends on the |
+| `delete_tournament` | tournament_id, event | 1682 | Deletes this tournament AND every match record tagged with its |
+| `compute_standings` | fixtures, entities | 1716 | — |
+| `compute_all_standings` | item | 1748 | — |
+| `_submit_game` | fixture, score_a, score_b, best_of, target, o | 1754 | Append one game's score to a fixture/match. Returns True if the match is now decided. |
+| `record_group_score` | tournament_id, event | 1783 | — |
+| `inject_tiebreakers_if_needed` | item | 1837 | Checks each subgroup for a genuine tie (same wins AND point_diff) at |
+| `advance_to_knockout` | item | 1888 | — |
+| `record_knockout_score` | tournament_id, event | 1913 | — |
+| `compute_adaptive_k` | pairing_count | 2024 | Higher K for a fresh/novel doubles pairing (each match together is |
+| `get_pairing_count` | team_ids | 2038 | How many prior doubles matches has this exact 2-player team played |
+| `update_elo_and_log` | match_type, entity_a, entity_b, score_a, scor | 2056 | — |
+| `substitute_player` | tournament_id, event | 2134 | Swap a player out of a team for all of that team's FUTURE (unplayed) |
+| `_response` | status_code, body_dict | 2213 | — |
 
 #### `finance` — 1571 LOC
 _NetWorth - finance Lambda_
@@ -461,7 +463,7 @@ _NetWorth - progress_scheduler Lambda_
 ## 6. Frontend function reference
 
 <!-- AUTOGEN:FRONTEND START (regenerated by tools/generate_codebase_map.py — do not hand-edit below) -->
-### Frontend (`frontend/js/app.js` — 9169 LOC, flat global script, ~410 functions)
+### Frontend (`frontend/js/app.js` — 9221 LOC, flat global script, ~412 functions)
 
 _Loaded by `index.html` after an inline `<script>` defines the globals `API_BASE_URL`, `COGNITO_USER_POOL_ID`, `COGNITO_CLIENT_ID`, `UPI_ID`, `FINANCE_VIEW_KEY` placeholders. Functions live in global scope (not an IIFE); most are wired to `onclick=` in the HTML._
 
@@ -868,65 +870,67 @@ _Loaded by `index.html` after an inline `<script>` defines the globals `API_BASE
 - `renderDraftStartAuctionPanel(t)` — L7700
 - `startDraftAuction(tournamentId)` — L7709
 - `renderDraftAuctionRoom(t)` — L7719
-- `renderDraftLiveStatusHtml(tournamentId, draftLike)` — L7728
-- `updateDraftLiveStatus(tournamentId, draftLike)` — L7763
-- `renderDraftQueuePicker(t)` — L7771
-- `openDraftLot(tournamentId, playerId)` — L7798
-- `closeDraftLot(tournamentId)` — L7806
-- `skipDraftLot(tournamentId)` — L7816
-- `renderDraftBidBox()` — L7826
-- `draftBidBump(delta)` — L7839
-- `submitDraftBid(tournamentId)` — L7846
-- `renderDraftSquadsReview(t)` — L7875
-- `generateDraftSchedule(tournamentId)` — L7888
-- `draftSquadName(t, squadId)` — L7909
-- `renderDraftScheduleView(t)` — L7914
-- `renderSquadStandingsTable(standings)` — L7932
-- `renderPlayerTournamentStatsTable(stats)` — L7944
-- `renderTieSection(title, ties, t, stageKind)` — L7957
-- `renderTieCard(tie, t, stageKind)` — L7964
-- `renderTieMatchRow(tie, m, idx, t, stageKind, iLeadA, iLead)` — L7983
-- `draftPlayerPickerHtml(tournamentId, tieId, matchIndex, members)` — L8019
-- `pickTiePlayer(tournamentId, tieId, matchIndex, playerI)` — L8029
-- `submitDraftTieScore(tournamentId, tieId, matchIndex, stageKi)` — L8039
-- `collectAllEntities(t)` — L8201
-- `getAllTeamEntities(t)` — L8217
-- `renderTeamCompositionBars(t, containerId)` — L8235
-- `populateSubstitutionSection(t)` — L8270
-- `updateSubOldPlayerOptions()` — L8281
-- `formatGames(games)` — L8370
-- `applyTournamentViewMode()` — L8377
-- `matchTotals(match)` — L8383
-- `truncateBracketName(name, maxChars = 22)` — L8391
-- `renderBracketView(t)` — L8396
-- `renderTournament(t)` — L8512
-- `generateTournamentRecap(t)` — L8687
-- `downloadTournamentImage()` — L8719
-- `loadImg(src)` — L8746
-- `sideVisuals(side)` — L8756
-- `drawCard(x, y, w, match, isFinal)` — L8763
-- `drawAvatars(ctx, x, y, side, isWinner)` — L8809
-- `paintTeam(ctx, x, y, w, h, side, fallback)` — L8828
-- `roundRect(ctx, x, y, w, h, r)` — L8856
-- `copyTournamentRecap()` — L8866
-- `item_has_third_place(t)` — L8877
-- `submitGroupScore(tournamentId, subgroup, fixtureId)` — L8881
-- `submitGroupScoreDirect(tournamentId, subgroup, fixtureId, score)` — L8887
-- `submitKnockoutScore(tournamentId, roundIndex, matchIndex)` — L8906
-- `submitKnockoutScoreDirect(tournamentId, roundIndex, matchIndex, sc)` — L8912
-- `submitThirdPlaceScore(tournamentId)` — L8931
-- `submitThirdPlaceScoreDirect(tournamentId, score_a, score_b, override)` — L8937
-- `getTournamentLiveLog(matchKey)` — L8960
-- `tournamentLivePoint(matchKey, side, target)` — L8965
-- `tournamentUndoPoint(matchKey, target)` — L8974
-- `updateTournamentLiveDisplay(matchKey, target)` — L8980
-- `finishGroupLiveGame(matchKey, tournamentId, subgroup, fixtur)` — L8998
-- `finishKnockoutLiveGame(matchKey, tournamentId, roundIndex, matc)` — L9007
-- `finishThirdPlaceLiveGame(matchKey, tournamentId)` — L9016
-- `renderLiveScoreControls(matchKey, target, finishCallExpr, nameA,)` — L9025
-- `activateTab(tabName)` — L9049
-- `jumpToRecordMatch()` — L9144
-- `applyTheme(theme)` — L9150
+- `renderDraftOrganizerAssignPanel(t)` — L7729
+- `organizerAssignPlayer(tournamentId)` — L7754
+- `renderDraftLiveStatusHtml(tournamentId, draftLike)` — L7775
+- `updateDraftLiveStatus(tournamentId, draftLike)` — L7810
+- `renderDraftQueuePicker(t)` — L7823
+- `openDraftLot(tournamentId, playerId)` — L7850
+- `closeDraftLot(tournamentId)` — L7858
+- `skipDraftLot(tournamentId)` — L7868
+- `renderDraftBidBox()` — L7878
+- `draftBidBump(delta)` — L7891
+- `submitDraftBid(tournamentId)` — L7898
+- `renderDraftSquadsReview(t)` — L7927
+- `generateDraftSchedule(tournamentId)` — L7940
+- `draftSquadName(t, squadId)` — L7961
+- `renderDraftScheduleView(t)` — L7966
+- `renderSquadStandingsTable(standings)` — L7984
+- `renderPlayerTournamentStatsTable(stats)` — L7996
+- `renderTieSection(title, ties, t, stageKind)` — L8009
+- `renderTieCard(tie, t, stageKind)` — L8016
+- `renderTieMatchRow(tie, m, idx, t, stageKind, iLeadA, iLead)` — L8035
+- `draftPlayerPickerHtml(tournamentId, tieId, matchIndex, members)` — L8071
+- `pickTiePlayer(tournamentId, tieId, matchIndex, playerI)` — L8081
+- `submitDraftTieScore(tournamentId, tieId, matchIndex, stageKi)` — L8091
+- `collectAllEntities(t)` — L8253
+- `getAllTeamEntities(t)` — L8269
+- `renderTeamCompositionBars(t, containerId)` — L8287
+- `populateSubstitutionSection(t)` — L8322
+- `updateSubOldPlayerOptions()` — L8333
+- `formatGames(games)` — L8422
+- `applyTournamentViewMode()` — L8429
+- `matchTotals(match)` — L8435
+- `truncateBracketName(name, maxChars = 22)` — L8443
+- `renderBracketView(t)` — L8448
+- `renderTournament(t)` — L8564
+- `generateTournamentRecap(t)` — L8739
+- `downloadTournamentImage()` — L8771
+- `loadImg(src)` — L8798
+- `sideVisuals(side)` — L8808
+- `drawCard(x, y, w, match, isFinal)` — L8815
+- `drawAvatars(ctx, x, y, side, isWinner)` — L8861
+- `paintTeam(ctx, x, y, w, h, side, fallback)` — L8880
+- `roundRect(ctx, x, y, w, h, r)` — L8908
+- `copyTournamentRecap()` — L8918
+- `item_has_third_place(t)` — L8929
+- `submitGroupScore(tournamentId, subgroup, fixtureId)` — L8933
+- `submitGroupScoreDirect(tournamentId, subgroup, fixtureId, score)` — L8939
+- `submitKnockoutScore(tournamentId, roundIndex, matchIndex)` — L8958
+- `submitKnockoutScoreDirect(tournamentId, roundIndex, matchIndex, sc)` — L8964
+- `submitThirdPlaceScore(tournamentId)` — L8983
+- `submitThirdPlaceScoreDirect(tournamentId, score_a, score_b, override)` — L8989
+- `getTournamentLiveLog(matchKey)` — L9012
+- `tournamentLivePoint(matchKey, side, target)` — L9017
+- `tournamentUndoPoint(matchKey, target)` — L9026
+- `updateTournamentLiveDisplay(matchKey, target)` — L9032
+- `finishGroupLiveGame(matchKey, tournamentId, subgroup, fixtur)` — L9050
+- `finishKnockoutLiveGame(matchKey, tournamentId, roundIndex, matc)` — L9059
+- `finishThirdPlaceLiveGame(matchKey, tournamentId)` — L9068
+- `renderLiveScoreControls(matchKey, target, finishCallExpr, nameA,)` — L9077
+- `activateTab(tabName)` — L9101
+- `jumpToRecordMatch()` — L9196
+- `applyTheme(theme)` — L9202
 <!-- AUTOGEN:FRONTEND END -->
 
 ---

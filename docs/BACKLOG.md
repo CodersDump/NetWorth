@@ -36,6 +36,12 @@
     auto-advance, third-place auto-creation), `compute_squad_standings`, `compute_player_tournament_scores`
     (the tournament-scoped non-Elo leaderboard). Tie-card UI with per-leader lineup pickers, standings
     tables.
+  - **Organizer-assign (out-of-band bidding) - DONE (see Done section, 2026-08-21).** Owner-requested:
+    a way for the organizer to record a winning bid and award a player directly, for auctions run
+    partly or fully outside the app where not every leader has it open. `organizer-assign` (organizer
+    only, no lot needs to be open) - picks a queued player, a leader, and an amount, then performs the
+    exact equivalent of open-lot + winning bid + close-lot in one call. Works standalone or mixed with
+    live app-based bidding.
   - **Phase D - next.** Auth-hardening test matrix across every new route, plus a real fix for
     `substitute_player`'s squad-name-rebuild bug (`apply_substitution`, currently only correct for
     2-member entities - silently drops names for squads >2 members).
@@ -291,6 +297,45 @@
 
 ## Done
 
+- ✅ 2026-08-21 (v1.48.0-organizer-assign) — **Manual-mode tournaments: organizer-assign, out-of-band
+  bidding (Owner request, "i need somewhere where the organiser itself enters the bidding amount and
+  assigns to the leader, in case not all of them opens or access the app").** Real-world gap in the
+  Phase B auction: it assumed every leader is live in the app bidding for themselves, but at an actual
+  club night some leaders won't have the app open, so someone still needs to be able to run their
+  bidding for them. `organizer-assign` covers that - organizer picks a still-queued player, picks which
+  leader gets them, types the winning amount, submits - one call, no lot needs to be opened first, no
+  leader needs to be signed in at all. Works either as the *only* way an auction is run (organizer
+  tracks a verbal/whiteboard auction and enters results as they go) or mixed with normal live bidding
+  (some leaders bid for themselves in the app, others get entered manually by the organizer).
+  **Backend** (`backend/lambdas/tournaments/index.py`): `organizer_assign(tournament_id, event, claims)`
+  - organizer-only (`_authorize_tournament_organizer`), requires `status='auction'` +
+  `draft.status='in_progress'`, and requires **no lot currently open** (rejects with a clear "close or
+  skip it first" error otherwise, so it can never race a live bid on a different player). Body is
+  `{player_id, leader_id, amount}`; validates the player is still queued and undecided, the leader
+  exists, the amount doesn't exceed that leader's `remaining_budget`, and that leader's pool quota for
+  that player's pool isn't already full - the exact same checks `submit_bid`/`close_lot` already apply,
+  just organizer-supplied instead of leader-authenticated. On success it does exactly what `close_lot`
+  does to award a lot (deduct budget, increment `pool_picks`, append to `squad_member_ids`), including
+  the auto-freeze into `squads_locked` once every leader's every pool quota is met. That freeze logic was
+  duplicated in `close_lot` before this change; extracted into a shared `_maybe_freeze_squads(item, draft)`
+  helper so `close_lot` and `organizer_assign` can't drift out of sync. New `organizer-assign` branch
+  added to `handle_draft_route`. Verified with a new `/tmp/test_organizer_assign.py` (17 checks: full
+  authz matrix, every validation rule including budget/quota/unknown-leader/already-sold/lot-currently-
+  open, a full auction driven end-to-end through `organizer-assign` alone with the same auto-freeze +
+  squad-building assertions Phase B's own suite checks, and rejection once the auction has already
+  completed) plus the existing regression suite (Phase A/B/C backend + frontend, all still passing).
+  **Frontend**: `renderDraftOrganizerAssignPanel` - a new card in the auction room (only rendered while
+  no lot is open and undecided players remain) with a player `<select>`, a leader `<select>`, an amount
+  `<input>`, and an "Assign" button; `organizer-assign` submits and re-renders from the full tournament
+  response exactly like `close_lot`/`skip_lot` already do. `updateDraftLiveStatus` (the ~1.75s poll tick)
+  now also disables the assign panel's controls whenever a lot gets opened elsewhere, mirroring how it
+  already disables the queue-picker's buttons. Verified with a new `/tmp/test_organizer_assign_ui.js`
+  Playwright pass (panel renders with the right player/leader options, hidden while a lot is open,
+  hidden once no undecided players remain, blocks submission with a missing amount without ever calling
+  the API, and a full submit sends the exact `{player_id, leader_id, amount}` body and re-renders from
+  the response) plus the existing Phase A/B/C Playwright suites (all still passing unmodified).
+  Files: `backend/lambdas/tournaments/index.py`, `frontend/js/app.js`. No `template.yaml` change needed -
+  same existing `/tournament-draft{proxy+}` API Gateway resource tree covers this new route too.
 - ✅ 2026-08-21 (v1.47.0-phaseC) — **Manual-mode tournaments (leaders + pool draft/auction), Phase C:
   tie-based schedule generation + tie-card UI (Owner request, "work on the next phase as well").**
   Third slice of the tournament feature - turns `squads_locked` into a full squad-vs-squad round robin

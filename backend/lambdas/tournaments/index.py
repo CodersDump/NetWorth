@@ -505,6 +505,8 @@ def handle_draft_route(event):
         return submit_bid(tournament_id, event, claims)
     if len(parts) == 2 and parts[1] == 'close-lot' and method == 'POST':
         return close_lot(tournament_id, event, claims)
+    if len(parts) == 2 and parts[1] == 'organizer-assign' and method == 'POST':
+        return organizer_assign(tournament_id, event, claims)
     if len(parts) == 2 and parts[1] == 'skip-lot' and method == 'POST':
         return skip_lot(tournament_id, event, claims)
     if len(parts) == 2 and parts[1] == 'state' and method == 'GET':
@@ -957,6 +959,37 @@ def submit_bid(tournament_id, event, claims):
     return _response(200, updated)
 
 
+def _maybe_freeze_squads(item, draft):
+    """Shared by close_lot and organizer_assign: once every leader's every
+    pool quota is met, freeze the draft and build squads from each
+    leader's accumulated squad_member_ids. Mutates item/draft in place;
+    caller still owns the put_item."""
+    picks_per_pool = item['manual_draft']['picks_per_pool']
+    all_quotas_met = all(
+        count >= picks_per_pool
+        for info in draft['leaders'].values()
+        for count in info['pool_picks'].values()
+    )
+    if not all_quotas_met:
+        return
+    draft['status'] = 'completed'
+    squads = {}
+    for lid, info in draft['leaders'].items():
+        member_ids = info['squad_member_ids']
+        members_data = [players_table.get_item(Key={'player_id': pid}).get('Item') for pid in member_ids]
+        leader_player = players_table.get_item(Key={'player_id': lid}).get('Item')
+        leader_name = leader_player['name'] if leader_player else lid
+        squads[lid] = {
+            'entity_id': str(uuid.uuid4()),
+            'name': f"Team {leader_name}",
+            'members': member_ids,
+            'member_ratings': [(p.get('rating', 1000) if p else 1000) for p in members_data],
+            'locked': True,
+        }
+    item['squads'] = squads
+    item['status'] = 'squads_locked'
+
+
 def close_lot(tournament_id, event, claims):
     item, err = _draft_get_tournament(tournament_id)
     if err:
@@ -983,29 +1016,67 @@ def close_lot(tournament_id, event, claims):
     leader['squad_member_ids'].append(player_id)
     draft['current_lot'] = None
 
+    _maybe_freeze_squads(item, draft)
+
+    tournaments_table.put_item(Item=item)
+    return _response(200, item)
+
+
+def organizer_assign(tournament_id, event, claims):
+    """Lets the organizer record a winning bid and award a player entirely
+    on their own say-so, for auctions run partly or fully outside the app
+    (called out loud, decided in person, tracked on a whiteboard) where not
+    every leader has the app open. Skips the open-lot -> bid -> close-lot
+    dance and the leader-authenticated /bid route: the organizer picks the
+    player, picks which leader gets them, and types the winning amount, all
+    in one organizer-only action. Requires no lot to currently be open, so
+    it never collides with a live bid in progress on another player."""
+    item, err = _draft_get_tournament(tournament_id)
+    if err:
+        return err
+    denied = _authorize_tournament_organizer(item, claims)
+    if denied:
+        return denied
+    if item.get('status') != 'auction' or (item.get('draft') or {}).get('status') != 'in_progress':
+        return _response(400, {'error': 'this tournament is not in an active auction'})
+    draft = item['draft']
+    if draft.get('current_lot'):
+        return _response(400, {'error': 'a lot is currently open - close or skip it before using organizer-assign'})
+
+    body = json.loads(event.get('body') or '{}')
+    player_id = body.get('player_id')
+    leader_id = body.get('leader_id')
+    amount = body.get('amount')
+    if not player_id or not leader_id or amount is None:
+        return _response(400, {'error': 'player_id, leader_id, and amount are required'})
+    try:
+        amount = int(amount)
+    except (TypeError, ValueError):
+        return _response(400, {'error': 'amount must be a number'})
+    if amount < 0:
+        return _response(400, {'error': 'amount cannot be negative'})
+
+    queue_entry = next((q for q in draft['queue'] if q['player_id'] == player_id), None)
+    if not queue_entry:
+        return _response(400, {'error': 'that player is not in this auction'})
+    if player_id in _draft_decided_ids(draft):
+        return _response(400, {'error': 'that player has already been sold or marked unsold'})
+
+    leader = draft['leaders'].get(leader_id)
+    if not leader:
+        return _response(400, {'error': 'unknown leader_id'})
+    if amount > leader['remaining_budget']:
+        return _response(400, {'error': "amount exceeds that leader's remaining budget"})
     picks_per_pool = item['manual_draft']['picks_per_pool']
-    all_quotas_met = all(
-        count >= picks_per_pool
-        for info in draft['leaders'].values()
-        for count in info['pool_picks'].values()
-    )
-    if all_quotas_met:
-        draft['status'] = 'completed'
-        squads = {}
-        for lid, info in draft['leaders'].items():
-            member_ids = info['squad_member_ids']
-            members_data = [players_table.get_item(Key={'player_id': pid}).get('Item') for pid in member_ids]
-            leader_player = players_table.get_item(Key={'player_id': lid}).get('Item')
-            leader_name = leader_player['name'] if leader_player else lid
-            squads[lid] = {
-                'entity_id': str(uuid.uuid4()),
-                'name': f"Team {leader_name}",
-                'members': member_ids,
-                'member_ratings': [(p.get('rating', 1000) if p else 1000) for p in members_data],
-                'locked': True,
-            }
-        item['squads'] = squads
-        item['status'] = 'squads_locked'
+    pool = queue_entry['pool']
+    if leader['pool_picks'].get(pool, 0) >= picks_per_pool:
+        return _response(400, {'error': f'{leader_id} has already filled their quota for pool {pool}'})
+
+    leader['remaining_budget'] -= amount
+    leader['pool_picks'][pool] = leader['pool_picks'].get(pool, 0) + 1
+    leader['squad_member_ids'].append(player_id)
+
+    _maybe_freeze_squads(item, draft)
 
     tournaments_table.put_item(Item=item)
     return _response(200, item)

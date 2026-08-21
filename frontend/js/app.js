@@ -7721,8 +7721,55 @@ let userPool = null;
       const iAmLeader = (t.leaders || []).includes(myPlayerId());
       let html = renderDraftLiveStatusHtml(t.tournament_id, draft);
       html += renderDraftQueuePicker(t);
+      html += renderDraftOrganizerAssignPanel(t);
       if (iAmLeader) html += renderDraftBidBox();
       return html;
+    }
+
+    function renderDraftOrganizerAssignPanel(t) {
+      const draft = t.draft || {};
+      if (draft.current_lot) return ''; // organizer-assign needs no lot open - close/skip it first
+      const decided = draftDecidedIds(draft);
+      const undecided = (draft.queue || []).filter(q => !decided.has(q.player_id));
+      if (!undecided.length) return '';
+      let html = '<div class="card" style="margin-top:10px;"><h4 style="font-size:14px;margin:0 0 6px;">Organizer assign</h4>';
+      html += '<p class="card-sub" style="margin:0 0 8px;">For leaders who aren\'t on the app right now - enter the winning amount yourself and award the player directly, no bidding required. Organizer only.</p>';
+      html += '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">';
+      html += '<select id="draft-assign-player">';
+      undecided.forEach(q => {
+        html += `<option value="${q.player_id}">${escapeHtml(draftPlayerName(q.player_id))} (Pool ${escapeHtml(String(q.pool))})</option>`;
+      });
+      html += '</select>';
+      html += '<select id="draft-assign-leader">';
+      (t.leaders || []).forEach(lid => {
+        html += `<option value="${lid}">${escapeHtml(draftPlayerName(lid))}</option>`;
+      });
+      html += '</select>';
+      html += '<input type="number" id="draft-assign-amount" placeholder="Amount" min="0" style="max-width:110px;">';
+      html += `<button type="button" onclick="organizerAssignPlayer('${t.tournament_id}')">Assign</button>`;
+      html += '</div><div id="draft-assign-status" class="result"></div></div>';
+      return html;
+    }
+
+    async function organizerAssignPlayer(tournamentId) {
+      const playerSel = document.getElementById('draft-assign-player');
+      const leaderSel = document.getElementById('draft-assign-leader');
+      const amountInput = document.getElementById('draft-assign-amount');
+      const statusEl = document.getElementById('draft-assign-status');
+      const playerId = playerSel && playerSel.value;
+      const leaderId = leaderSel && leaderSel.value;
+      const amount = amountInput && amountInput.value;
+      if (!playerId || !leaderId || amount === '' || amount === null || amount === undefined) {
+        if (statusEl) statusEl.textContent = 'Pick a player, a leader, and enter an amount.';
+        return;
+      }
+      if (statusEl) statusEl.textContent = 'Assigning...';
+      const { res, data, error } = await authedFetch(`${API_BASE_URL}/tournament-draft/${tournamentId}/organizer-assign`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ player_id: playerId, leader_id: leaderId, amount: Number(amount) })
+      });
+      if (!res.ok) { if (statusEl) statusEl.textContent = `Error: ${error}`; nwAlert(error || (data && data.error) || 'Could not assign that player'); return; }
+      renderTournament(data);
     }
 
     function renderDraftLiveStatusHtml(tournamentId, draftLike) {
@@ -7766,6 +7813,11 @@ let userPool = null;
       container.outerHTML = renderDraftLiveStatusHtml(tournamentId, draftLike);
       const lotOpen = !!(draftLike && draftLike.current_lot);
       document.querySelectorAll('#draft-queue-picker button').forEach(b => { b.disabled = lotOpen; });
+      const assignStatusEl = document.getElementById('draft-assign-status');
+      const assignControls = assignStatusEl && assignStatusEl.previousElementSibling;
+      if (assignControls) {
+        assignControls.querySelectorAll('select, input, button').forEach(el => { el.disabled = lotOpen; });
+      }
     }
 
     function renderDraftQueuePicker(t) {
