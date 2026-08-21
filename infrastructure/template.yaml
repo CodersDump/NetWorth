@@ -2287,6 +2287,109 @@ Resources:
       Principal: apigateway.amazonaws.com
       SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${RestApi}/*/*'
 
+  # /tournament-draft and /tournament-draft/{proxy+} - manual-mode (leaders
+  # + pools + auction) routes, same TournamentsFunction as above but on a
+  # SEPARATE Cognito-authorized resource tree, not bolted onto
+  # /tournaments{proxy+} (that resource is AuthorizationType: NONE, so
+  # requestContext.authorizer.claims is never populated there - every
+  # manual-draft write needs real caller identity: organizer role checks,
+  # and later "which leader is this bid from"). Same reasoning as the
+  # existing /create-tournament resource, just as a {proxy+} tree since
+  # manual-draft mode needs many sub-actions per tournament_id rather than
+  # one flat POST.
+
+  TournamentDraftResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref RestApi
+      ParentId: !GetAtt RestApi.RootResourceId
+      PathPart: tournament-draft
+
+  TournamentDraftAnyMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RestApi
+      ResourceId: !Ref TournamentDraftResource
+      HttpMethod: ANY
+      AuthorizationType: COGNITO_USER_POOLS
+      AuthorizerId: !Ref CognitoAuthorizer
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${TournamentsFunction.Arn}/invocations'
+
+  TournamentDraftOptionsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RestApi
+      ResourceId: !Ref TournamentDraftResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,Authorization'"
+              method.response.header.Access-Control-Allow-Methods: "'OPTIONS,GET,POST,PUT'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+            method.response.header.Access-Control-Allow-Origin: true
+
+  TournamentDraftProxyResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref RestApi
+      ParentId: !Ref TournamentDraftResource
+      PathPart: '{proxy+}'
+
+  TournamentDraftProxyAnyMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RestApi
+      ResourceId: !Ref TournamentDraftProxyResource
+      HttpMethod: ANY
+      AuthorizationType: COGNITO_USER_POOLS
+      AuthorizerId: !Ref CognitoAuthorizer
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${TournamentsFunction.Arn}/invocations'
+
+  TournamentDraftProxyOptionsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RestApi
+      ResourceId: !Ref TournamentDraftProxyResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,Authorization'"
+              method.response.header.Access-Control-Allow-Methods: "'OPTIONS,GET,POST,PUT'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+            method.response.header.Access-Control-Allow-Origin: true
+
+  # No separate Lambda permission needed - TournamentsFunctionPermission
+  # above already grants apigateway.amazonaws.com invoke access via a
+  # '/*/*' wildcard covering every method/path on this API.
+
   # ---------- Claim request / approval flow ----------
   # All three are flat top-level paths with no {variable} segments, so
   # they cannot collide with the existing {proxy+} catch-alls.
@@ -2942,6 +3045,10 @@ Resources:
       - FinanceAccessOptionsMethod
       - UploadUrlMethod
       - UploadUrlOptionsMethod
+      - TournamentDraftAnyMethod
+      - TournamentDraftOptionsMethod
+      - TournamentDraftProxyAnyMethod
+      - TournamentDraftProxyOptionsMethod
     Properties:
       RestApiId: !Ref RestApi
       Description: !Sub 'Deployment trigger: ${DeploymentTimestamp}'

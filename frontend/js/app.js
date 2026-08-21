@@ -7191,6 +7191,18 @@ let userPool = null;
 
     document.getElementById('tournament_format').addEventListener('change', (e) => {
       document.getElementById('subgroup-options').style.display = e.target.value === 'groups_then_knockout' ? 'block' : 'none';
+      const isManualDraft = e.target.value === 'manual_draft';
+      document.getElementById('manual-draft-options').style.display = isManualDraft ? 'block' : 'none';
+      // Manual-draft mode doesn't use any of these at creation time - squads
+      // are built later via the leader/pool/auction flow, not picked here.
+      ['tournament-participants-section', 'manual-teams-section'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.style.display = isManualDraft ? 'none' : (id === 'tournament-participants-section' ? 'block' : el.style.display);
+      });
+      document.getElementById('tournament_match_type').closest('label').style.display = isManualDraft ? 'none' : '';
+      document.getElementById('tournament_pairing_mode').closest('label').style.display = isManualDraft ? 'none' : '';
+      document.getElementById('tournament_points_to_win').closest('label').style.display = isManualDraft ? 'none' : '';
+      document.getElementById('tournament_best_of').closest('label').style.display = isManualDraft ? 'none' : '';
     });
 
     document.getElementById('tournament_pairing_mode').addEventListener('change', (e) => {
@@ -7350,6 +7362,241 @@ let userPool = null;
       }
     }
 
+    async function submitManualDraftCreation(group_id, name) {
+      const resultEl = document.getElementById('create-tournament-result');
+      if (!group_id) { resultEl.textContent = 'Select a group first.'; return; }
+      if (!name || !name.trim()) { resultEl.textContent = 'Enter a tournament name.'; return; }
+      const payload = {
+        group_id, name,
+        budget_per_leader: document.getElementById('draft_budget').value,
+        num_pools: document.getElementById('draft_num_pools').value,
+        picks_per_pool: document.getElementById('draft_picks_per_pool').value,
+        group_matches_per_tie: document.getElementById('draft_group_matches_per_tie').value,
+        knockout_matches_per_tie: document.getElementById('draft_knockout_matches_per_tie').value,
+      };
+      resultEl.textContent = 'Creating...';
+      try {
+        const { res, data, error } = await authedFetch(`${API_BASE_URL}/tournament-draft`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
+        });
+        if (!res.ok) { resultEl.textContent = `Error: ${error}`; nwAlert(`Tournament NOT created\n\n${error}`); return; }
+        resultEl.textContent = `Created draft tournament: ${data.name}`;
+        document.getElementById('tournament_name').value = '';
+        await loadTournamentsList();
+        document.getElementById('tournament_select').value = data.tournament_id;
+        renderTournament(data);
+      } catch (err) {
+        resultEl.textContent = `Request failed: ${err.message}`;
+      }
+    }
+
+    /* ---------- manual-draft mode: leader picker + pool board (Phase A) ----------
+     * Later phases (auction, tie-based group stage/knockout) will extend
+     * renderManualDraftTournament with more status branches - see
+     * docs/BACKLOG.md for the phased plan. For now it only covers the
+     * pools_open/pools_locked states. */
+
+    let draftSelectedChip = null;  // player_id currently tap-selected on the pool board, or null
+
+    function draftPlayerName(pid) {
+      const p = allPlayers.find(pl => pl.player_id === pid);
+      return p ? p.name : pid;
+    }
+
+    function draftEveryone(t) {
+      const s = new Set(t.pools.unassigned || []);
+      Object.values(t.pools.assignments || {}).forEach(list => list.forEach(pid => s.add(pid)));
+      return s;
+    }
+
+    function renderManualDraftTournament(t) {
+      currentTournamentData = t;
+      const svg = document.getElementById('bracket-svg');
+      if (svg) svg.style.display = 'none';
+      const el = document.getElementById('tournament-detail');
+      let html = `<h3 style="font-size:16px;">${escapeHtml(t.name)} - manual draft (${t.status})</h3>`;
+
+      if (t.status === 'pools_open' || t.status === 'pools_locked') {
+        html += renderDraftLeaderPicker(t);
+        html += renderDraftPoolBoard(t);
+      } else {
+        html += '<p class="card-sub">This tournament has moved past the pool-setup stage. (Auction and schedule views are coming in a later update.)</p>';
+      }
+
+      el.innerHTML = html;
+    }
+
+    function renderDraftLeaderPicker(t) {
+      const everyone = draftEveryone(t);
+      const leaderSet = new Set(t.leaders || []);
+      const locked = t.status !== 'pools_open';
+      let html = '<div class="card" style="margin-top:10px;"><h4 style="font-size:14px;margin:0 0 6px;">Leaders</h4>';
+      if (locked) {
+        html += '<div class="draft-leader-banner-row">' +
+          (t.leaders || []).map(pid => `<div class="draft-leader-banner">${escapeHtml(draftPlayerName(pid))}</div>`).join('') +
+          '</div>';
+      } else {
+        html += '<div id="draft-leader-checklist" style="max-height:160px;overflow-y:auto;border:1px solid var(--border);border-radius:var(--radius);padding:8px;">';
+        html += [...everyone].sort((a, b) => draftPlayerName(a).localeCompare(draftPlayerName(b))).map(pid =>
+          `<label style="display:block;padding:2px 0;"><input type="checkbox" class="draft-leader-checkbox" value="${pid}" ${leaderSet.has(pid) ? 'checked' : ''}> ${escapeHtml(draftPlayerName(pid))}</label>`
+        ).join('');
+        html += `</div><button type="button" class="secondary" style="margin-top:6px;" onclick="saveDraftLeaders('${t.tournament_id}')">Save leaders</button>`;
+      }
+      html += '</div>';
+      return html;
+    }
+
+    async function saveDraftLeaders(tournamentId) {
+      const ids = Array.from(document.querySelectorAll('.draft-leader-checkbox:checked')).map(cb => cb.value);
+      if (!ids.length) { nwAlert('Pick at least one leader.'); return; }
+      const { res, data, error } = await authedFetch(`${API_BASE_URL}/tournament-draft/${tournamentId}/leaders`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ leader_ids: ids })
+      });
+      if (!res.ok) { nwAlert(error || (data && data.error) || 'Could not save leaders'); return; }
+      renderTournament(data);
+    }
+
+    function renderDraftPoolBoard(t) {
+      const locked = t.pools.locked;
+      const numPools = t.manual_draft.num_pools;
+      const leaderSet = new Set(t.leaders || []);
+
+      function chip(pid) {
+        const isLeader = leaderSet.has(pid);
+        const dragAttr = locked ? '' : `draggable="true" ondragstart="draftChipDragStart(event, '${pid}')"`;
+        return `<span class="draft-chip${isLeader ? ' draft-chip-leader' : ''}" data-player-id="${pid}" ${dragAttr} onclick="draftChipTapped('${pid}', event)">${escapeHtml(draftPlayerName(pid))}</span>`;
+      }
+
+      let html = `<div class="card" style="margin-top:10px;"><h4 style="font-size:14px;margin:0 0 6px;">Pools${locked ? ' (locked)' : ''}</h4>`;
+      if (!locked) {
+        html += '<p class="card-sub" style="margin:0 0 6px;">Tap a player, then tap a pool to move them there (or drag, on desktop). Pool 1 is the strongest.</p>';
+      }
+      html += '<div class="draft-pool-board">';
+
+      if (!locked) {
+        const dropAttrs = `ondragover="draftPoolDragOver(event)" ondragleave="this.classList.remove('draft-dragover')" ondrop="draftPoolDrop(event, '${t.tournament_id}', '__unassigned__')" onclick="draftPoolColumnTapped('${t.tournament_id}', '__unassigned__')"`;
+        html += `<div class="draft-pool-col draft-unassigned-tray" ${dropAttrs}><h4>Unassigned</h4>${(t.pools.unassigned || []).map(chip).join('') || '<span class="card-sub">none</span>'}</div>`;
+      }
+      for (let i = 1; i <= numPools; i++) {
+        const name = String(i);
+        const members = (t.pools.assignments && t.pools.assignments[name]) || [];
+        const dropAttrs = locked ? '' : `ondragover="draftPoolDragOver(event)" ondragleave="this.classList.remove('draft-dragover')" ondrop="draftPoolDrop(event, '${t.tournament_id}', '${name}')" onclick="draftPoolColumnTapped('${t.tournament_id}', '${name}')"`;
+        html += `<div class="draft-pool-col" ${dropAttrs}><h4>Pool ${name}</h4>${members.map(chip).join('') || '<span class="card-sub">empty</span>'}</div>`;
+      }
+      html += '</div>';
+
+      if (!locked) {
+        html += `
+          <div style="margin-top:10px;display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
+            <input type="text" id="draft-new-player-name" placeholder="Add a new player">
+            <button type="button" class="secondary" onclick="addNewDraftPlayer('${t.tournament_id}', '${t.group_id}')">Add new player</button>
+            <button type="button" onclick="lockDraftPools('${t.tournament_id}')">Lock pools &amp; continue</button>
+          </div>
+          <div id="draft-pool-status" class="result"></div>`;
+      }
+      html += '</div>';
+      return html;
+    }
+
+    function draftChipTapped(pid, ev) {
+      if (ev) ev.stopPropagation();
+      draftSelectedChip = (draftSelectedChip === pid) ? null : pid;
+      document.querySelectorAll('.draft-chip').forEach(c =>
+        c.classList.toggle('draft-chip-selected', c.dataset.playerId === draftSelectedChip));
+    }
+
+    async function draftPoolColumnTapped(tournamentId, poolName) {
+      if (!draftSelectedChip) return;
+      const pid = draftSelectedChip;
+      draftSelectedChip = null;
+      await moveDraftPlayerToPool(tournamentId, poolName, pid);
+    }
+
+    function draftChipDragStart(ev, pid) {
+      ev.dataTransfer.setData('text/plain', pid);
+      ev.dataTransfer.effectAllowed = 'move';
+    }
+
+    function draftPoolDragOver(ev) {
+      ev.preventDefault();
+      ev.currentTarget.classList.add('draft-dragover');
+    }
+
+    async function draftPoolDrop(ev, tournamentId, poolName) {
+      ev.preventDefault();
+      ev.currentTarget.classList.remove('draft-dragover');
+      const pid = ev.dataTransfer.getData('text/plain');
+      if (!pid) return;
+      draftSelectedChip = null;
+      await moveDraftPlayerToPool(tournamentId, poolName, pid);
+    }
+
+    async function moveDraftPlayerToPool(tournamentId, poolName, playerId) {
+      const t = currentTournamentData;
+      if (!t) return;
+      if (poolName === '__unassigned__') {
+        // Removing from whichever pool currently holds them: full-replace
+        // that pool's list without this player - the backend sends them
+        // back to "unassigned" automatically once they're not in any
+        // pool's new list (see set_pool_assignment).
+        const owning = Object.entries(t.pools.assignments).find(([, list]) => list.includes(playerId));
+        if (!owning) return; // already unassigned
+        const [name, list] = owning;
+        await putDraftPool(tournamentId, name, list.filter(pid => pid !== playerId));
+        return;
+      }
+      const current = (t.pools.assignments[poolName] || []).slice();
+      if (current.includes(playerId)) return;
+      current.push(playerId);
+      await putDraftPool(tournamentId, poolName, current);
+    }
+
+    async function putDraftPool(tournamentId, poolName, playerIds) {
+      const statusEl = document.getElementById('draft-pool-status');
+      if (statusEl) statusEl.textContent = 'Saving...';
+      const { res, data, error } = await authedFetch(`${API_BASE_URL}/tournament-draft/${tournamentId}/pools`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pool: poolName, player_ids: playerIds })
+      });
+      if (!res.ok) { nwAlert(error || (data && data.error) || 'Could not move that player'); renderTournament(currentTournamentData); return; }
+      renderTournament(data);
+    }
+
+    async function addNewDraftPlayer(tournamentId, groupId) {
+      const input = document.getElementById('draft-new-player-name');
+      const name = input && input.value.trim();
+      const statusEl = document.getElementById('draft-pool-status');
+      if (!name) { if (statusEl) statusEl.textContent = 'Enter a name first.'; return; }
+      if (statusEl) statusEl.textContent = 'Registering...';
+      try {
+        // Reuses the existing /register-and-join route (groups/index.py) -
+        // creates a real player profile and links them into this
+        // tournament's group, same as "add a friend" from the group tab.
+        const { res: regRes, data: regData, error: regError } = await authedFetch(`${API_BASE_URL}/register-and-join`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, group_id: groupId })
+        });
+        if (!regRes.ok) { if (statusEl) statusEl.textContent = `Error: ${regError}`; return; }
+        await loadPlayers(); // so draftPlayerName() can resolve the new id right away
+        const { res, data, error } = await authedFetch(`${API_BASE_URL}/tournament-draft/${tournamentId}/add-player`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ player_id: regData.player_id })
+        });
+        if (!res.ok) { if (statusEl) statusEl.textContent = `Error: ${error}`; return; }
+        if (input) input.value = '';
+        renderTournament(data);
+      } catch (err) {
+        if (statusEl) statusEl.textContent = `Failed: ${err.message}`;
+      }
+    }
+
+    async function lockDraftPools(tournamentId) {
+      const statusEl = document.getElementById('draft-pool-status');
+      if (statusEl) statusEl.textContent = 'Locking...';
+      const { res, data, error } = await authedFetch(`${API_BASE_URL}/tournament-draft/${tournamentId}/lock-pools`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}'
+      });
+      if (!res.ok) { if (statusEl) statusEl.textContent = `Error: ${error}`; nwAlert(error || (data && data.error) || 'Could not lock pools'); return; }
+      renderTournament(data);
+    }
+
     let pendingTournamentPayload = null;
 
     document.getElementById('filler_new_toggle').addEventListener('change', (e) => {
@@ -7397,6 +7644,12 @@ let userPool = null;
       const group_id = document.getElementById('tournament_group_select').value;
       const name = document.getElementById('tournament_name').value;
       const format = document.getElementById('tournament_format').value;
+
+      if (format === 'manual_draft') {
+        await submitManualDraftCreation(group_id, name);
+        return;
+      }
+
       const match_type = document.getElementById('tournament_match_type').value;
       const pairing_mode = document.getElementById('tournament_pairing_mode').value;
       const points_to_win = document.getElementById('tournament_points_to_win').value;
@@ -7795,6 +8048,7 @@ let userPool = null;
     }
 
     function renderTournament(t) {
+      if (t.format === 'manual_draft') { renderManualDraftTournament(t); return; }
       currentTournamentData = t;
       populateSubstitutionSection(t);
       renderTeamCompositionBars(t, 'team-composition-preview');
