@@ -1321,14 +1321,28 @@
             <div class="row">
               <div>
                 <label>Group-stage matches per tie
-                  <span class="info-tip" tabindex="0">i<span class="info-tip-text">When two squads face off in the group stage, that whole squad-vs-squad matchup is called a "tie". This is how many individual games make up one tie. E.g. 2 means each squad-vs-squad tie is decided over 2 individual games between players each leader picks &mdash; whoever wins more of those games wins the tie (a tie split 1-1 is broken by total points scored across both games).</span></span>
-                  <input type="number" id="draft_group_matches_per_tie" value="2" min="1">
+                  <span class="info-tip" tabindex="0">i<span class="info-tip-text">Squads play a round-robin: each squad faces every OTHER squad in its group once. Each of those one-on-one squad matchups is called a "tie", and this number is how many individual games decide THAT one tie &mdash; not how many games a squad/pair plays in total across the whole group stage. E.g. with 1, a squad plays exactly one decisive game against each opponent (so in a 4-squad group, a squad plays 3 games total &mdash; one per opponent). With 2, each opponent matchup is instead decided over 2 games against that SAME opponent (whoever wins more of those 2 wins the tie; a 1-1 split is broken by total points scored).</span></span>
+                  <input type="number" id="draft_group_matches_per_tie" value="1" min="1">
                 </label>
               </div>
               <div>
                 <label>Knockout matches per tie
                   <span class="info-tip" tabindex="0">i<span class="info-tip-text">Same idea as "Group-stage matches per tie", but for the knockout rounds (semifinal, final, etc) once the group stage is over &mdash; how many individual games decide each squad-vs-squad matchup at that later stage.</span></span>
                   <input type="number" id="draft_knockout_matches_per_tie" value="1" min="1">
+                </label>
+              </div>
+            </div>
+            <div class="row">
+              <div>
+                <label>Number of groups
+                  <span class="info-tip" tabindex="0">i<span class="info-tip-text">Splits your squads into this many separate named groups (Group A, Group B, ...) once the auction is done, with squads assigned randomly. Each squad only plays a round-robin against the OTHER squads in its own group, not squads in other groups. Leave this at 1 for a single round-robin across every squad instead (no separate groups, no one is eliminated before the knockout).</span></span>
+                  <input type="number" id="draft_num_groups" value="1" min="1">
+                </label>
+              </div>
+              <div>
+                <label>Squads advancing per group
+                  <span class="info-tip" tabindex="0">i<span class="info-tip-text">Only used when "Number of groups" is more than 1. Once a group's round-robin finishes, only the top N squads in that group's standings move on to the knockout bracket &mdash; everyone else in that group is done for the tournament. E.g. 2 means the top 2 of each group advance.</span></span>
+                  <input type="number" id="draft_advance_per_group" value="2" min="1">
                 </label>
               </div>
             </div>
