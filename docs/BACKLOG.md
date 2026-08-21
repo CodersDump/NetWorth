@@ -258,6 +258,38 @@
 
 ## Done
 
+- ✅ 2026-08-21 — **Staging deploy never set `--cache-control` on the frontend sync (prod's did) -
+  likely explanation for v1.44's FAB "working on mobile but not desktop" report.**
+  Owner reported the new floating record-match button rendered top-left and unpinned on desktop
+  (staying in normal document flow, scrolling away) but correctly bottom-right/fixed on mobile, and
+  that clicking it did nothing on desktop. Reproduced the real `frontend/` tree under a local HTTP
+  server (not `file://`, which resolves the site's absolute `/css/styles.css` against the filesystem
+  root instead of the page - a red herring caught before it wasted a fix) and drove it headlessly at a
+  1440x900 viewport: `#record-match-fab` computed to `position: fixed`, bottom-right, `border-radius:
+  50%`, stayed pinned through a scroll, and a click correctly switched to the Matches tab
+  (`location.hash` -> `#matches`). The shipped code has no bug. The most likely explanation left is
+  caching: `deploy-staging.yml`'s frontend sync step never set `--cache-control`, unlike `deploy.yml`
+  (prod) which always has - with no header at all, a browser or CloudFront can keep serving whatever it
+  cached from an earlier visit with no revalidation forced, so a desktop browser that had staging open
+  earlier in the session could easily still be running pre-v1.44 assets while a fresh mobile browser
+  fetches the real ones. Matched the staging sync to prod's `--cache-control "no-cache"` on all three
+  `aws s3 cp` calls. **Confirmed 2026-08-21** - owner hard-refreshed the affected desktop browser and
+  the FAB now works correctly, consistent with this being a stale-cache issue rather than a code bug
+  (a hard refresh bypasses cache regardless of server headers either way, so this alone can't prove the
+  `--cache-control` change was the fix vs. simply clearing the same stale cache - but the shipped
+  v1.44.0 code was already independently verified correct above, and this staging-only header fix is
+  zero-risk and matches prod's existing behavior, so it's being kept rather than reverted).
+  Files: `.github/workflows/deploy-staging.yml`.
+- ✅ 2026-08-21 (v1.44.2) — **Admin "rename a player" control (Owner request).** `PUT /players/{id}`
+  already accepted a `name` change (gated by the existing shared confirmation code, `update_player`,
+  `backend/lambdas/players/index.py:1754-1838`) but no admin UI ever called it with `name` - only
+  `adminSetPrivacy()` used that route, and only for `privacy_private`. Added a "Rename a player" control
+  in Settings admin tools, next to the existing "force a player's visibility" block: a player picker +
+  new-name field + Rename button, prompting for the confirmation code the same way
+  `removePlayerFromGroup()` does (`nwPrompt`), then `PUT`s `{name, confirm}`. Deliberately does **not**
+  touch `nickname` (the unique id) - this is purely for fixing a confusing/typo'd real name. No backend
+  change needed. Files: `frontend/index.html`, `frontend/js/app.js`
+  (`populateAdminRenameSelect`/`adminRenamePlayer`).
 - ✅ 2026-08-20 (v1.44.0) — **Floating "record a match" shortcut + enlarge-on-select tabs + redesigned
   the Flame card frame (all three Owner-requested).**
   (1) **Always-floating "+" to record a match.** A fixed `#record-match-fab` circular button
