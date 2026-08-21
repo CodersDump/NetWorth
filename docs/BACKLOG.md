@@ -334,15 +334,60 @@
 
 ## Done
 
+- ✅ 2026-08-21 (v1.54.0) — **Manual-mode tournaments: cross-squad groups ("one rep from every
+  squad in every group").** Same-day rush build (owner's live tournament, Rally Royale, started the
+  next morning) after the owner clarified their original ask more precisely: not whole squads split
+  across groups (v1.53.0's design), but each squad first fixing exactly `num_groups` doubles pairs (or
+  solo reps, for singles) upfront, then one of those fixed pairs from EVERY squad landing in EVERY
+  group - so a group is a cross-squad mini-pool, not 2+ whole squads facing off - with results rolling
+  back up to an overall per-squad leaderboard. Confirmed via two rounds of AskUserQuestion before
+  building (group makeup: whole squads vs one rep per squad; and what "set the pairs first" meant:
+  fixing doubles partnerships upfront vs previewing/editing a random split) given how much this
+  diverges from what v1.53.0 already shipped and tested - and a third question on timing, given the
+  event was less than 24 hours out, which the owner answered by choosing to rush it in rather than run
+  the event on the existing squads-mode groups or delay. New `manual_draft.group_mode` (`'squads'`
+  default - every existing tournament unaffected; `'cross_squad'` opts in). New
+  `POST .../set-squad-pairs` (organizer or that squad's own leader) - validates exactly `num_groups`
+  pairs, each the right size for `match_type`, each player an actual squad member used at most once.
+  New `_build_cross_squad_group_stage`: for each squad, shuffles which of its pre-fixed pairs lands in
+  which group (so it's not always the same pair in Group A), builds a rep entity per pair
+  (`{squad_id}::rep{n}`, carrying `parent_squad_id`), and - since a rep is already fully known the
+  instant it's built, unlike the leader-nominates-per-match flow the regular squads mode uses - a new
+  shared `_fill_cross_squad_match_players` helper pre-fills every match's players immediately, applied
+  everywhere a cross-squad tie gets built (the group stage, the first knockout round, later knockout
+  rounds, the third-place match) so score entry is available right away, no lineup step. New
+  `_tie_side_leader_id` resolves a tie's squad_a/squad_b (a rep_id here) back to the real leader id, so
+  `_authorize_tie_scorer` and the champion banner (`champion_squad_id`, plus a new `champion_rep_id`
+  naming exactly which pair won it) still work per-squad without a leader needing to know their rep's
+  synthetic id. `compute_squad_standings` now reads `item['squads']` merged with `item['reps']` (a
+  no-op for every non-cross-squad tournament); new `compute_squad_standings_by_parent` rolls a squad's
+  several reps back into one overall row - used for `get_tournament`'s `squad_standings` specifically
+  when `group_stage.cross_squad` is set, while the per-group breakdown (`group_standings`) stays
+  rep-level, since that's genuinely who plays within a group. `regenerate-schedule` (the repair action
+  from the fix earlier today) also accepts `group_mode`, so the owner's actual in-progress tournament
+  can switch from the already-generated squads-mode schedule into cross-squad mode in place, using the
+  same locked squads, no re-auction - switching back to `'squads'` clears the now-stale `item['reps']`.
+  Frontend: new "Set squad pairs" panel (squads_locked and group_stage, organizer or that squad's own
+  leader) with per-group pair pickers seeded from the squad's own members; a cross-squad tie's match
+  rows always render plain read-only names (never a lineup picker, since there's nothing to nominate)
+  and go straight to score entry; `draftSquadName` falls back to `item['reps']` and shows
+  "`<parent squad>` - `<rep name>`" for a rep_id; the "Fix group-stage settings" repair panel gained a
+  group-makeup selector defaulted to the tournament's current mode. New `/tmp/test_cross_squad_groups.py`
+  (22 checks: pair-setting validation, one-rep-per-squad-per-group placement, pre-filled match players,
+  scoring auth resolving rep→parent leader, a full group-stage-to-knockout playthrough, the
+  parent-rolled-up vs rep-level standings split, champion resolution, and the exact regenerate-schedule
+  repair flow used to fix the live tournament) and `/tmp/test_cross_squad_ui.js` (10 checks). Full
+  existing backend (18 files) and Playwright (8 files) suites re-verified passing throughout.
+
 - ✅ 2026-08-21 (v1.53.0) — **Manual-mode tournaments: real separate groups for the group stage.**
   Owner asked for genuine World-Cup-style groups after describing a scenario ("4 groups... every team
   playing 3 matches... whoever comes on top proceeds to knockout") that, worked through, turned out to
   be ambiguous with the existing single-round-robin behavior — clarified via two follow-up questions:
-  real separate groups (not the existing single round-robin), squads assigned randomly, and the top 2
-  per group (not top 1, not "everyone advances seeded") move on to a combined knockout. New
-  `manual_draft.num_groups` (default 1, so every existing manual-draft tournament is completely
-  unaffected — `generate_schedule` only takes the new code path when `num_groups > 1`) and
-  `manual_draft.advance_per_group` (default 2), both settable at creation. When grouped,
+  real separate groups (not the existing single round-robin), squads assigned randomly, and initially
+  the top 2 per group move on to a combined knockout, later corrected (same day) to default to just the
+  group winner - see below. New `manual_draft.num_groups` (default 1, so every existing manual-draft
+  tournament is completely unaffected — `generate_schedule` only takes the new code path when
+  `num_groups > 1`) and `manual_draft.advance_per_group` (default 1), both settable at creation. When grouped,
   `generate_schedule` randomly splits squads into `num_groups` named groups (A, B, C... via the same
   `ascii_uppercase` slicing the legacy `groups_then_knockout` format already uses) as evenly as
   possible, and builds a round-robin only within each group — every tie is tagged with its `group`.
@@ -374,6 +419,40 @@
   (4 checks: labeled group sections, one standings table per group not one combined table, the
   tiebreaker label, and that an ungrouped tournament's rendering is completely unaffected). Full
   existing backend (17 files) and Playwright (4 files) suites re-verified passing throughout.
+
+  **Two same-day follow-up fixes, folded into this same version rather than tagged separately since
+  none of it had been deployed yet:** (1) `advance_per_group`'s default changed from 2 to 1 -
+  owner picked "top 2" during design, then realized after the fact they only wanted the single group
+  winner to advance, and the field defaulting to 2 in the creation form made it easy to leave there by
+  accident (pure default-value change - `create_manual_draft_tournament`'s fallback and the creation
+  form's `#draft_advance_per_group` default; the field was always fully configurable per-tournament, so
+  every other code path needed no change). (2) Two real bugs found from actually using this on a live
+  tournament (owner's "Rally Royale", 4 squads, `num_groups=4`): first, the organizer-nominates-a-tie's-
+  lineup feature (v1.52.0, below) was backend-only - `pick_tie_player` already accepted an organizer's
+  `squad_id` to disambiguate which squad they're picking for, but `renderTieMatchRow`'s picker only ever
+  rendered for a tie's own two leaders, so an organizer viewing a tie had no on-screen control to use it
+  at all; fixed so a squad's own leader still gets the same editable picker as before, the *other*
+  squad's leader still just sees read-only text (editing an opposing squad's lineup was never coherent),
+  and anyone else (organizer or a spectator) now also gets an editable picker with `squad_id` sent
+  explicitly so the organizer's pick is disambiguated server-side - matches this app's existing "render
+  for everyone, let the server 403 a non-organizer" convention used for every other organizer-only
+  control. Second, `num_groups` validation only rejected values greater than the squad count, not values
+  that leave a group with just 1 squad - 4 squads split into `num_groups=4` silently produced 4 named
+  groups of 1 squad each, so 0 ties, 0 matches, nothing playable, no error at creation or schedule-
+  generation time; `generate_schedule`'s schedule-building logic was extracted into a shared
+  `_build_group_stage(item)` (used by both `generate_schedule` and the new endpoint below) which now
+  also rejects any `num_groups` where `len(squad_ids) < num_groups * 2`, naming the largest valid
+  `num_groups` for that squad count in the error. Because the owner's actual tournament was already
+  stuck in that degenerate state with real locked squads, also added
+  `POST /tournament-draft/{id}/regenerate-schedule` - organizer-only, only while still `group_stage` and
+  genuinely nothing in it has been played yet (checked directly, so a real result is never silently
+  discarded); optionally updates `manual_draft.num_groups`/`advance_per_group` from the request body,
+  then reruns `_build_group_stage` to rebuild the schedule from the tournament's existing (untouched)
+  squads - no need to redo the whole leader/pool/auction process over a group-count mistake. New "Fix
+  group-stage settings" panel on the frontend's group-stage view (organizer-only, server-enforced)
+  offers this inline. `/tmp/test_manual_draft_groups.py` grew from 12 to 18 checks covering both fixes;
+  `/tmp/test_draft_schedule_ui.js` gained an organizer-viewpoint check (sees editable pickers on both
+  sides of a tie, with `squad_id` included) and a regenerate-panel-presence check.
 
 - ✅ 2026-08-21 (v1.52.0) — **Manual-mode tournaments: organizer can also set a tie's lineup, squad
   renaming, and (i) tooltips on the creation form.** Three owner requests handled together.

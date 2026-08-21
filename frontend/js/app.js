@@ -8038,8 +8038,85 @@ let userPool = null;
       html += `<button type="button" onclick="generateDraftSchedule('${t.tournament_id}')">Generate schedule</button>
         <div id="draft-generate-schedule-status" class="result"></div>`;
       html += '</div>';
+      html += renderSetSquadPairsPanel(t);
       html += renderSquadRosterEditPanel(t, true);
       return html;
+    }
+
+    function renderSetSquadPairsPanel(t) {
+      // Cross-squad group mode (owner request, 2026-08-21): before groups
+      // are generated, each squad's own leader (or the organizer) fixes
+      // exactly num_groups pairs (or solo reps, for singles) for their own
+      // squad - one to represent it in every group. Deliberately NOT
+      // gated on manual_draft.group_mode already being 'cross_squad' -
+      // set_squad_pairs itself doesn't require that either - because
+      // switching group_mode to cross_squad via the regenerate panel below
+      // requires pairs to already be set, so gating this panel on
+      // group_mode already being cross_squad would make it impossible to
+      // ever get there. Shown whenever there's more than one group to
+      // fill (pairs are meaningless with a single group).
+      const numGroups = (t.manual_draft || {}).num_groups || 1;
+      if (numGroups < 2) return '';
+      const squads = t.squads || {};
+      const squadIds = Object.keys(squads);
+      if (!squadIds.length) return '';
+      const matchType = (t.manual_draft || {}).match_type || 'singles';
+      const slotsPerPair = matchType === 'doubles' ? 2 : 1;
+      const unitWord = matchType === 'doubles' ? 'pair' : 'player';
+
+      let html = `<div class="card" style="margin-top:10px;">
+        <h4 style="font-size:14px;margin:0 0 4px;">Set squad pairs (cross-squad groups)</h4>
+        <p class="card-sub" style="margin:0 0 8px;">Organizer, or that squad's own leader. Each squad needs exactly ${numGroups} ${unitWord}${numGroups !== 1 ? 's' : ''} set - one to represent it in every group - before groups can be generated.</p>`;
+
+      squadIds.forEach(sid => {
+        const squad = squads[sid];
+        const members = squad.members || [];
+        const currentPairs = squad.pairs || [];
+        html += `<div style="margin-bottom:10px;padding-bottom:8px;border-bottom:1px solid var(--border);">
+          <strong style="font-size:13px;">${escapeHtml(squad.name)}</strong>`;
+        if (currentPairs.length === numGroups) {
+          html += `<div class="card-sub" style="margin:2px 0 4px;">Currently set: ${currentPairs.map(p => p.map(pid => escapeHtml(draftPlayerName(pid))).join(' & ')).join(', ')}</div>`;
+        }
+        for (let g = 0; g < numGroups; g++) {
+          const current = currentPairs[g] || [];
+          html += `<div style="display:flex;gap:4px;align-items:center;margin:2px 0;font-size:12px;flex-wrap:wrap;">
+            <span style="min-width:60px;">Group ${g + 1}:</span>`;
+          for (let s = 0; s < slotsPerPair; s++) {
+            const selId = `pairset-${t.tournament_id}-${sid}-${g}-${s}`;
+            html += `<select id="${selId}"><option value="">- pick -</option>` +
+              members.map(pid => `<option value="${pid}" ${current[s] === pid ? 'selected' : ''}>${escapeHtml(draftPlayerName(pid))}</option>`).join('') +
+              `</select>`;
+          }
+          html += '</div>';
+        }
+        html += `<button type="button" class="secondary" onclick="saveSquadPairs('${t.tournament_id}','${sid}',${numGroups},${slotsPerPair})">Save ${escapeHtml(squad.name)}'s pairs</button>
+          <div id="pairset-status-${sid}" class="result"></div>
+        </div>`;
+      });
+
+      html += '</div>';
+      return html;
+    }
+
+    async function saveSquadPairs(tournamentId, squadId, numGroups, slotsPerPair) {
+      const statusEl = document.getElementById(`pairset-status-${squadId}`);
+      const pairs = [];
+      for (let g = 0; g < numGroups; g++) {
+        const pair = [];
+        for (let s = 0; s < slotsPerPair; s++) {
+          const el = document.getElementById(`pairset-${tournamentId}-${squadId}-${g}-${s}`);
+          if (!el || !el.value) { if (statusEl) statusEl.textContent = `Fill in every player for group ${g + 1} first.`; return; }
+          pair.push(el.value);
+        }
+        pairs.push(pair);
+      }
+      if (statusEl) statusEl.textContent = 'Saving...';
+      const { res, data, error } = await authedFetch(`${API_BASE_URL}/tournament-draft/${tournamentId}/set-squad-pairs`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ squad_id: squadId, pairs })
+      });
+      if (!res.ok) { if (statusEl) statusEl.textContent = `Error: ${error || (data && data.error)}`; nwAlert((data && data.error) || error || 'Could not save pairs'); return; }
+      renderTournament(data);
     }
 
     async function generateDraftSchedule(tournamentId) {
@@ -8180,7 +8257,17 @@ let userPool = null;
 
     function draftSquadName(t, squadId) {
       const sq = (t.squads || {})[squadId];
-      return sq ? sq.name : squadId;
+      if (sq) return sq.name;
+      // Cross-squad group mode (owner request, 2026-08-21): squadId may be
+      // a rep_id (a squad's pre-fixed pair for one group), not a real
+      // squad - show it as "<parent squad> - <pair/player names>" so it's
+      // still clear whose rep this is.
+      const rep = (t.reps || {})[squadId];
+      if (rep) {
+        const parent = (t.squads || {})[rep.parent_squad_id];
+        return parent ? `${parent.name} - ${rep.name}` : rep.name;
+      }
+      return squadId;
     }
 
     function renderDraftScheduleView(t) {
@@ -8213,8 +8300,56 @@ let userPool = null;
         if (t.knockout.third_place_match) html += renderTieSection('Third place', [t.knockout.third_place_match], t, 'knockout');
       }
       if (t.player_tournament_stats && t.player_tournament_stats.length) html += renderPlayerTournamentStatsTable(t.player_tournament_stats);
+      // Organizer repair action: only while still in the group stage AND
+      // nothing's been played yet (server re-checks both) - lets a
+      // misconfiguration (e.g. num_groups that leaves a group with only 1
+      // squad, so it has no matches) get fixed without redoing the whole
+      // leader/pool/auction process, since squads stay locked and untouched.
+      if (t.status === 'group_stage') { html += renderSetSquadPairsPanel(t); html += renderRegenerateScheduleGroupPanel(t); }
       if (t.status !== 'completed') html += renderSquadRosterEditPanel(t, false); // substitution only - moving between squads no longer makes sense once ties exist
       return html;
+    }
+
+    function renderRegenerateScheduleGroupPanel(t) {
+      const md = t.manual_draft || {};
+      return `<div class="card" style="margin-top:10px;">
+        <h4 style="font-size:14px;margin:0 0 4px;">Fix group-stage settings</h4>
+        <p class="card-sub" style="margin:0 0 8px;">Organizer only, and only while no group-stage match has been played yet. Changes the group settings, then rebuilds the whole group-stage schedule from scratch. In "cross-squad" mode, set every squad's pairs above first.</p>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:8px;">
+          <label style="font-size:12px;">Number of groups<br>
+            <input type="number" id="regen-num-groups" min="1" value="${md.num_groups || 1}" style="width:70px;">
+          </label>
+          <label style="font-size:12px;">Squads advancing per group<br>
+            <input type="number" id="regen-advance-per-group" min="1" value="${md.advance_per_group || 1}" style="width:70px;">
+          </label>
+          <label style="font-size:12px;">Group makeup<br>
+            <select id="regen-group-mode">
+              <option value="squads" ${md.group_mode !== 'cross_squad' ? 'selected' : ''}>Whole squads per group</option>
+              <option value="cross_squad" ${md.group_mode === 'cross_squad' ? 'selected' : ''}>One rep per squad, per group</option>
+            </select>
+          </label>
+          <button type="button" class="secondary" onclick="regenerateDraftSchedule('${t.tournament_id}')">Rebuild schedule</button>
+        </div>
+        <div id="draft-regenerate-schedule-status" class="result"></div>
+      </div>`;
+    }
+
+    async function regenerateDraftSchedule(tournamentId) {
+      const statusEl = document.getElementById('draft-regenerate-schedule-status');
+      const numGroupsEl = document.getElementById('regen-num-groups');
+      const advanceEl = document.getElementById('regen-advance-per-group');
+      const groupModeEl = document.getElementById('regen-group-mode');
+      const num_groups = numGroupsEl ? numGroupsEl.value : undefined;
+      const advance_per_group = advanceEl ? advanceEl.value : undefined;
+      const group_mode = groupModeEl ? groupModeEl.value : undefined;
+      if (!await nwConfirm('This throws away the current group-stage schedule (only allowed while nothing has been played yet) and rebuilds it with these settings. Continue?')) return;
+      if (statusEl) statusEl.textContent = 'Rebuilding...';
+      const { res, data, error } = await authedFetch(`${API_BASE_URL}/tournament-draft/${tournamentId}/regenerate-schedule`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ num_groups, advance_per_group, group_mode })
+      });
+      if (!res.ok) { if (statusEl) statusEl.textContent = `Error: ${error || (data && data.error)}`; nwAlert((data && data.error) || error || 'Could not rebuild the schedule'); return; }
+      renderTournament(data);
     }
 
     function renderSquadStandingsTable(standings) {
@@ -8272,17 +8407,39 @@ let userPool = null;
       const squadAMembers = ((t.squads || {})[tie.squad_a] || {}).members || [];
       const squadBMembers = ((t.squads || {})[tie.squad_b] || {}).members || [];
       const matchType = (t.manual_draft || {}).match_type || 'singles';
+      const crossSquad = !!(t.group_stage && t.group_stage.cross_squad);
       let aCell, bCell;
-      if (m.played) {
-        aCell = escapeHtml(m.player_a.name);
-        bCell = escapeHtml(m.player_b.name);
+      if (m.played || crossSquad) {
+        // Cross-squad group mode (owner request, 2026-08-21): each side is
+        // a fixed rep unit (a pair/player the squad's leader already set
+        // via "set squad pairs" before groups were generated), not a
+        // squad whose leader picks who plays match-by-match - so there's
+        // never a lineup to nominate here, just names, win or lose.
+        aCell = m.player_a ? escapeHtml(m.player_a.name) : '<span class="card-sub">TBD</span>';
+        bCell = m.player_b ? escapeHtml(m.player_b.name) : '<span class="card-sub">TBD</span>';
       } else {
+        // The organizer can also set either side's lineup (in consultation
+        // with that squad's leader - owner request, 2026-08-21), not just
+        // that squad's own leader. There's no reliable client-side "am I
+        // the organizer" flag (auth here is fully server-enforced, matching
+        // this app's existing convention - see renderSquadRosterEditPanel),
+        // so: a squad's own leader always gets an editable picker with no
+        // squad_id (the original leader path); the OTHER squad's leader
+        // still just sees read-only text, since editing an opposing squad's
+        // lineup is never coherent; anyone else (organizer or a spectator)
+        // gets an editable picker with squad_id sent explicitly, so the
+        // organizer's pick is disambiguated - a non-organizer spectator who
+        // tries just gets the resulting 403 back as an alert.
         aCell = iLeadA
           ? draftPlayerPickerHtml(t.tournament_id, tie.tie_id, idx, squadAMembers, m.player_a, matchType)
-          : (m.player_a ? escapeHtml(m.player_a.name) : '<span class="card-sub">TBD</span>');
+          : (iLeadB
+            ? (m.player_a ? escapeHtml(m.player_a.name) : '<span class="card-sub">TBD</span>')
+            : draftPlayerPickerHtml(t.tournament_id, tie.tie_id, idx, squadAMembers, m.player_a, matchType, tie.squad_a));
         bCell = iLeadB
           ? draftPlayerPickerHtml(t.tournament_id, tie.tie_id, idx, squadBMembers, m.player_b, matchType)
-          : (m.player_b ? escapeHtml(m.player_b.name) : '<span class="card-sub">TBD</span>');
+          : (iLeadA
+            ? (m.player_b ? escapeHtml(m.player_b.name) : '<span class="card-sub">TBD</span>')
+            : draftPlayerPickerHtml(t.tournament_id, tie.tie_id, idx, squadBMembers, m.player_b, matchType, tie.squad_b));
       }
       let scoreCell;
       if (m.played) {
@@ -8305,7 +8462,7 @@ let userPool = null;
       </div>`;
     }
 
-    function draftPlayerPickerHtml(tournamentId, tieId, matchIndex, members, currentEntity, matchType) {
+    function draftPlayerPickerHtml(tournamentId, tieId, matchIndex, members, currentEntity, matchType, squadIdForOrganizer) {
       if (matchType === 'doubles') {
         // Doubles needs two players nominated together, not one at a time -
         // two selects plus an explicit "Set pair" button (rather than firing
@@ -8314,14 +8471,16 @@ let userPool = null;
         const opts = (selected) => members.map(pid =>
           `<option value="${pid}" ${pid === selected ? 'selected' : ''}>${escapeHtml(draftPlayerName(pid))}</option>`).join('');
         const uid = `${tieId}-${matchIndex}`;
+        const squadArg = squadIdForOrganizer ? `,'${squadIdForOrganizer}'` : '';
         return `<div style="display:flex;gap:4px;flex-wrap:wrap;align-items:center;">
           <select id="tie-pair-1-${uid}"><option value="">- player 1 -</option>${opts(current[0])}</select>
           <select id="tie-pair-2-${uid}"><option value="">- player 2 -</option>${opts(current[1])}</select>
-          <button type="button" class="secondary" onclick="pickTiePlayerPair('${tournamentId}','${tieId}',${matchIndex})">Set pair</button>
+          <button type="button" class="secondary" onclick="pickTiePlayerPair('${tournamentId}','${tieId}',${matchIndex}${squadArg})">Set pair</button>
         </div>`;
       }
       const currentId = currentEntity ? currentEntity.player_id : '';
-      let html = `<select onchange="pickTiePlayer('${tournamentId}','${tieId}',${matchIndex}, this.value)"><option value="">- pick -</option>`;
+      const squadArg = squadIdForOrganizer ? `,'${squadIdForOrganizer}'` : '';
+      let html = `<select onchange="pickTiePlayer('${tournamentId}','${tieId}',${matchIndex}, this.value${squadArg})"><option value="">- pick -</option>`;
       members.forEach(pid => {
         html += `<option value="${pid}" ${pid === currentId ? 'selected' : ''}>${escapeHtml(draftPlayerName(pid))}</option>`;
       });
@@ -8329,25 +8488,29 @@ let userPool = null;
       return html;
     }
 
-    async function pickTiePlayer(tournamentId, tieId, matchIndex, playerId) {
+    async function pickTiePlayer(tournamentId, tieId, matchIndex, playerId, squadId) {
       if (!playerId) return;
+      const body = { tie_id: tieId, match_index: matchIndex, player_id: playerId };
+      if (squadId) body.squad_id = squadId;
       const { res, data, error } = await authedFetch(`${API_BASE_URL}/tournament-draft/${tournamentId}/pick-tie-player`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tie_id: tieId, match_index: matchIndex, player_id: playerId })
+        body: JSON.stringify(body)
       });
       if (!res.ok) { nwAlert(error || (data && data.error) || 'Could not set that lineup pick'); return; }
       renderTournament(data);
     }
 
-    async function pickTiePlayerPair(tournamentId, tieId, matchIndex) {
+    async function pickTiePlayerPair(tournamentId, tieId, matchIndex, squadId) {
       const uid = `${tieId}-${matchIndex}`;
       const p1 = document.getElementById(`tie-pair-1-${uid}`);
       const p2 = document.getElementById(`tie-pair-2-${uid}`);
       if (!p1 || !p1.value || !p2 || !p2.value) { nwAlert('Pick both players for the pair first.'); return; }
       if (p1.value === p2.value) { nwAlert('Pick two different players for the pair.'); return; }
+      const body = { tie_id: tieId, match_index: matchIndex, player_ids: [p1.value, p2.value] };
+      if (squadId) body.squad_id = squadId;
       const { res, data, error } = await authedFetch(`${API_BASE_URL}/tournament-draft/${tournamentId}/pick-tie-player`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tie_id: tieId, match_index: matchIndex, player_ids: [p1.value, p2.value] })
+        body: JSON.stringify(body)
       });
       if (!res.ok) { nwAlert(error || (data && data.error) || 'Could not set that lineup pair'); return; }
       renderTournament(data);
