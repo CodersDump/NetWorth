@@ -334,6 +334,31 @@
 
 ## Done
 
+- ✅ 2026-08-21 (v1.54.0) — **Manual-mode tournaments: live score polling for the schedule view.**
+  Owner report during the live Rally Royale event: "the live score is not coming up for these
+  matches." Root cause: the group_stage/knockout/completed view was only ever fetched once, at page
+  load - a score entered on the organizer's own device (or any leader's) never reached anyone else's
+  already-open tab (spectators watching on their phones, other leaders) without a manual reload; no
+  caching layer was involved (ruled out explicitly - neither the Lambda responses, API Gateway, nor
+  CloudFront cache tournament API data; CloudFront only fronts the static frontend bundle). New
+  `startSchedulePolling`/`stopSchedulePolling`/`schedulePollTick` mirror the existing manual-draft
+  auction poller (`startDraftPolling`) but for the schedule view: a 5s interval, started whenever
+  `renderManualDraftTournament` renders `group_stage`/`knockout`/`completed`, stopped on every other
+  status and when the Tournaments tab is no longer active (wired into `activateTab`) - paused
+  automatically while the browser tab is hidden or backgrounded, and given an immediate catch-up tick
+  on `visibilitychange` back to visible, same as the auction poller. Uses the existing public,
+  redaction-safe `fetchTournamentDetail`, so it works for logged-out spectators too, not just the
+  organizer/leaders. Two things kept it from being disruptive rather than helpful: a tick is skipped
+  entirely while the viewer's focus is inside the tournament detail panel (mid-typing a score, or a
+  dropdown open) so an in-progress input is never yanked away every 5s; and a tick that finds no actual
+  change to `group_stage`/`knockout`/`status`/`champion_squad_id` skips the re-render, so an idle tab
+  isn't silently re-painting (and losing scroll position) for nothing. New
+  `/tmp/test_schedule_live_poll_ui.js` (8 checks: polling auto-starts on group_stage, a real change
+  re-renders with the new score, a no-change tick renders zero times, a tick is skipped while an input
+  inside the panel has focus and lands on the next tick once focus moves away, and polling stops on
+  every non-schedule status and on leaving the Tournaments tab). Full existing backend (18 files) and
+  Playwright (9 files) suites re-verified passing throughout.
+
 - ✅ 2026-08-21 (v1.54.0) — **Manual-mode tournaments: cross-squad groups ("one rep from every
   squad in every group").** Same-day rush build (owner's live tournament, Rally Royale, started the
   next morning) after the owner clarified their original ask more precisely: not whole squads split
@@ -367,17 +392,33 @@
   from the fix earlier today) also accepts `group_mode`, so the owner's actual in-progress tournament
   can switch from the already-generated squads-mode schedule into cross-squad mode in place, using the
   same locked squads, no re-auction - switching back to `'squads'` clears the now-stale `item['reps']`.
-  Frontend: new "Set squad pairs" panel (squads_locked and group_stage, organizer or that squad's own
-  leader) with per-group pair pickers seeded from the squad's own members; a cross-squad tie's match
-  rows always render plain read-only names (never a lineup picker, since there's nothing to nominate)
-  and go straight to score entry; `draftSquadName` falls back to `item['reps']` and shows
-  "`<parent squad>` - `<rep name>`" for a rep_id; the "Fix group-stage settings" repair panel gained a
-  group-makeup selector defaulted to the tournament's current mode. New `/tmp/test_cross_squad_groups.py`
-  (22 checks: pair-setting validation, one-rep-per-squad-per-group placement, pre-filled match players,
-  scoring auth resolving rep→parent leader, a full group-stage-to-knockout playthrough, the
-  parent-rolled-up vs rep-level standings split, champion resolution, and the exact regenerate-schedule
-  repair flow used to fix the live tournament) and `/tmp/test_cross_squad_ui.js` (10 checks). Full
-  existing backend (18 files) and Playwright (8 files) suites re-verified passing throughout.
+  Frontend: new "Pairing" panel (squads_locked and group_stage, organizer or that squad's own leader,
+  shown whenever there's more than one group regardless of the tournament's current `group_mode` - since
+  pairs must exist before a tournament can ever switch into `cross_squad`) with pair pickers per squad,
+  labeled plainly "Pair 1:", "Pair 2:", etc - deliberately NOT "Group 1:"/"Group 2:", since which pair
+  lands in which named group is decided randomly at generation time, not chosen here (an owner complaint,
+  caught same-day: the first version of this panel implied the user picked the group, and a stale
+  degenerate group_stage view - each of 4 named groups showing a single lone squad name with 0-0-0
+  standings, left over from a pre-cross-squad `num_groups` misconfiguration - was rendering above it,
+  which read as broken/hallucinated). A single "Generate groups (random, one pair from every squad in
+  each)" button now lives directly in the Pairing panel and drives both first-time generation
+  (`generate-schedule`) and in-place repair (`regenerate-schedule`) via one function
+  (`generateCrossSquadGroups`), since `generate_schedule` now also accepts the same `group_mode`
+  override `regenerate_schedule` already did. `renderDraftScheduleView` now detects a degenerate
+  group_stage (`groups` present but zero total ties across all of them) and shows a plain "No
+  group-stage matches yet - finish the setup below, then generate groups." message instead of the
+  misleading per-group squad-name cards. A cross-squad tie's match rows always render plain read-only
+  names (never a lineup picker, since there's nothing to nominate) and go straight to score entry;
+  `draftSquadName` falls back to `item['reps']` and shows "`<parent squad>` - `<rep name>`" for a
+  rep_id; the "Fix group-stage settings" repair panel gained a group-makeup selector defaulted to the
+  tournament's current mode. New `/tmp/test_cross_squad_groups.py` (23 checks: pair-setting validation,
+  one-rep-per-squad-per-group placement, pre-filled match players, scoring auth resolving rep→parent
+  leader, a full group-stage-to-knockout playthrough, the parent-rolled-up vs rep-level standings split,
+  champion resolution, the exact regenerate-schedule repair flow used to fix the live tournament, and
+  `generate_schedule`'s own `group_mode` override) and `/tmp/test_cross_squad_ui.js` (16 checks,
+  including the "Pair N:" vs "Group N:" labeling and the degenerate-view fallback message). Full
+  existing backend (18 files) and Playwright (8 files) suites re-verified passing throughout, including
+  after this same-day UX correction.
 
 - ✅ 2026-08-21 (v1.53.0) — **Manual-mode tournaments: real separate groups for the group stage.**
   Owner asked for genuine World-Cup-style groups after describing a scenario ("4 groups... every team

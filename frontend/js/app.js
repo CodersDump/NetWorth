@@ -110,6 +110,10 @@ let userPool = null;
       if (document.visibilityState === 'visible' && typeof draftPollTournamentId !== 'undefined' && draftPollTournamentId) {
         pollDraftStateTick(draftPollTournamentId);
       }
+      // Same instant-refresh-on-wake treatment for live score polling.
+      if (document.visibilityState === 'visible' && typeof schedulePollTournamentId !== 'undefined' && schedulePollTournamentId) {
+        schedulePollTick(schedulePollTournamentId);
+      }
     });
 
     function describeApiError(res, data) {
@@ -7441,6 +7445,7 @@ let userPool = null;
 
       if (t.status === 'pools_open' || t.status === 'pools_locked') {
         stopDraftPolling();
+        stopSchedulePolling();
         if (poolsHidden) {
           html += '<div class="card"><p class="card-sub">Pools are being organized. Only the organizer and this tournament\'s leaders can see the pool board while this is in progress.</p></div>';
         } else {
@@ -7449,6 +7454,7 @@ let userPool = null;
           if (t.status === 'pools_locked') html += renderDraftStartAuctionPanel(t);
         }
       } else if (t.status === 'auction') {
+        stopSchedulePolling();
         if (draftHidden) {
           stopDraftPolling();
           html += '<div class="card"><p class="card-sub">The auction is underway. Only the organizer and this tournament\'s leaders can see live bidding detail.</p></div>';
@@ -7457,17 +7463,24 @@ let userPool = null;
         }
       } else if (t.status === 'squads_locked') {
         stopDraftPolling();
+        stopSchedulePolling();
         html += renderDraftSquadsReview(t);
       } else if (t.status === 'group_stage' || t.status === 'knockout' || t.status === 'completed') {
         stopDraftPolling();
         html += renderDraftScheduleView(t);
       } else {
         stopDraftPolling();
+        stopSchedulePolling();
         html += '<p class="card-sub">Unknown tournament state.</p>';
       }
 
       el.innerHTML = html;
       if (t.status === 'auction' && !draftHidden) startDraftPolling(t.tournament_id);
+      // Live score polling: keep it running through 'completed' too (not
+      // just group_stage/knockout) so the final score/champion banner
+      // still lands for anyone who had the page open when the last match
+      // finished, without them needing to reload.
+      if (t.status === 'group_stage' || t.status === 'knockout' || t.status === 'completed') startSchedulePolling(t.tournament_id);
       // squad_standings/player_tournament_stats only come from the plain
       // GET /tournaments/{id} read (get_tournament attaches them there,
       // never on a write response - same "never persisted, always
@@ -7515,6 +7528,65 @@ let userPool = null;
         // has already navigated to a different tournament.
         if (currentTournamentData && currentTournamentData.tournament_id === tournamentId) renderTournament(data);
       } catch (err) { /* best-effort background refresh - ignore failures */ }
+    }
+
+    /** Live score polling for the group_stage/knockout schedule view (owner
+     *  report, 2026-08-21, during Rally Royale): scores were only ever
+     *  fetched once, on page load - the organizer scoring a match on their
+     *  own phone never reached anyone else's already-open tab (spectators,
+     *  other leaders) without a manual reload. This mirrors the existing
+     *  manual-draft auction poller (startDraftPolling/pollDraftStateTick
+     *  above) but for the schedule view instead of the bid room, and
+     *  reuses the same public, redaction-safe fetchTournamentDetail so it
+     *  works for logged-out spectators too.
+     *
+     *  Two things this deliberately does to avoid being annoying/disruptive
+     *  rather than helpful:
+     *  - Skips the tick entirely while the viewer has focus inside the
+     *    tournament detail panel (mid-typing a score, or a dropdown open) -
+     *    a full re-render would otherwise yank that input away every 5s.
+     *  - Skips the re-render (even once fetched) when nothing about the
+     *    schedule/scores/status actually changed, so an idle tab isn't
+     *    silently re-painting and losing scroll position for no reason. */
+    let schedulePollTimer = null;
+    let schedulePollTournamentId = null;
+
+    function stopSchedulePolling() {
+      if (schedulePollTimer) { clearInterval(schedulePollTimer); schedulePollTimer = null; }
+      schedulePollTournamentId = null;
+    }
+
+    function startSchedulePolling(tournamentId) {
+      if (schedulePollTournamentId === tournamentId && schedulePollTimer) return; // already polling this one
+      stopSchedulePolling();
+      schedulePollTournamentId = tournamentId;
+      schedulePollTimer = setInterval(() => schedulePollTick(tournamentId), 5000);
+    }
+
+    // Same rationale as isDraftPollingActiveFor: lets the Playwright suite
+    // (and anything else outside this closure) check the loop's state
+    // without reaching into module internals.
+    function isSchedulePollingActiveFor(tournamentId) { return schedulePollTournamentId === tournamentId; }
+
+    async function schedulePollTick(tournamentId) {
+      if (schedulePollTournamentId !== tournamentId) return; // a newer poll loop has since replaced this one
+      if (document.visibilityState !== 'visible') return; // paused while the tab/window is hidden
+      const tabPanel = document.getElementById('tab-tournaments');
+      if (!tabPanel || !tabPanel.classList.contains('active')) return; // paused once we've left the tab
+      const detailEl = document.getElementById('tournament-detail');
+      const active = document.activeElement;
+      if (detailEl && active && active !== document.body && detailEl.contains(active)) return; // don't yank an in-progress input away
+      try {
+        const { res, data } = await fetchTournamentDetail(tournamentId);
+        if (!res.ok || !data) return;
+        if (!currentTournamentData || currentTournamentData.tournament_id !== tournamentId) return;
+        const unchanged = JSON.stringify(data.group_stage) === JSON.stringify(currentTournamentData.group_stage) &&
+          JSON.stringify(data.knockout) === JSON.stringify(currentTournamentData.knockout) &&
+          data.status === currentTournamentData.status &&
+          data.champion_squad_id === currentTournamentData.champion_squad_id;
+        if (unchanged) return;
+        renderTournament(data);
+      } catch (err) { /* transient network hiccup - just skip this tick, no alert spam */ }
     }
 
     function renderDraftLeaderPicker(t) {
@@ -8065,8 +8137,8 @@ let userPool = null;
       const unitWord = matchType === 'doubles' ? 'pair' : 'player';
 
       let html = `<div class="card" style="margin-top:10px;">
-        <h4 style="font-size:14px;margin:0 0 4px;">Set squad pairs (cross-squad groups)</h4>
-        <p class="card-sub" style="margin:0 0 8px;">Organizer, or that squad's own leader. Each squad needs exactly ${numGroups} ${unitWord}${numGroups !== 1 ? 's' : ''} set - one to represent it in every group - before groups can be generated.</p>`;
+        <h4 style="font-size:14px;margin:0 0 4px;">Pairing</h4>
+        <p class="card-sub" style="margin:0 0 8px;">Organizer, or that squad's own leader. Set ${numGroups} ${unitWord}${numGroups !== 1 ? 's' : ''} per squad - which pair lands in which group is decided randomly when you generate groups below, not here.</p>`;
 
       squadIds.forEach(sid => {
         const squad = squads[sid];
@@ -8080,7 +8152,7 @@ let userPool = null;
         for (let g = 0; g < numGroups; g++) {
           const current = currentPairs[g] || [];
           html += `<div style="display:flex;gap:4px;align-items:center;margin:2px 0;font-size:12px;flex-wrap:wrap;">
-            <span style="min-width:60px;">Group ${g + 1}:</span>`;
+            <span style="min-width:50px;">Pair ${g + 1}:</span>`;
           for (let s = 0; s < slotsPerPair; s++) {
             const selId = `pairset-${t.tournament_id}-${sid}-${g}-${s}`;
             html += `<select id="${selId}"><option value="">- pick -</option>` +
@@ -8094,8 +8166,27 @@ let userPool = null;
         </div>`;
       });
 
-      html += '</div>';
+      html += `<button type="button" onclick="generateCrossSquadGroups('${t.tournament_id}','${t.status}')">Generate groups (random, one pair per squad in each)</button>
+        <div id="draft-cross-squad-generate-status" class="result"></div>
+      </div>`;
       return html;
+    }
+
+    async function generateCrossSquadGroups(tournamentId, status) {
+      const statusEl = document.getElementById('draft-cross-squad-generate-status');
+      if (!await nwConfirm('This builds (or rebuilds) the groups - one pair from every squad, randomly placed into each of the named groups. Only works while every squad has its pairs saved and (if rebuilding) nothing has been played yet. Continue?')) return;
+      if (statusEl) statusEl.textContent = 'Generating...';
+      // squads_locked (no schedule yet) uses generate-schedule; group_stage
+      // (already has a schedule, possibly the old whole-squads one) uses
+      // regenerate-schedule instead - both now accept the same group_mode
+      // override, so this is the only difference between the two calls.
+      const routeSuffix = status === 'squads_locked' ? 'generate-schedule' : 'regenerate-schedule';
+      const { res, data, error } = await authedFetch(`${API_BASE_URL}/tournament-draft/${tournamentId}/${routeSuffix}`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ group_mode: 'cross_squad' })
+      });
+      if (!res.ok) { if (statusEl) statusEl.textContent = `Error: ${error || (data && data.error)}`; nwAlert((data && data.error) || error || 'Could not generate groups - check every squad has its pairs saved'); return; }
+      renderTournament(data);
     }
 
     async function saveSquadPairs(tournamentId, squadId, numGroups, slotsPerPair) {
@@ -8276,7 +8367,17 @@ let userPool = null;
         html += `<div class="card" style="margin-top:10px;text-align:center;"><h4 style="font-size:16px;margin:0;">Champion: ${escapeHtml(draftSquadName(t, t.champion_squad_id))}</h4></div>`;
       }
       const groups = t.group_stage && t.group_stage.groups;
-      if (groups && t.group_standings) {
+      const hasAnyTies = t.group_stage && (t.group_stage.ties || []).length > 0;
+      if (groups && !hasAnyTies) {
+        // A group with no ties at all (e.g. a stale schedule from before a
+        // group-count fix, or before cross-squad pairs/groups have been
+        // generated yet) has nothing worth showing - one lone squad name
+        // and a meaningless 0-0-0 row per group reads as broken, not
+        // "not started yet". Say so plainly instead, and skip straight to
+        // whatever setup panel (pairs, or the group-stage settings fix) is
+        // below.
+        html += `<div class="card" style="margin-top:10px;"><p class="card-sub" style="margin:0;">No group-stage matches yet - finish the setup below, then generate groups.</p></div>`;
+      } else if (groups && t.group_standings) {
         // Real separate groups (owner request, 2026-08-21): one section per
         // named group, each with its OWN standings table and only that
         // group's own ties - not a single combined table/list, since
@@ -9533,6 +9634,7 @@ let userPool = null;
       // Tournaments tab is showing - stop it the instant we leave, so it
       // never keeps hitting the API in the background from another tab.
       if (tabName !== 'tournaments' && typeof stopDraftPolling === 'function') stopDraftPolling();
+      if (tabName !== 'tournaments' && typeof stopSchedulePolling === 'function') stopSchedulePolling();
       document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
       document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
       btn.classList.add('active');
