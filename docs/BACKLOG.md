@@ -45,6 +45,24 @@
   - **Phase D - DONE (see Done section, 2026-08-21).** Auth-hardening test matrix across every route
     from Phases A/B/C plus organizer-assign, and a real fix for `substitute_player` (both the
     squad-name-rebuild bug and a newly-found crash on manual-draft tournaments).
+  - **Pool/auction privacy — DONE (see Done section, 2026-08-21).** Owner request: pool assignments and
+    auction budgets/bids restricted to the organizer, and to leaders only while that phase is still
+    live - never the general public, and never at all once the phase has passed (leaders included).
+  - **Decimal-from-DynamoDB crash on Generate schedule — FIXED (see Done section, 2026-08-21).** Real
+    production bug the owner hit live: `range(matches_per_tie)` blew up because DynamoDB always returns
+    stored numbers as `decimal.Decimal`, not `int`.
+  - **Organizer-assign leader dropdown now excludes quota-full leaders — DONE (see Done section,
+    2026-08-21).** Owner request: convenience fix so the dropdown never offers a leader an assignment
+    the backend would just reject.
+  - **NEXT (not started): post-auction squad editing, doubles pairing within a tie, and real
+    mid-tournament substitution for squads.** Owner asked (2026-08-21) for manual-draft tournaments to
+    not be a "hard stop" once the auction completes: (1) let the organizer edit/rebalance squad rosters
+    after the auction but before the schedule is generated: (2) let a leader field a DOUBLES pair (two
+    of their own players) for a tie match instead of only ever picking one player at a time — every tie
+    match is currently hard-coded singles (`player_a`/`player_b` are single player ids); (3) build real
+    substitution support for squads — `substitute_player` currently just refuses any manual-draft
+    tournament outright (the Phase D fix above; that was a crash-prevention stopgap, not the feature).
+    All three were explicitly requested together; not yet designed or started.
   - Two small, fully independent asks captured alongside this (not gated on the phases above):
     organizer can create a brand-new player profile inline during pool setup (**done** - Phase A
     reuses the existing `/register-and-join` route, no new backend code needed) and an admin "rename
@@ -297,6 +315,72 @@
 
 ## Done
 
+- ✅ 2026-08-21 (v1.50.0) — **Manual-mode tournaments: pool/auction privacy, a real production crash
+  fix, and an organizer-assign convenience fix.** Three owner requests handled together in one pass.
+  **(1) Pool/auction privacy** (owner: "make that the pool and the auction amount is visible only to
+  the owner, admin and leaders... should be hidden post it passes that phase"). The gap: `GET
+  /tournaments/{id}` is unauthenticated - literally anyone browsing tournaments (including guests) could
+  see pool assignments and every leader's remaining budget/bid history for a manual-draft tournament,
+  live or historical, forever. Fixed with a new `_redact_pool_auction_detail(item)` that strips `pools`
+  down to `{locked, redacted:true}` and `draft` down to `{status, redacted:true}` on that public route,
+  unconditionally, for every manual-draft tournament at every status - and a new Cognito-gated `GET
+  /tournament-draft/{id}` (`get_draft_sensitive_detail`) that's the only route that ever returns the real
+  thing, gated by a new `_authorize_pool_auction_viewer`: organizer (SuperAdmin/owner/admin) always, a
+  leader ONLY while their phase (`pools_open`/`pools_locked`/`auction`) is still live - once it passes
+  (`squads_locked` onward), a leader who isn't also the organizer loses access too, exactly matching the
+  owner's explicit choice when asked. `get_draft_state` (the auction polling endpoint) was refactored
+  onto this same shared check instead of its old ad-hoc one. Also closed a subtler leak: `pick_tie_player`
+  /`record_group_tie_score`/`record_knockout_tie_score` are reachable by a tie's own leader even after
+  their pool/auction access has expired (they're inherently post-phase-only routes) - their *response
+  bodies* carried the real `pools`/`draft` back to that leader even though no UI reads it from there, so
+  a browser network tab could still leak it. Fixed with `_hide_pool_auction_from_non_organizer`, applied
+  to all three response bodies. Caught one real bug while building this: `_redact_pool_auction_detail`
+  originally mutated the `item` dict it was handed in place - harmless against real DynamoDB (a fresh
+  deserialized object every call) but a landmine if anything ever changed that assumption, and it
+  immediately corrupted the FakeTable test harness's stored record the moment a test called the public
+  route before the privileged one. Fixed to return a new dict instead of mutating, verified by the same
+  test that caught it. New `/tmp/test_pool_auction_privacy.py` (17 checks: redaction on the public route
+  during every phase, the privileged route's full organizer/leader/phase authorization matrix, the
+  three-action response-body leak fix, and confirming a group admin - not just the owner - retains
+  historical access same as the owner does). Frontend: `renderManualDraftTournament` now checks
+  `t.pools.redacted`/`t.draft.redacted` (the signal a viewer isn't currently entitled, not an error) and
+  renders a plain status message ("Pools are being organized" / "The auction is underway...") instead of
+  the real pool board/auction room when redacted - also skips starting the auction poll loop in that
+  case, so a non-privileged viewer's browser doesn't hammer a route it will just get 403'd from. New
+  `fetchTournamentDetail(tournamentId)` wraps the public read and, when logged in, additionally tries the
+  privileged endpoint and merges its real `pools`/`draft` in on success, silently keeping the redacted
+  stub on a 403 (the expected, normal outcome for most viewers) - both call sites that load a tournament
+  from a bare fetch (the "Load tournament" button and the schedule-view background refresh) now go
+  through it. Verified with a new `/tmp/test_pool_auction_privacy_ui.js` Playwright pass (redacted vs.
+  real board/room rendering, no polling started when redacted) plus the full existing Phase A/B/C/
+  organizer-assign Playwright suites (all still passing).
+  **(2) Decimal-from-DynamoDB crash on "Generate schedule"** - a real bug the owner hit live and
+  reported with a screenshot: `'decimal.Decimal' object cannot be interpreted as an integer`. Root cause:
+  DynamoDB always round-trips stored numbers as `decimal.Decimal` on read, even though
+  `create_manual_draft_tournament` writes plain Python `int`s - `generate_schedule` read
+  `group_matches_per_tie` fresh from the stored item and passed it straight into `build_tie`'s
+  `range(matches_per_tie)`, which only accepts a real `int`. This was invisible to every existing test
+  because the hand-rolled `FakeTable` test harness never round-trips through Decimal - a new
+  `/tmp/test_decimal_matches_per_tie.py` reproduces it by hand-storing `decimal.Decimal` config values
+  (what a real DynamoDB read actually returns) and confirms the exact same error message before
+  reproducing the fix. Fixed with an explicit `int(...)` cast at every read site
+  (`generate_schedule`, `_generate_knockout_from_group_stage`, `_advance_knockout_ties_if_round_complete`)
+  plus a defensive `int(matches_per_tie)` inside `build_tie` itself, so the crash can't resurface even if
+  a future caller forgets to cast.
+  **(3) Organizer-assign leader dropdown convenience fix** (owner: "why is that once a leader['s] entire
+  slots are full they are still shown in the dropdown... they should get removed... for convenience").
+  The leader `<select>` in the organizer-assign panel previously always listed every leader regardless of
+  whether they had room left in the relevant pool, so picking one and submitting would just get rejected
+  by the backend's own quota check. New `draftAssignEligibleLeaders(t, pool)`/`draftAssignLeaderOptionsHtml`
+  filter the dropdown to leaders who still have room in the SELECTED player's pool (a leader who has
+  filled every pool's quota is naturally excluded from every pool this way, no separate check needed);
+  the player `<select>` now carries each option's pool as a `data-pool` attribute and a new
+  `updateDraftAssignLeaderOptions()` re-filters the leader list live via `onchange` when the selected
+  player changes pools. Verified by extending `/tmp/test_organizer_assign_ui.js` (now checks that a
+  quota-full leader is excluded, and that switching the player selection live-updates who's offered).
+  Files: `backend/lambdas/tournaments/index.py`, `frontend/js/app.js`, `docs/BACKLOG.md`,
+  `docs/CODEBASE_MAP.md`. No `template.yaml` change needed - the new `GET /tournament-draft/{id}` route
+  is covered by the same existing `/tournament-draft{proxy+}` ANY-method resource.
 - ✅ 2026-08-21 (v1.49.0-phaseD) — **Manual-mode tournaments, Phase D: auth-hardening matrix +
   `substitute_player` fixes (Owner request, "proceed further") - the whole feature is now complete.**
   Last slice of the tournament feature from `cuddly-forging-ocean.md`'s plan: an authorization sweep

@@ -7424,13 +7424,31 @@ let userPool = null;
       const el = document.getElementById('tournament-detail');
       let html = `<h3 style="font-size:16px;">${escapeHtml(t.name)} - manual draft (${t.status})</h3>`;
 
+      // Pool assignments and auction budgets/bids are only ever visible to
+      // the organizer, and to leaders while their phase is still live -
+      // see fetchTournamentDetail. The public read now always sends a
+      // redacted stub ({locked/status, redacted:true}) instead of the real
+      // pools.assignments/draft.leaders - that's the signal this viewer
+      // isn't currently entitled to see it, not an error.
+      const poolsHidden = !!(t.pools && t.pools.redacted);
+      const draftHidden = !!(t.draft && t.draft.redacted);
+
       if (t.status === 'pools_open' || t.status === 'pools_locked') {
         stopDraftPolling();
-        html += renderDraftLeaderPicker(t);
-        html += renderDraftPoolBoard(t);
-        if (t.status === 'pools_locked') html += renderDraftStartAuctionPanel(t);
+        if (poolsHidden) {
+          html += '<div class="card"><p class="card-sub">Pools are being organized. Only the organizer and this tournament\'s leaders can see the pool board while this is in progress.</p></div>';
+        } else {
+          html += renderDraftLeaderPicker(t);
+          html += renderDraftPoolBoard(t);
+          if (t.status === 'pools_locked') html += renderDraftStartAuctionPanel(t);
+        }
       } else if (t.status === 'auction') {
-        html += renderDraftAuctionRoom(t);
+        if (draftHidden) {
+          stopDraftPolling();
+          html += '<div class="card"><p class="card-sub">The auction is underway. Only the organizer and this tournament\'s leaders can see live bidding detail.</p></div>';
+        } else {
+          html += renderDraftAuctionRoom(t);
+        }
       } else if (t.status === 'squads_locked') {
         stopDraftPolling();
         html += renderDraftSquadsReview(t);
@@ -7443,7 +7461,7 @@ let userPool = null;
       }
 
       el.innerHTML = html;
-      if (t.status === 'auction') startDraftPolling(t.tournament_id);
+      if (t.status === 'auction' && !draftHidden) startDraftPolling(t.tournament_id);
       // squad_standings/player_tournament_stats only come from the plain
       // GET /tournaments/{id} read (get_tournament attaches them there,
       // never on a write response - same "never persisted, always
@@ -7455,11 +7473,38 @@ let userPool = null;
       }
     }
 
+    /** The public GET /tournaments/{id} now always redacts pool
+     *  assignments and auction budgets/bids for a manual-draft tournament
+     *  (owner request: visible only to the organizer, and to leaders
+     *  while their phase is still live - never to a plain member or
+     *  guest, and never at all once that phase has passed). This wraps
+     *  that public read and, when logged in, ALSO tries the privileged
+     *  GET /tournament-draft/{id} and merges its real pools/draft in on
+     *  success - silently keeping the redacted stub on a 403, which is
+     *  the normal, expected outcome for anyone who isn't currently
+     *  entitled to see it. Every tournament-detail load should go through
+     *  this instead of a bare fetch, so the privileged merge happens
+     *  consistently everywhere.  */
+    async function fetchTournamentDetail(tournamentId) {
+      const res = await fetch(`${API_BASE_URL}/tournaments/${tournamentId}`);
+      if (!res.ok) return { res, data: null };
+      const data = await res.json();
+      if (data && data.format === 'manual_draft' && isLoggedIn()) {
+        try {
+          const priv = await authedFetch(`${API_BASE_URL}/tournament-draft/${tournamentId}`);
+          if (priv.res.ok && priv.data) {
+            if (priv.data.pools) data.pools = priv.data.pools;
+            if (priv.data.draft) data.draft = priv.data.draft;
+          }
+        } catch (err) { /* not entitled, or offline - keep the redacted stub */ }
+      }
+      return { res, data };
+    }
+
     async function fetchAndRenderTournamentDetail(tournamentId) {
       try {
-        const res = await fetch(`${API_BASE_URL}/tournaments/${tournamentId}`);
-        if (!res.ok) return;
-        const data = await res.json();
+        const { res, data } = await fetchTournamentDetail(tournamentId);
+        if (!res.ok || !data) return;
         // Guard against a stale background refresh landing after the user
         // has already navigated to a different tournament.
         if (currentTournamentData && currentTournamentData.tournament_id === tournamentId) renderTournament(data);
@@ -7726,6 +7771,36 @@ let userPool = null;
       return html;
     }
 
+    /** Leader ids still eligible to receive a pick from `pool` - excludes
+     *  anyone whose quota for that pool is already full, so the assign
+     *  dropdown never offers a leader an assignment the backend would just
+     *  reject. A leader who has filled every pool's quota (fully done
+     *  drafting) is naturally excluded from every pool this way too. */
+    function draftAssignEligibleLeaders(t, pool) {
+      const draft = t.draft || {};
+      const picksPerPool = (t.manual_draft && t.manual_draft.picks_per_pool) || 1;
+      return (t.leaders || []).filter(lid => {
+        const info = draft.leaders && draft.leaders[lid];
+        const picks = (info && info.pool_picks && info.pool_picks[pool]) || 0;
+        return picks < picksPerPool;
+      });
+    }
+
+    function draftAssignLeaderOptionsHtml(t, pool) {
+      const eligible = draftAssignEligibleLeaders(t, pool);
+      if (!eligible.length) return '<option value="">- no leader has room left in this pool -</option>';
+      return eligible.map(lid => `<option value="${lid}">${escapeHtml(draftPlayerName(lid))}</option>`).join('');
+    }
+
+    function updateDraftAssignLeaderOptions() {
+      const playerSel = document.getElementById('draft-assign-player');
+      const leaderSel = document.getElementById('draft-assign-leader');
+      if (!playerSel || !leaderSel || !currentTournamentData) return;
+      const selected = playerSel.selectedOptions[0];
+      const pool = selected ? selected.dataset.pool : null;
+      leaderSel.innerHTML = draftAssignLeaderOptionsHtml(currentTournamentData, pool);
+    }
+
     function renderDraftOrganizerAssignPanel(t) {
       const draft = t.draft || {};
       if (draft.current_lot) return ''; // organizer-assign needs no lot open - close/skip it first
@@ -7735,16 +7810,16 @@ let userPool = null;
       let html = '<div class="card" style="margin-top:10px;"><h4 style="font-size:14px;margin:0 0 6px;">Organizer assign</h4>';
       html += '<p class="card-sub" style="margin:0 0 8px;">For leaders who aren\'t on the app right now - enter the winning amount yourself and award the player directly, no bidding required. Organizer only.</p>';
       html += '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">';
-      html += '<select id="draft-assign-player">';
+      html += `<select id="draft-assign-player" onchange="updateDraftAssignLeaderOptions()">`;
       undecided.forEach(q => {
-        html += `<option value="${q.player_id}">${escapeHtml(draftPlayerName(q.player_id))} (Pool ${escapeHtml(String(q.pool))})</option>`;
+        html += `<option value="${q.player_id}" data-pool="${escapeHtml(String(q.pool))}">${escapeHtml(draftPlayerName(q.player_id))} (Pool ${escapeHtml(String(q.pool))})</option>`;
       });
       html += '</select>';
-      html += '<select id="draft-assign-leader">';
-      (t.leaders || []).forEach(lid => {
-        html += `<option value="${lid}">${escapeHtml(draftPlayerName(lid))}</option>`;
-      });
-      html += '</select>';
+      // The leader list is scoped to the FIRST (default-selected) player's
+      // pool - a leader already at quota for that pool is left off, since
+      // assigning them here would just be rejected. Switching the player
+      // dropdown re-filters this list via updateDraftAssignLeaderOptions.
+      html += `<select id="draft-assign-leader">${draftAssignLeaderOptionsHtml(t, undecided[0].pool)}</select>`;
       html += '<input type="number" id="draft-assign-amount" placeholder="Amount" min="0" style="max-width:110px;">';
       html += `<button type="button" onclick="organizerAssignPlayer('${t.tournament_id}')">Assign</button>`;
       html += '</div><div id="draft-assign-status" class="result"></div></div>';
@@ -8212,9 +8287,8 @@ let userPool = null;
     document.getElementById('load-tournament-btn').addEventListener('click', async () => {
       const tournamentId = document.getElementById('tournament_select').value;
       if (!tournamentId) return;
-      const res = await fetch(`${API_BASE_URL}/tournaments/${tournamentId}`);
-      const data = await res.json();
-      renderTournament(data);
+      const { data } = await fetchTournamentDetail(tournamentId);
+      if (data) renderTournament(data);
     });
 
     document.getElementById('delete-tournament-btn').addEventListener('click', async () => {
