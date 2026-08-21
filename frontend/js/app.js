@@ -67,19 +67,34 @@ let userPool = null;
     async function authedFetch(url, options = {}) {
       const send = async () => {
         const headers = { ...(options.headers || {}), ...getAuthHeaders() };
-        const res = await fetch(url, { ...options, headers });
-        let data = null;
-        try { data = await res.json(); } catch (_) { data = null; }
-        return { res, data };
+        try {
+          const res = await fetch(url, { ...options, headers });
+          let data = null;
+          try { data = await res.json(); } catch (_) { data = null; }
+          return { res, data, networkError: null };
+        } catch (networkErr) {
+          // fetch() itself threw - offline, DNS hiccup, a phone waking up
+          // from sleep with a dead socket, etc. There's no real Response to
+          // inspect here. Previously this propagated as an uncaught
+          // rejection, silently killing whatever async flow called
+          // authedFetch (this is exactly how a live-scored match could
+          // "just not submit" with no visible error - see finishGroupLiveGame
+          // and friends, which also stopped deleting the point log before a
+          // confirmed success for the same reason). A stand-in
+          // { ok:false, status:0 } response lets every existing `if
+          // (!res.ok)` caller keep working unmodified, while `error` carries
+          // a message worth actually showing.
+          return { res: { ok: false, status: 0 }, data: null, networkError: networkErr };
+        }
       };
 
       await ensureFreshToken();
-      let { res, data } = await send();
+      let { res, data, networkError } = await send();
 
       let sessionExpired = false;
       if ((res.status === 401 || res.status === 403) && authSession) {
         const refreshed = await ensureFreshToken(true);
-        if (refreshed) ({ res, data } = await send());
+        if (refreshed) ({ res, data, networkError } = await send());
         // Still rejected after a forced refresh - or the refresh token
         // itself was dead so we couldn't even try. Either way this session
         // cannot be recovered silently; the caller should prompt re-login
@@ -87,7 +102,9 @@ let userPool = null;
         if (!res.ok && (res.status === 401 || res.status === 403)) sessionExpired = true;
       }
 
-      return { res, data, error: res.ok ? null : describeApiError(res, data), sessionExpired };
+      const error = res.ok ? null :
+        (networkError ? `Could not reach the server (${networkError.message || 'network error'}). Check your connection and try again - nothing was lost, it's safe to retry.` : describeApiError(res, data));
+      return { res, data, error, sessionExpired };
     }
 
     /** Turns any failure shape into something a human can act on. The old
@@ -7576,6 +7593,16 @@ let userPool = null;
       const detailEl = document.getElementById('tournament-detail');
       const active = document.activeElement;
       if (detailEl && active && active !== document.body && detailEl.contains(active)) return; // don't yank an in-progress input away
+      // Also skip while anyone has unsaved live-scored points sitting in
+      // memory (the +1/Undo point tracker, or its split-screen overlay,
+      // which lives outside #tournament-detail and so wouldn't be caught
+      // by the focus check above) - a full re-render here would nuke the
+      // DOM the point tracker is driving mid-game, right before the score
+      // gets submitted (owner report, 2026-08-21: a live-scored match
+      // failed to submit - a poll-triggered re-render landing between the
+      // last point and hitting Submit was one plausible way for that to
+      // happen, on top of the network/session hardening below).
+      if (typeof tournamentLiveLogs === 'object' && Object.values(tournamentLiveLogs).some(log => log && log.length > 0)) return;
       try {
         const { res, data } = await fetchTournamentDetail(tournamentId);
         if (!res.ok || !data) return;
@@ -8509,6 +8536,58 @@ let userPool = null;
       const squadBMembers = ((t.squads || {})[tie.squad_b] || {}).members || [];
       const matchType = (t.manual_draft || {}).match_type || 'singles';
       const crossSquad = !!(t.group_stage && t.group_stage.cross_squad);
+      const liveModeToggle = document.getElementById('tournament_live_toggle');
+      const liveMode = !!(liveModeToggle && liveModeToggle.checked);
+      const target = parseInt(t.points_to_win, 10) || 21;
+      const matchKey = `tie_${t.tournament_id}_${tie.tie_id}_${idx}`;
+
+      // Once both sides are known and there's no lineup left to pick for
+      // this particular match (cross-squad reps are fixed from the moment
+      // groups are generated; any match once it's actually played), show
+      // the same photo/VS banner card used for legacy tournaments (owner
+      // request, 2026-08-21: "each match should have the banner like the
+      // ones we had for the other tournament") with live point-by-point
+      // scoring wired the same way those matches already have it ("Use
+      // live point-by-point scoring" did nothing here before - the
+      // +1/Undo/Split-screen controls existed for legacy group/knockout
+      // matches but were never built for manual-draft ties).
+      if (m.player_a && m.player_b && (crossSquad || m.played)) {
+        const gamesText = formatGames(m.games);
+        const lastGame = (m.games && m.games.length) ? m.games[m.games.length - 1] : null;
+        const totalA = (m.games || []).reduce((s, g) => s + g.score_a, 0);
+        const totalB = (m.games || []).reduce((s, g) => s + g.score_b, 0);
+        const card = renderVsCard(vsSideIds(m.player_a), vsSideIds(m.player_b), {
+          snapshot: t.card_snapshot,
+          isFinal: false,
+          scoreA: m.played ? totalA : gameScore(lastGame, 'a'),
+          scoreB: m.played ? totalB : gameScore(lastGame, 'b'),
+          winner: m.played ? (totalA > totalB ? 'a' : 'b') : null,
+        });
+        let controls = '';
+        if (m.played) {
+          if (m.games && m.games.length > 1) {
+            controls = `<div class="fixture-controls" style="opacity:.75;">${gamesText}</div>`;
+          }
+        } else {
+          const nextGameNum = (m.games ? m.games.length : 0) + 1;
+          const progress = gamesText ? `Games so far: ${gamesText} (${m.games_won_a}-${m.games_won_b}) | ` : '';
+          if (liveMode) {
+            controls = `<div class="fixture-controls">${progress}Game ${nextGameNum}:
+              ${renderLiveScoreControls(matchKey, target, `finishDraftTieLiveGame('${matchKey}','${t.tournament_id}','${tie.tie_id}',${idx},'${stageKind}')`, m.player_a.name, m.player_b.name)}</div>`;
+          } else {
+            controls = `<div class="fixture-controls">${progress}Game ${nextGameNum}:
+              <input type="number" id="tie-score-a-${tie.tie_id}-${idx}" placeholder="A" style="width:50px;"> -
+              <input type="number" id="tie-score-b-${tie.tie_id}-${idx}" placeholder="B" style="width:50px;">
+              <button type="button" class="secondary" onclick="submitDraftTieScore('${t.tournament_id}','${tie.tie_id}',${idx},'${stageKind}')">Submit game ${nextGameNum}</button></div>`;
+          }
+        }
+        return `<div class="fixture" style="margin:6px 0;"><span class="card-sub" style="display:block;margin-bottom:2px;">Match #${idx + 1}</span>${card}${controls}</div>`;
+      }
+
+      // Squads mode, not yet played: the lineup is still pickable - a
+      // leader can change their own pick right up until this match is
+      // scored (pick_tie_player only rejects once match.played) - so this
+      // stays the plain name/picker row rather than the banner above.
       let aCell, bCell;
       if (m.played || crossSquad) {
         // Cross-squad group mode (owner request, 2026-08-21): each side is
@@ -8548,9 +8627,13 @@ let userPool = null;
         const totalB = (m.games || []).reduce((s, g) => s + g.score_b, 0);
         scoreCell = `<strong>${totalA} - ${totalB}</strong>`;
       } else if (m.player_a && m.player_b) {
-        scoreCell = `<input type="number" id="tie-score-a-${tie.tie_id}-${idx}" placeholder="A" style="width:50px;"> - ` +
-          `<input type="number" id="tie-score-b-${tie.tie_id}-${idx}" placeholder="B" style="width:50px;"> ` +
-          `<button type="button" class="secondary" onclick="submitDraftTieScore('${t.tournament_id}','${tie.tie_id}',${idx},'${stageKind}')">Submit</button>`;
+        if (liveMode) {
+          scoreCell = renderLiveScoreControls(matchKey, target, `finishDraftTieLiveGame('${matchKey}','${t.tournament_id}','${tie.tie_id}',${idx},'${stageKind}')`, m.player_a.name, m.player_b.name);
+        } else {
+          scoreCell = `<input type="number" id="tie-score-a-${tie.tie_id}-${idx}" placeholder="A" style="width:50px;"> - ` +
+            `<input type="number" id="tie-score-b-${tie.tie_id}-${idx}" placeholder="B" style="width:50px;"> ` +
+            `<button type="button" class="secondary" onclick="submitDraftTieScore('${t.tournament_id}','${tie.tie_id}',${idx},'${stageKind}')">Submit</button>`;
+        }
       } else {
         scoreCell = '<span class="card-sub">waiting on lineup</span>';
       }
@@ -8617,11 +8700,24 @@ let userPool = null;
       renderTournament(data);
     }
 
-    async function submitDraftTieScore(tournamentId, tieId, matchIndex, stageKind, override, pointLog) {
+    async function submitDraftTieScore(tournamentId, tieId, matchIndex, stageKind) {
       const scoreAEl = document.getElementById(`tie-score-a-${tieId}-${matchIndex}`);
       const scoreBEl = document.getElementById(`tie-score-b-${tieId}-${matchIndex}`);
       const score_a = scoreAEl ? scoreAEl.value : undefined;
       const score_b = scoreBEl ? scoreBEl.value : undefined;
+      await submitDraftTieScoreDirect(tournamentId, tieId, matchIndex, stageKind, score_a, score_b);
+    }
+
+    /** Explicit-score sibling of submitDraftTieScore, for callers that
+     *  already know the score (the live point-by-point flow) rather than
+     *  reading it back out of DOM inputs that don't exist in that mode.
+     *  Returns true/false so a caller like finishDraftTieLiveGame can tell
+     *  whether it's actually safe to discard the recorded points - see the
+     *  same rationale on authedFetch and the finish*LiveGame functions
+     *  below (owner report, 2026-08-21: a live-scored match failed to
+     *  submit over a shaky/stale connection and the recorded points were
+     *  gone, forcing a manual recount). */
+    async function submitDraftTieScoreDirect(tournamentId, tieId, matchIndex, stageKind, score_a, score_b, override, pointLog) {
       const routeSuffix = stageKind === 'knockout' ? 'knockout-tie-score' : 'group-tie-score';
       const { res, data, error } = await authedFetch(`${API_BASE_URL}/tournament-draft/${tournamentId}/${routeSuffix}`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -8631,12 +8727,21 @@ let userPool = null;
         renderTournament(data);
         loadPlayers();
         fetchAndRenderTournamentDetail(tournamentId); // layers in fresh standings shortly after
+        return true;
       } else if (!override && data && data.error && data.error.startsWith('invalid game score')) {
         if (await nwConfirm(`${data.error}\n\nThis doesn't match the tournament's configured scoring rules. Submit ${score_a}-${score_b} anyway as the actual result?`)) {
-          await submitDraftTieScore(tournamentId, tieId, matchIndex, stageKind, true, pointLog);
+          return await submitDraftTieScoreDirect(tournamentId, tieId, matchIndex, stageKind, score_a, score_b, true, pointLog);
         }
+        return false;
       } else {
+        // authedFetch already refreshed a near-expired token before this
+        // request and, on a 401/403, forced a refresh and retried once on
+        // its own - so a stale Cognito session recovers silently before
+        // ever reaching here. What lands here is either a real validation
+        // error (shown as-is) or a genuine network failure (authedFetch's
+        // `error` message already says it's safe to retry).
         nwAlert((data && data.error) || error || 'Could not submit that score');
+        return false;
       }
     }
 
@@ -9465,21 +9570,39 @@ let userPool = null;
     }
 
     async function submitGroupScoreDirect(tournamentId, subgroup, fixtureId, score_a, score_b, override, pointLog) {
-      const res = await fetch(`${API_BASE_URL}/tournaments/${tournamentId}/group-score`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ subgroup, fixture_id: fixtureId, score_a, score_b, override: !!override, point_log: pointLog || undefined })
-      });
-      const data = await res.json();
-      if (res.ok) {
-        renderTournament(data);
-        loadPlayers();
-      } else if (!override && data.error && data.error.startsWith('invalid game score')) {
-        if (await nwConfirm(`${data.error}\n\nThis doesn't match the tournament's configured scoring rules. Submit ${score_a}-${score_b} anyway as the actual result?`)) {
-          await submitGroupScoreDirect(tournamentId, subgroup, fixtureId, score_a, score_b, true, pointLog);
+      // This route is unauthenticated (see docs/CODEBASE_MAP.md - /tournaments/{proxy+}
+      // is intentionally NONE-auth), so there's no session to go stale
+      // here - but a bare, uncaught-if-it-throws fetch() has its own
+      // failure mode: offline for a moment, a phone waking from sleep with
+      // a dead socket, etc. Wrapped in try/catch (and returning true/false)
+      // so a caller like finishGroupLiveGame can tell whether it's actually
+      // safe to discard the recorded live points, instead of a thrown
+      // network error silently vanishing the whole submit AND the points
+      // together (owner report, 2026-08-21: exactly this happened to a
+      // live-scored match).
+      try {
+        const res = await fetch(`${API_BASE_URL}/tournaments/${tournamentId}/group-score`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ subgroup, fixture_id: fixtureId, score_a, score_b, override: !!override, point_log: pointLog || undefined })
+        });
+        const data = await res.json();
+        if (res.ok) {
+          renderTournament(data);
+          loadPlayers();
+          return true;
+        } else if (!override && data.error && data.error.startsWith('invalid game score')) {
+          if (await nwConfirm(`${data.error}\n\nThis doesn't match the tournament's configured scoring rules. Submit ${score_a}-${score_b} anyway as the actual result?`)) {
+            return await submitGroupScoreDirect(tournamentId, subgroup, fixtureId, score_a, score_b, true, pointLog);
+          }
+          return false;
+        } else {
+          nwAlert(data.error);
+          return false;
         }
-      } else {
-        nwAlert(data.error);
+      } catch (err) {
+        nwAlert(`Could not reach the server to submit this score (${err.message}). Nothing was lost - try Submit again once you're back online.`);
+        return false;
       }
     }
 
@@ -9490,21 +9613,29 @@ let userPool = null;
     }
 
     async function submitKnockoutScoreDirect(tournamentId, roundIndex, matchIndex, score_a, score_b, override, pointLog) {
-      const res = await fetch(`${API_BASE_URL}/tournaments/${tournamentId}/knockout-score`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ round_index: roundIndex, match_index: matchIndex, score_a, score_b, override: !!override, point_log: pointLog || undefined })
-      });
-      const data = await res.json();
-      if (res.ok) {
-        renderTournament(data);
-        loadPlayers();
-      } else if (!override && data.error && data.error.startsWith('invalid game score')) {
-        if (await nwConfirm(`${data.error}\n\nThis doesn't match the tournament's configured scoring rules. Submit ${score_a}-${score_b} anyway as the actual result?`)) {
-          await submitKnockoutScoreDirect(tournamentId, roundIndex, matchIndex, score_a, score_b, true, pointLog);
+      try {
+        const res = await fetch(`${API_BASE_URL}/tournaments/${tournamentId}/knockout-score`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ round_index: roundIndex, match_index: matchIndex, score_a, score_b, override: !!override, point_log: pointLog || undefined })
+        });
+        const data = await res.json();
+        if (res.ok) {
+          renderTournament(data);
+          loadPlayers();
+          return true;
+        } else if (!override && data.error && data.error.startsWith('invalid game score')) {
+          if (await nwConfirm(`${data.error}\n\nThis doesn't match the tournament's configured scoring rules. Submit ${score_a}-${score_b} anyway as the actual result?`)) {
+            return await submitKnockoutScoreDirect(tournamentId, roundIndex, matchIndex, score_a, score_b, true, pointLog);
+          }
+          return false;
+        } else {
+          nwAlert(data.error);
+          return false;
         }
-      } else {
-        nwAlert(data.error);
+      } catch (err) {
+        nwAlert(`Could not reach the server to submit this score (${err.message}). Nothing was lost - try Submit again once you're back online.`);
+        return false;
       }
     }
 
@@ -9515,21 +9646,29 @@ let userPool = null;
     }
 
     async function submitThirdPlaceScoreDirect(tournamentId, score_a, score_b, override, pointLog) {
-      const res = await fetch(`${API_BASE_URL}/tournaments/${tournamentId}/knockout-score`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ third_place: true, score_a, score_b, override: !!override, point_log: pointLog || undefined })
-      });
-      const data = await res.json();
-      if (res.ok) {
-        renderTournament(data);
-        loadPlayers();
-      } else if (!override && data.error && data.error.startsWith('invalid game score')) {
-        if (await nwConfirm(`${data.error}\n\nThis doesn't match the tournament's configured scoring rules. Submit ${score_a}-${score_b} anyway as the actual result?`)) {
-          await submitThirdPlaceScoreDirect(tournamentId, score_a, score_b, true, pointLog);
+      try {
+        const res = await fetch(`${API_BASE_URL}/tournaments/${tournamentId}/knockout-score`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ third_place: true, score_a, score_b, override: !!override, point_log: pointLog || undefined })
+        });
+        const data = await res.json();
+        if (res.ok) {
+          renderTournament(data);
+          loadPlayers();
+          return true;
+        } else if (!override && data.error && data.error.startsWith('invalid game score')) {
+          if (await nwConfirm(`${data.error}\n\nThis doesn't match the tournament's configured scoring rules. Submit ${score_a}-${score_b} anyway as the actual result?`)) {
+            return await submitThirdPlaceScoreDirect(tournamentId, score_a, score_b, true, pointLog);
+          }
+          return false;
+        } else {
+          nwAlert(data.error);
+          return false;
         }
-      } else {
-        nwAlert(data.error);
+      } catch (err) {
+        nwAlert(`Could not reach the server to submit this score (${err.message}). Nothing was lost - try Submit again once you're back online.`);
+        return false;
       }
     }
 
@@ -9580,8 +9719,13 @@ let userPool = null;
       const a = log.filter(p => p === 'A').length;
       const b = log.filter(p => p === 'B').length;
       if (a === b) { nwAlert('Record at least one decisive point before submitting.'); return; }
-      delete tournamentLiveLogs[matchKey];
-      await submitGroupScoreDirect(tournamentId, subgroup, fixtureId, a, b, false, log);
+      // Only clear the recorded points once the server actually has them -
+      // deleting first (the old order) meant a failed submit (offline
+      // moment, dead socket on wake, an expired session that couldn't
+      // recover) silently threw away every point that had been tapped in,
+      // forcing a manual recount from memory (owner report, 2026-08-21).
+      const ok = await submitGroupScoreDirect(tournamentId, subgroup, fixtureId, a, b, false, log);
+      if (ok) delete tournamentLiveLogs[matchKey];
     }
 
     async function finishKnockoutLiveGame(matchKey, tournamentId, roundIndex, matchIndex) {
@@ -9589,8 +9733,8 @@ let userPool = null;
       const a = log.filter(p => p === 'A').length;
       const b = log.filter(p => p === 'B').length;
       if (a === b) { nwAlert('Record at least one decisive point before submitting.'); return; }
-      delete tournamentLiveLogs[matchKey];
-      await submitKnockoutScoreDirect(tournamentId, roundIndex, matchIndex, a, b, false, log);
+      const ok = await submitKnockoutScoreDirect(tournamentId, roundIndex, matchIndex, a, b, false, log);
+      if (ok) delete tournamentLiveLogs[matchKey];
     }
 
     async function finishThirdPlaceLiveGame(matchKey, tournamentId) {
@@ -9598,8 +9742,26 @@ let userPool = null;
       const a = log.filter(p => p === 'A').length;
       const b = log.filter(p => p === 'B').length;
       if (a === b) { nwAlert('Record at least one decisive point before submitting.'); return; }
-      delete tournamentLiveLogs[matchKey];
-      await submitThirdPlaceScoreDirect(tournamentId, a, b, false, log);
+      const ok = await submitThirdPlaceScoreDirect(tournamentId, a, b, false, log);
+      if (ok) delete tournamentLiveLogs[matchKey];
+    }
+
+    /** Manual-draft tie sibling of finishGroupLiveGame/finishKnockoutLiveGame
+     *  (owner report, 2026-08-21: live point-by-point scoring - the +1/Undo/
+     *  Split-screen controls that already existed for legacy tournaments -
+     *  was missing entirely for manual-draft tie matches; checking "Use
+     *  live point-by-point scoring" had no effect there). Goes through
+     *  submitDraftTieScoreDirect, which uses authedFetch - a near-expired
+     *  Cognito token is refreshed before the request, and a 401/403 gets
+     *  one forced-refresh retry automatically, so a stale session recovers
+     *  on its own without losing the recorded points. */
+    async function finishDraftTieLiveGame(matchKey, tournamentId, tieId, matchIndex, stageKind) {
+      const log = getTournamentLiveLog(matchKey);
+      const a = log.filter(p => p === 'A').length;
+      const b = log.filter(p => p === 'B').length;
+      if (a === b) { nwAlert('Record at least one decisive point before submitting.'); return; }
+      const ok = await submitDraftTieScoreDirect(tournamentId, tieId, matchIndex, stageKind, a, b, false, log);
+      if (ok) delete tournamentLiveLogs[matchKey];
     }
 
     function renderLiveScoreControls(matchKey, target, finishCallExpr, nameA, nameB) {

@@ -334,7 +334,55 @@
 
 ## Done
 
-- ✅ 2026-08-21 (v1.54.0) — **Manual-mode tournaments: live score polling for the schedule view.**
+- ✅ 2026-08-21 (v1.56.0) — **Manual-mode tournaments: live point-by-point scoring for tie matches,
+  photo/VS banner cards, and submit-path hardening.** Owner report during the live Rally Royale event:
+  "Use live point-by-point scoring for tournament matches" (the +1 A/+1 B/Undo/Submit game/Split-screen
+  controls) and the photo/VS banner card - both already existed for legacy knockout/groups_then_knockout
+  tournaments - had never been wired up for manual-draft tie matches, so checking the box did nothing
+  there, and a tie match rendered as a bare name/score-input row instead of the banner every other
+  tournament view uses. `renderTieMatchRow`: once both sides of a match are known (always true
+  immediately for a cross-squad tie, since reps are fixed before groups are generated; true for any
+  match once it's actually `played`), it now renders the same `renderVsCard`/`vsSideIds` banner used
+  everywhere else, with live point-by-point controls (`renderLiveScoreControls`, reusing the existing
+  `tournamentLivePoint`/`tournamentUndoPoint`/`openTournamentSplitScreen` machinery) swapped in for the
+  plain score inputs whenever "Use live point-by-point scoring" is checked - both paths post through the
+  same new `submitDraftTieScoreDirect` (an explicit-score sibling of `submitDraftTieScore`, needed
+  because the live flow already knows the tally and has no DOM inputs to read it back from). New
+  `finishDraftTieLiveGame` mirrors `finishGroupLiveGame`/`finishKnockoutLiveGame`. A squads-mode tie
+  still shows the editable lineup picker up until it's played (a leader can change their own pick right
+  up until then - `pick_tie_player` only rejects once `match.played`), now with live-mode support added
+  to its score-entry step too. Submit-path hardening, from the same report and a second one in the same
+  breath ("make sure live scoring does not fail at submit... if there is a stale session it should
+  refresh and then send the data... someone tried the live score but since they had a stale session at
+  the submit they were not able to submit the score"): (1) `authedFetch` now wraps its underlying
+  `fetch()` in try/catch - previously a thrown network error (offline moment, a phone waking from sleep
+  with a dead socket) propagated as an uncaught rejection, silently killing whichever async flow called
+  it, with no error shown and no retry; it now returns a `{ok:false,status:0}` stand-in response so
+  every existing `if (!res.ok)` caller keeps working unmodified, with a clear, retry-safe error message.
+  Its existing near-expiry-refresh-before-send and forced-refresh-and-retry-once-on-401/403 behavior
+  (unchanged) is what actually recovers a stale Cognito session for `submitDraftTieScoreDirect` and
+  every other authenticated draft route. (2) `submitGroupScoreDirect`/`submitKnockoutScoreDirect`/
+  `submitThirdPlaceScoreDirect` (legacy, unauthenticated routes - a "stale session" can't apply to auth
+  there, but a bare network-level `fetch()` failure could still throw uncaught) gained the same
+  try/catch, and all four submit-direct functions (plus the new draft-tie one) now return true/false.
+  (3) Every `finish*LiveGame` function (`finishGroupLiveGame`/`finishKnockoutLiveGame`/
+  `finishThirdPlaceLiveGame`/`finishDraftTieLiveGame`) now only deletes the recorded point log AFTER a
+  confirmed successful submit - previously it deleted first, so a failed submit for any reason silently
+  discarded every point that had been tapped in, forcing a manual recount from memory; now a failed
+  attempt leaves the tally in place and "Submit game" can simply be pressed again. (4) `schedulePollTick`
+  (the live-score-polling fix shipped earlier today) gained an additional guard: it now also skips a
+  tick whenever any match has unsaved live-scored points sitting in memory, not just when the viewer's
+  DOM focus is inside the panel - the point-tracker display and the split-screen overlay (which lives
+  outside `#tournament-detail` and so wasn't caught by the focus check alone) are never blown away by a
+  poll-triggered re-render mid-game. New `/tmp/test_draft_live_scoring_ui.js` (8 checks: the banner card
+  renders once both reps are known, live mode swaps in the point controls, recording interleaved points
+  displays correctly, a failed submit sends the right score and does NOT discard the recorded points,
+  and retrying resends the same points and succeeds) and an updated `/tmp/test_draft_schedule_ui.js`
+  (the played-match assertion now checks the banner's split score badges instead of combined "21 - 15"
+  text, matching the new rendering). Full existing backend (18 files) and Playwright (10 files) suites
+  re-verified passing throughout.
+
+- ✅ 2026-08-21 (v1.55.0) — **Manual-mode tournaments: live score polling for the schedule view.**
   Owner report during the live Rally Royale event: "the live score is not coming up for these
   matches." Root cause: the group_stage/knockout/completed view was only ever fetched once, at page
   load - a score entered on the organizer's own device (or any leader's) never reached anyone else's
