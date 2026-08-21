@@ -232,6 +232,16 @@
     <button class="tab-btn" data-tab="review" id="review-tab-btn" style="display:none;">Reviews &amp; Approvals</button>
   </nav>
 
+  <!-- Always-available "record a match" shortcut (Owner-requested 2026-08-20:
+       "a + sign always floating ... rather than a certain page"). Fixed to
+       the viewport so it rides along on every tab, not just Matches - jumps
+       straight to the record-match form instead of making people find the
+       tab first. Reuses the existing form/guest-notice/auth handling on the
+       Matches tab rather than duplicating that logic in a modal. Hidden
+       while already on Matches (recordFabVisibility in app.js) since the
+       form is already right there. -->
+  <button type="button" id="record-match-fab" class="record-fab" onclick="jumpToRecordMatch()" title="Record a match" aria-label="Record a match">+</button>
+
   <div id="event-banner" style="display:none; text-align:center; padding:8px 14px; margin:8px auto 0; max-width:960px; background:linear-gradient(90deg, rgba(47,169,104,0.18), rgba(214,64,63,0.18)); border:1px solid var(--border); border-radius:10px; font-size:13px;"></div>
 
   <div class="app-shell">

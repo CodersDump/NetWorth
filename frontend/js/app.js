@@ -8284,81 +8284,108 @@ let userPool = null;
       if (currentTournamentData) renderTournament(currentTournamentData);
     });
 
-    document.querySelectorAll('.tab-btn').forEach(btn => {
-      btn.addEventListener('click', () => {
-        document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-        document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
-        btn.classList.add('active');
-        document.getElementById(`tab-${btn.dataset.tab}`).classList.add('active');
-        // Record it in the URL rather than in storage: a refresh keeps you
-        // where you were, back/forward behave sensibly, and a link you send
-        // someone opens on the tab you meant. replaceState so switching
-        // tabs doesn't stack up history entries you'd have to click back
-        // through one at a time.
-        history.replaceState(null, '', `#${btn.dataset.tab}`);
-        // Finance: if the user is on the allowlist, unlock without ever
-        // showing the key box. Only tried when it's still locked.
-        if (btn.dataset.tab === 'matches' && typeof defaultMatchGroup === 'function') {
-          defaultMatchGroup();
+    /** Switches to the named tab and runs that tab's on-open side effects
+     *  (lazy loads, finance auto-unlock, etc). Pulled out of the .tab-btn
+     *  click listener so the floating "record a match" shortcut (Owner-
+     *  requested 2026-08-20) can jump straight to a tab from anywhere in
+     *  the app without duplicating all of this - same behavior either way,
+     *  just two ways to trigger it. */
+    function activateTab(tabName) {
+      const btn = document.querySelector(`.tab-btn[data-tab="${CSS.escape(tabName)}"]`);
+      const panel = document.getElementById(`tab-${tabName}`);
+      if (!btn || !panel) return;
+      document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+      btn.classList.add('active');
+      panel.classList.add('active');
+      // Record it in the URL rather than in storage: a refresh keeps you
+      // where you were, back/forward behave sensibly, and a link you send
+      // someone opens on the tab you meant. replaceState so switching
+      // tabs doesn't stack up history entries you'd have to click back
+      // through one at a time.
+      history.replaceState(null, '', `#${tabName}`);
+      // The floating "+" shortcut jumps to this same tab, so hide it while
+      // already there instead of floating a redundant button over the form.
+      const fab = document.getElementById('record-match-fab');
+      if (fab) fab.classList.toggle('hide', tabName === 'matches');
+      // Finance: if the user is on the allowlist, unlock without ever
+      // showing the key box. Only tried when it's still locked.
+      if (tabName === 'matches' && typeof defaultMatchGroup === 'function') {
+        defaultMatchGroup();
+      }
+      // The Reviews & Approvals tab is where claim/change requests and
+      // finance access now live - load them on open (SuperAdmin only, and
+      // the tab itself is hidden for everyone else).
+      // The Reviews & Approvals tab: claim/change requests load for anyone
+      // who can review (SuperAdmin or a group owner - the backend scopes the
+      // results). The rest are SuperAdmin-only controls.
+      if (tabName === 'review' && canReviewRequests()) {
+        updateReviewTabScope();
+        loadClaimRequests();
+        if (isSuperAdmin()) {
+          loadFinanceAccessList();
+          loadUnconfirmedUsers();
+          loadClaimAudit();
+          loadAppSettings();
+          loadEventsAdmin();
+          loadStoreAdmin();
+          loadQuestsAdmin();
+          if (typeof onStoreTypeChange === 'function') onStoreTypeChange();
         }
-        // The Reviews & Approvals tab is where claim/change requests and
-        // finance access now live - load them on open (SuperAdmin only, and
-        // the tab itself is hidden for everyone else).
-        // The Reviews & Approvals tab: claim/change requests load for anyone
-        // who can review (SuperAdmin or a group owner - the backend scopes the
-        // results). The rest are SuperAdmin-only controls.
-        if (btn.dataset.tab === 'review' && canReviewRequests()) {
-          updateReviewTabScope();
-          loadClaimRequests();
-          if (isSuperAdmin()) {
-            loadFinanceAccessList();
-            loadUnconfirmedUsers();
-            loadClaimAudit();
-            loadAppSettings();
-            loadEventsAdmin();
-            loadStoreAdmin();
-            loadQuestsAdmin();
-            if (typeof onStoreTypeChange === 'function') onStoreTypeChange();
+      }
+      if (tabName === 'store') {
+        loadStore();
+      }
+      if (tabName === 'quests') {
+        loadQuests();
+      }
+      if (tabName === 'stats') {
+        ensureFresh('stats', loadStatsBundle);
+      }
+      if (tabName === 'tournaments') {
+        ensureOnce('tournaments', () => { loadTournamentGroupOptions(); loadTournamentsList(); });
+      }
+      if (tabName === 'profile') {
+        ensureProfileFresh();
+      }
+      if (tabName === 'finance') {
+        // Dues card + ledger selector both read allGroups. If it hasn't
+        // finished loading yet (first open / slow network) they'd render
+        // empty and "disappear" - so load groups FIRST, then unlock and
+        // populate. This is why they only showed up sometimes.
+        (async () => {
+          if (!allGroups || !allGroups.length) { try { await loadGroups(); } catch (e) {} }
+          if (document.getElementById('finance-content').style.display !== 'block') {
+            await tryAutoFinanceUnlock();   // populates the ledger selector on success
+          } else {
+            populateFinanceGroups();
+            refreshFinanceRoleForGroup();
           }
-        }
-        if (btn.dataset.tab === 'store') {
-          loadStore();
-        }
-        if (btn.dataset.tab === 'quests') {
-          loadQuests();
-        }
-        if (btn.dataset.tab === 'stats') {
-          ensureFresh('stats', loadStatsBundle);
-        }
-        if (btn.dataset.tab === 'tournaments') {
-          ensureOnce('tournaments', () => { loadTournamentGroupOptions(); loadTournamentsList(); });
-        }
-        if (btn.dataset.tab === 'profile') {
-          ensureProfileFresh();
-        }
-        if (btn.dataset.tab === 'finance') {
-          // Dues card + ledger selector both read allGroups. If it hasn't
-          // finished loading yet (first open / slow network) they'd render
-          // empty and "disappear" - so load groups FIRST, then unlock and
-          // populate. This is why they only showed up sometimes.
-          (async () => {
-            if (!allGroups || !allGroups.length) { try { await loadGroups(); } catch (e) {} }
-            if (document.getElementById('finance-content').style.display !== 'block') {
-              await tryAutoFinanceUnlock();   // populates the ledger selector on success
-            } else {
-              populateFinanceGroups();
-              refreshFinanceRoleForGroup();
-            }
-            restoreFinanceMonth();
-            populateMyDuesGroups();
-          })();
-        }
-        // Leaving the Player Card has to hand the page back to your own
-        // background, so this is re-evaluated on every switch rather than
-        // only when a card is rendered.
-        updatePageBackground();
-      });
+          restoreFinanceMonth();
+          populateMyDuesGroups();
+        })();
+      }
+      // Leaving the Player Card has to hand the page back to your own
+      // background, so this is re-evaluated on every switch rather than
+      // only when a card is rendered.
+      updatePageBackground();
+    }
+
+    document.querySelectorAll('.tab-btn').forEach(btn => {
+      btn.addEventListener('click', () => activateTab(btn.dataset.tab));
     });
+
+    /** The floating "+" shortcut (visible on every tab except Matches
+     *  itself): jumps to the record-match form and scrolls it into view, so
+     *  recording a match never requires hunting for the right tab first.
+     *  Reuses the Matches tab's own guest/unlinked-account notices - a
+     *  logged-out or unlinked caller sees the same prompts they'd see by
+     *  navigating there directly, so this doesn't need its own auth logic. */
+    function jumpToRecordMatch() {
+      activateTab('matches');
+      const target = document.getElementById('record-match-card') || document.getElementById('tab-matches');
+      if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
 
     function applyTheme(theme) {
       document.documentElement.setAttribute('data-theme', theme);

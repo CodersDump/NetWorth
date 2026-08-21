@@ -258,6 +258,35 @@
 
 ## Done
 
+- ✅ 2026-08-20 (v1.44.0) — **Floating "record a match" shortcut + enlarge-on-select tabs + redesigned
+  the Flame card frame (all three Owner-requested).**
+  (1) **Always-floating "+" to record a match.** A fixed `#record-match-fab` circular button
+  (`.record-fab`, bottom-right, riding above page content but below the header dropdown/any modal)
+  is now visible on every tab except Matches itself - clicking it jumps straight to the record-match
+  form instead of requiring the Matches tab first. Refactored the `.tab-btn` click listener (previously
+  one inline closure) into a named `activateTab(tabName)` so the FAB's `jumpToRecordMatch()` can reuse
+  the exact same tab-switch + on-open side effects (lazy loads, finance auto-unlock, URL hash, etc.)
+  instead of duplicating any of that logic - behavior is identical either way, just two triggers.
+  Reuses the Matches tab's existing guest/unlinked-account notices, so a logged-out or unlinked caller
+  sees the same prompts as navigating there directly; no separate auth handling needed in the FAB.
+  (2) **Tabs now enlarge on selection.** `.tab-btn` gained a `transform: scale(1.12)` + bounce-easing
+  transition on `.active`, anchored to the bottom edge (where the underline is) so it grows in place
+  rather than drifting. Pure CSS - the existing `.active` class toggle already did all the state
+  management needed.
+  (3) **Redesigned the "Flame" card frame (Owner: "what is this monstrosity ... i was expecting it to
+  be like this in Steam").** The old flame frame drew a jagged, animated flame-tongue SVG
+  (`FLAME_BORDER_SVG`/`svgTongue` for the live preview, `drawFlame`/`flameEdge`/`flameTongue` for the
+  canvas export) covering most of the card's border on all 4 edges - a cartoonish sawtooth shape wildly
+  out of step with every other frame preset (Gold/Ruby/Chrome/etc.), which all use a clean, tasteful
+  gradient-stroke border. Removed all of that dead code and replaced it with the same two-stroke
+  gradient-border treatment as Gold/Carbon, just in warm ember tones (amber → orange-red → gold) with a
+  soft glow - matches the quality bar of every other frame instead of standing out as an outlier, and
+  no longer needs its own `ANIM_FRAMES` entry or per-frame `t`-driven flicker animation since it's now a
+  static gradient like Gold/Ruby/Chrome. Verified by rendering the exact shipped CSS rule and canvas
+  function (byte-for-byte, not reimplemented) in a headless-browser harness for both the live-preview
+  and PNG-export paths - screenshots confirm a clean warm-gradient border, no jagged shapes.
+  Files: `frontend/index.html` (1), `frontend/css/styles.css` (1, 2), `frontend/js/app.js` (1),
+  `frontend/js/card-share.js` (3).
 - ✅ 2026-08-20 (v1.43.0) — **Backlog/defect sweep: finished the scan-pagination fix everywhere,
   scrubbed the committed AWS account id, added a CI guard against a destructive frontend sync
   (Owner asked to pick up whatever was left off/in the backlog/a defect).**
