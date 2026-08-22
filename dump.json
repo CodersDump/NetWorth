@@ -1,0 +1,3532 @@
+{
+  "tournament": {
+    "manual_draft": {
+      "budget_per_leader": "1000",
+      "match_type": "doubles",
+      "num_pools": "4",
+      "knockout_matches_per_tie": "3",
+      "group_matches_per_tie": "1",
+      "group_mode": "cross_squad",
+      "picks_per_pool": "2",
+      "num_groups": "4",
+      "advance_per_group": "1"
+    },
+    "created_at": "2026-08-21T18:30:43.806162+00:00",
+    "pools": {
+      "assignments": {
+        "2": [
+          "d0b876c3-d66f-4ba3-a1d5-ad7f1369b97b",
+          "a8b209d5-b42d-4ab8-98f0-60e2a4fdeb29",
+          "3dc10d46-fd4f-49da-9773-53bcf2d140e1",
+          "97755542-3135-4012-94d5-6fc394a7cdad",
+          "17aa0eb2-94ae-4dc9-9ab6-c02d2ee92599",
+          "83f66cc1-8736-4822-a37d-a0508366f56a",
+          "e32c5654-9cee-4d10-ba14-5d40531868e6",
+          "15d41fab-b362-4cae-ba2d-7f9b3ee08736"
+        ],
+        "4": [
+          "4561e6f7-cc03-4909-b415-9aadd6495b74",
+          "4f777bc3-8578-463c-9c32-4eecc35a3147",
+          "732c7c1f-9187-4b25-a2e1-65eaf641273d",
+          "b24d1dc0-1da3-4914-8d8b-55151eb8138e",
+          "750fb27e-d200-48f9-955f-56cd966210a0",
+          "c90777e0-63c9-43e7-bb35-ab03de9f004f",
+          "95191624-fa6a-43b1-a436-8a75f2266205",
+          "6ecf17ee-af8d-4a98-b642-76823c17196a"
+        ],
+        "1": [
+          "c9034fe1-b1ca-4542-a218-304628d21163",
+          "4fcaf281-8620-49a4-8dde-ab7bf4bec4ea",
+          "c1096a1e-e449-4c9c-807a-6a85ca10623a",
+          "a4e7c903-b5de-43bc-a18f-e5aea5bdac4a",
+          "fb796edf-6ffa-470b-a7ea-8d0adcafc61f",
+          "80f22187-b8b3-4e6b-9cd4-c350aeb6e1cb",
+          "ef3d3e0c-2e65-4f36-a4e1-10b1a935c627",
+          "ed9ef3b5-a0d9-4443-b3df-6f37dd7067b2"
+        ],
+        "3": [
+          "9f72bbce-8feb-4fa1-8c07-06865b7359de",
+          "3961c180-9057-44ae-a904-32319385c447",
+          "df471f85-9a61-4e47-b91c-891e0d3d762d",
+          "b9aa5e7e-e337-4da7-877c-15ebae580df4",
+          "7042d45a-5e6c-4c7f-b8fd-d8d5fc6f78c3",
+          "21b1a4e1-e695-488b-a888-89381b2a7974",
+          "d749ee19-872b-4768-8cc5-d52e34e07c3d",
+          "c4b87c2a-22e5-4f33-bab5-75fa8a54c14f"
+        ]
+      },
+      "unassigned": [],
+      "locked": true
+    },
+    "status": "group_stage",
+    "created_by": "thesneakshot@gmail.com",
+    "leaders": [
+      "21b1a4e1-e695-488b-a888-89381b2a7974",
+      "b24d1dc0-1da3-4914-8d8b-55151eb8138e",
+      "d749ee19-872b-4768-8cc5-d52e34e07c3d",
+      "c9034fe1-b1ca-4542-a218-304628d21163"
+    ],
+    "tournament_id": "656de879-ad8c-46ee-8aa0-65467d82692c",
+    "name": "Rally Royale (22-23 Aug)",
+    "format": "manual_draft",
+    "group_id": "712c0ba3-f1a6-443a-b0be-04c2cabb2c89",
+    "draft": {
+      "status": "completed",
+      "queue": [
+        {
+          "pool": "1",
+          "player_id": "4fcaf281-8620-49a4-8dde-ab7bf4bec4ea"
+        },
+        {
+          "player_id": "c1096a1e-e449-4c9c-807a-6a85ca10623a",
+          "pool": "1"
+        },
+        {
+          "pool": "1",
+          "player_id": "a4e7c903-b5de-43bc-a18f-e5aea5bdac4a"
+        },
+        {
+          "pool": "1",
+          "player_id": "fb796edf-6ffa-470b-a7ea-8d0adcafc61f"
+        },
+        {
+          "pool": "1",
+          "player_id": "80f22187-b8b3-4e6b-9cd4-c350aeb6e1cb"
+        },
+        {
+          "player_id": "ef3d3e0c-2e65-4f36-a4e1-10b1a935c627",
+          "pool": "1"
+        },
+        {
+          "pool": "1",
+          "player_id": "ed9ef3b5-a0d9-4443-b3df-6f37dd7067b2"
+        },
+        {
+          "player_id": "d0b876c3-d66f-4ba3-a1d5-ad7f1369b97b",
+          "pool": "2"
+        },
+        {
+          "pool": "2",
+          "player_id": "a8b209d5-b42d-4ab8-98f0-60e2a4fdeb29"
+        },
+        {
+          "player_id": "3dc10d46-fd4f-49da-9773-53bcf2d140e1",
+          "pool": "2"
+        },
+        {
+          "pool": "2",
+          "player_id": "97755542-3135-4012-94d5-6fc394a7cdad"
+        },
+        {
+          "pool": "2",
+          "player_id": "17aa0eb2-94ae-4dc9-9ab6-c02d2ee92599"
+        },
+        {
+          "pool": "2",
+          "player_id": "83f66cc1-8736-4822-a37d-a0508366f56a"
+        },
+        {
+          "pool": "2",
+          "player_id": "e32c5654-9cee-4d10-ba14-5d40531868e6"
+        },
+        {
+          "player_id": "15d41fab-b362-4cae-ba2d-7f9b3ee08736",
+          "pool": "2"
+        },
+        {
+          "pool": "3",
+          "player_id": "9f72bbce-8feb-4fa1-8c07-06865b7359de"
+        },
+        {
+          "player_id": "3961c180-9057-44ae-a904-32319385c447",
+          "pool": "3"
+        },
+        {
+          "player_id": "df471f85-9a61-4e47-b91c-891e0d3d762d",
+          "pool": "3"
+        },
+        {
+          "pool": "3",
+          "player_id": "b9aa5e7e-e337-4da7-877c-15ebae580df4"
+        },
+        {
+          "pool": "3",
+          "player_id": "7042d45a-5e6c-4c7f-b8fd-d8d5fc6f78c3"
+        },
+        {
+          "player_id": "c4b87c2a-22e5-4f33-bab5-75fa8a54c14f",
+          "pool": "3"
+        },
+        {
+          "player_id": "4561e6f7-cc03-4909-b415-9aadd6495b74",
+          "pool": "4"
+        },
+        {
+          "pool": "4",
+          "player_id": "4f777bc3-8578-463c-9c32-4eecc35a3147"
+        },
+        {
+          "pool": "4",
+          "player_id": "732c7c1f-9187-4b25-a2e1-65eaf641273d"
+        },
+        {
+          "pool": "4",
+          "player_id": "750fb27e-d200-48f9-955f-56cd966210a0"
+        },
+        {
+          "pool": "4",
+          "player_id": "c90777e0-63c9-43e7-bb35-ab03de9f004f"
+        },
+        {
+          "pool": "4",
+          "player_id": "95191624-fa6a-43b1-a436-8a75f2266205"
+        },
+        {
+          "player_id": "6ecf17ee-af8d-4a98-b642-76823c17196a",
+          "pool": "4"
+        }
+      ],
+      "leaders": {
+        "c9034fe1-b1ca-4542-a218-304628d21163": {
+          "squad_member_ids": [
+            "c9034fe1-b1ca-4542-a218-304628d21163",
+            "80f22187-b8b3-4e6b-9cd4-c350aeb6e1cb",
+            "d0b876c3-d66f-4ba3-a1d5-ad7f1369b97b",
+            "97755542-3135-4012-94d5-6fc394a7cdad",
+            "3961c180-9057-44ae-a904-32319385c447",
+            "7042d45a-5e6c-4c7f-b8fd-d8d5fc6f78c3",
+            "4561e6f7-cc03-4909-b415-9aadd6495b74",
+            "4f777bc3-8578-463c-9c32-4eecc35a3147"
+          ],
+          "remaining_budget": "993",
+          "pool_picks": {
+            "4": "2",
+            "2": "2",
+            "1": "2",
+            "3": "2"
+          }
+        },
+        "d749ee19-872b-4768-8cc5-d52e34e07c3d": {
+          "squad_member_ids": [
+            "d749ee19-872b-4768-8cc5-d52e34e07c3d",
+            "95191624-fa6a-43b1-a436-8a75f2266205",
+            "15d41fab-b362-4cae-ba2d-7f9b3ee08736",
+            "9f72bbce-8feb-4fa1-8c07-06865b7359de",
+            "6ecf17ee-af8d-4a98-b642-76823c17196a",
+            "a8b209d5-b42d-4ab8-98f0-60e2a4fdeb29",
+            "c1096a1e-e449-4c9c-807a-6a85ca10623a",
+            "ed9ef3b5-a0d9-4443-b3df-6f37dd7067b2"
+          ],
+          "pool_picks": {
+            "3": "2",
+            "2": "2",
+            "1": "2",
+            "4": "2"
+          },
+          "remaining_budget": "993"
+        },
+        "b24d1dc0-1da3-4914-8d8b-55151eb8138e": {
+          "remaining_budget": "993",
+          "pool_picks": {
+            "2": "2",
+            "3": "2",
+            "4": "2",
+            "1": "2"
+          },
+          "squad_member_ids": [
+            "b24d1dc0-1da3-4914-8d8b-55151eb8138e",
+            "a4e7c903-b5de-43bc-a18f-e5aea5bdac4a",
+            "ef3d3e0c-2e65-4f36-a4e1-10b1a935c627",
+            "c90777e0-63c9-43e7-bb35-ab03de9f004f",
+            "b9aa5e7e-e337-4da7-877c-15ebae580df4",
+            "3dc10d46-fd4f-49da-9773-53bcf2d140e1",
+            "c4b87c2a-22e5-4f33-bab5-75fa8a54c14f",
+            "17aa0eb2-94ae-4dc9-9ab6-c02d2ee92599"
+          ]
+        },
+        "21b1a4e1-e695-488b-a888-89381b2a7974": {
+          "pool_picks": {
+            "3": "2",
+            "2": "2",
+            "4": "2",
+            "1": "2"
+          },
+          "squad_member_ids": [
+            "21b1a4e1-e695-488b-a888-89381b2a7974",
+            "4fcaf281-8620-49a4-8dde-ab7bf4bec4ea",
+            "e32c5654-9cee-4d10-ba14-5d40531868e6",
+            "df471f85-9a61-4e47-b91c-891e0d3d762d",
+            "fb796edf-6ffa-470b-a7ea-8d0adcafc61f",
+            "732c7c1f-9187-4b25-a2e1-65eaf641273d",
+            "750fb27e-d200-48f9-955f-56cd966210a0",
+            "83f66cc1-8736-4822-a37d-a0508366f56a"
+          ],
+          "remaining_budget": "993"
+        }
+      },
+      "unsold": [],
+      "current_lot": null
+    },
+    "squads": {
+      "21b1a4e1-e695-488b-a888-89381b2a7974": {
+        "entity_id": "2c6bb89b-12e4-427f-8912-542536c70c3e",
+        "name": "Mayank's Dhurandhars",
+        "member_ratings": [
+          "1107",
+          "1000",
+          "1016",
+          "890",
+          "1261",
+          "563",
+          "903",
+          "1336"
+        ],
+        "members": [
+          "21b1a4e1-e695-488b-a888-89381b2a7974",
+          "4fcaf281-8620-49a4-8dde-ab7bf4bec4ea",
+          "e32c5654-9cee-4d10-ba14-5d40531868e6",
+          "df471f85-9a61-4e47-b91c-891e0d3d762d",
+          "fb796edf-6ffa-470b-a7ea-8d0adcafc61f",
+          "732c7c1f-9187-4b25-a2e1-65eaf641273d",
+          "750fb27e-d200-48f9-955f-56cd966210a0",
+          "83f66cc1-8736-4822-a37d-a0508366f56a"
+        ],
+        "locked": true,
+        "pairs": [
+          [
+            "21b1a4e1-e695-488b-a888-89381b2a7974",
+            "e32c5654-9cee-4d10-ba14-5d40531868e6"
+          ],
+          [
+            "83f66cc1-8736-4822-a37d-a0508366f56a",
+            "df471f85-9a61-4e47-b91c-891e0d3d762d"
+          ],
+          [
+            "4fcaf281-8620-49a4-8dde-ab7bf4bec4ea",
+            "732c7c1f-9187-4b25-a2e1-65eaf641273d"
+          ],
+          [
+            "fb796edf-6ffa-470b-a7ea-8d0adcafc61f",
+            "750fb27e-d200-48f9-955f-56cd966210a0"
+          ]
+        ]
+      },
+      "c9034fe1-b1ca-4542-a218-304628d21163": {
+        "entity_id": "67756337-3864-48ea-8663-0fc10988af39",
+        "pairs": [
+          [
+            "80f22187-b8b3-4e6b-9cd4-c350aeb6e1cb",
+            "4561e6f7-cc03-4909-b415-9aadd6495b74"
+          ],
+          [
+            "c9034fe1-b1ca-4542-a218-304628d21163",
+            "4f777bc3-8578-463c-9c32-4eecc35a3147"
+          ],
+          [
+            "97755542-3135-4012-94d5-6fc394a7cdad",
+            "7042d45a-5e6c-4c7f-b8fd-d8d5fc6f78c3"
+          ],
+          [
+            "d0b876c3-d66f-4ba3-a1d5-ad7f1369b97b",
+            "3961c180-9057-44ae-a904-32319385c447"
+          ]
+        ],
+        "name": "Team Tanay",
+        "members": [
+          "c9034fe1-b1ca-4542-a218-304628d21163",
+          "80f22187-b8b3-4e6b-9cd4-c350aeb6e1cb",
+          "d0b876c3-d66f-4ba3-a1d5-ad7f1369b97b",
+          "97755542-3135-4012-94d5-6fc394a7cdad",
+          "3961c180-9057-44ae-a904-32319385c447",
+          "7042d45a-5e6c-4c7f-b8fd-d8d5fc6f78c3",
+          "4561e6f7-cc03-4909-b415-9aadd6495b74",
+          "4f777bc3-8578-463c-9c32-4eecc35a3147"
+        ],
+        "member_ratings": [
+          "1000",
+          "1000",
+          "1268",
+          "1208",
+          "973",
+          "849",
+          "948",
+          "1000"
+        ],
+        "locked": true
+      },
+      "b24d1dc0-1da3-4914-8d8b-55151eb8138e": {
+        "pairs": [
+          [
+            "a4e7c903-b5de-43bc-a18f-e5aea5bdac4a",
+            "c90777e0-63c9-43e7-bb35-ab03de9f004f"
+          ],
+          [
+            "ef3d3e0c-2e65-4f36-a4e1-10b1a935c627",
+            "b24d1dc0-1da3-4914-8d8b-55151eb8138e"
+          ],
+          [
+            "b9aa5e7e-e337-4da7-877c-15ebae580df4",
+            "3dc10d46-fd4f-49da-9773-53bcf2d140e1"
+          ],
+          [
+            "c4b87c2a-22e5-4f33-bab5-75fa8a54c14f",
+            "17aa0eb2-94ae-4dc9-9ab6-c02d2ee92599"
+          ]
+        ],
+        "member_ratings": [
+          "786",
+          "955",
+          "1000",
+          "1000",
+          "1141",
+          "979",
+          "927",
+          "1305"
+        ],
+        "members": [
+          "b24d1dc0-1da3-4914-8d8b-55151eb8138e",
+          "a4e7c903-b5de-43bc-a18f-e5aea5bdac4a",
+          "e7f2040b-b9af-4c9b-a7d0-7df006f770e3",
+          "c90777e0-63c9-43e7-bb35-ab03de9f004f",
+          "b9aa5e7e-e337-4da7-877c-15ebae580df4",
+          "3dc10d46-fd4f-49da-9773-53bcf2d140e1",
+          "c4b87c2a-22e5-4f33-bab5-75fa8a54c14f",
+          "17aa0eb2-94ae-4dc9-9ab6-c02d2ee92599"
+        ],
+        "entity_id": "dca48a4c-abe3-41d1-aeec-123b54b46960",
+        "locked": true,
+        "name": "Smashers"
+      },
+      "d749ee19-872b-4768-8cc5-d52e34e07c3d": {
+        "name": "The Thunder Strikers",
+        "locked": true,
+        "entity_id": "05215495-672b-4116-bd04-2ddec974e2db",
+        "members": [
+          "d749ee19-872b-4768-8cc5-d52e34e07c3d",
+          "95191624-fa6a-43b1-a436-8a75f2266205",
+          "15d41fab-b362-4cae-ba2d-7f9b3ee08736",
+          "9f72bbce-8feb-4fa1-8c07-06865b7359de",
+          "6ecf17ee-af8d-4a98-b642-76823c17196a",
+          "a8b209d5-b42d-4ab8-98f0-60e2a4fdeb29",
+          "c1096a1e-e449-4c9c-807a-6a85ca10623a",
+          "ed9ef3b5-a0d9-4443-b3df-6f37dd7067b2"
+        ],
+        "pairs": [
+          [
+            "ed9ef3b5-a0d9-4443-b3df-6f37dd7067b2",
+            "6ecf17ee-af8d-4a98-b642-76823c17196a"
+          ],
+          [
+            "c1096a1e-e449-4c9c-807a-6a85ca10623a",
+            "95191624-fa6a-43b1-a436-8a75f2266205"
+          ],
+          [
+            "a8b209d5-b42d-4ab8-98f0-60e2a4fdeb29",
+            "d749ee19-872b-4768-8cc5-d52e34e07c3d"
+          ],
+          [
+            "15d41fab-b362-4cae-ba2d-7f9b3ee08736",
+            "9f72bbce-8feb-4fa1-8c07-06865b7359de"
+          ]
+        ],
+        "member_ratings": [
+          "965",
+          "902",
+          "1000",
+          "974",
+          "966",
+          "1000",
+          "1044",
+          "1008"
+        ]
+      }
+    },
+    "group_stage": {
+      "groups": {
+        "B": [
+          "21b1a4e1-e695-488b-a888-89381b2a7974::rep3",
+          "b24d1dc0-1da3-4914-8d8b-55151eb8138e::rep1",
+          "c9034fe1-b1ca-4542-a218-304628d21163::rep2",
+          "d749ee19-872b-4768-8cc5-d52e34e07c3d::rep2"
+        ],
+        "D": [
+          "21b1a4e1-e695-488b-a888-89381b2a7974::rep2",
+          "b24d1dc0-1da3-4914-8d8b-55151eb8138e::rep2",
+          "c9034fe1-b1ca-4542-a218-304628d21163::rep1",
+          "d749ee19-872b-4768-8cc5-d52e34e07c3d::rep0"
+        ],
+        "C": [
+          "21b1a4e1-e695-488b-a888-89381b2a7974::rep0",
+          "b24d1dc0-1da3-4914-8d8b-55151eb8138e::rep3",
+          "c9034fe1-b1ca-4542-a218-304628d21163::rep0",
+          "d749ee19-872b-4768-8cc5-d52e34e07c3d::rep3"
+        ],
+        "A": [
+          "21b1a4e1-e695-488b-a888-89381b2a7974::rep1",
+          "b24d1dc0-1da3-4914-8d8b-55151eb8138e::rep0",
+          "c9034fe1-b1ca-4542-a218-304628d21163::rep3",
+          "d749ee19-872b-4768-8cc5-d52e34e07c3d::rep1"
+        ]
+      },
+      "cross_squad": true,
+      "ties": [
+        {
+          "point_diff_a": "13",
+          "decided": true,
+          "tie_id": "42e480d3-5533-4dc0-a923-1d0a2768f43f",
+          "squad_b": "b24d1dc0-1da3-4914-8d8b-55151eb8138e::rep0",
+          "winner_squad_id": "21b1a4e1-e695-488b-a888-89381b2a7974::rep1",
+          "point_diff_b": "-13",
+          "wins_a": "1",
+          "matches": [
+            {
+              "games_won_b": "0",
+              "games": [
+                {
+                  "score_a": "21",
+                  "score_b": "8"
+                }
+              ],
+              "player_a": {
+                "member_ratings": [
+                  "1336",
+                  "890"
+                ],
+                "player_id": "21b1a4e1-e695-488b-a888-89381b2a7974::rep1",
+                "name": "Sourabh C & Aditya Yelegaon",
+                "members": [
+                  "83f66cc1-8736-4822-a37d-a0508366f56a",
+                  "df471f85-9a61-4e47-b91c-891e0d3d762d"
+                ]
+              },
+              "games_won_a": "1",
+              "played": true,
+              "match_id": "8ed3b118-18c9-418f-ad56-bbd89b3d33da",
+              "winner_id": "21b1a4e1-e695-488b-a888-89381b2a7974::rep1",
+              "player_b": {
+                "player_id": "b24d1dc0-1da3-4914-8d8b-55151eb8138e::rep0",
+                "members": [
+                  "a4e7c903-b5de-43bc-a18f-e5aea5bdac4a",
+                  "c90777e0-63c9-43e7-bb35-ab03de9f004f"
+                ],
+                "name": "Vipin & Krishna",
+                "member_ratings": [
+                  "955",
+                  "1000"
+                ]
+              }
+            }
+          ],
+          "wins_b": "0",
+          "squad_a": "21b1a4e1-e695-488b-a888-89381b2a7974::rep1",
+          "group": "A"
+        },
+        {
+          "tie_id": "897c3f53-2587-4431-bda4-c3a53a94d902",
+          "wins_a": "1",
+          "squad_b": "c9034fe1-b1ca-4542-a218-304628d21163::rep3",
+          "winner_squad_id": "21b1a4e1-e695-488b-a888-89381b2a7974::rep1",
+          "decided": true,
+          "group": "A",
+          "wins_b": "0",
+          "point_diff_a": "14",
+          "squad_a": "21b1a4e1-e695-488b-a888-89381b2a7974::rep1",
+          "point_diff_b": "-14",
+          "matches": [
+            {
+              "played": true,
+              "match_id": "3709b101-5a2d-47dc-9edb-d8fa1d3ec5e9",
+              "winner_id": "21b1a4e1-e695-488b-a888-89381b2a7974::rep1",
+              "games_won_b": "0",
+              "player_a": {
+                "name": "Sourabh C & Aditya Yelegaon",
+                "player_id": "21b1a4e1-e695-488b-a888-89381b2a7974::rep1",
+                "member_ratings": [
+                  "1336",
+                  "890"
+                ],
+                "members": [
+                  "83f66cc1-8736-4822-a37d-a0508366f56a",
+                  "df471f85-9a61-4e47-b91c-891e0d3d762d"
+                ]
+              },
+              "games_won_a": "1",
+              "player_b": {
+                "members": [
+                  "d0b876c3-d66f-4ba3-a1d5-ad7f1369b97b",
+                  "3961c180-9057-44ae-a904-32319385c447"
+                ],
+                "member_ratings": [
+                  "1268",
+                  "973"
+                ],
+                "player_id": "c9034fe1-b1ca-4542-a218-304628d21163::rep3",
+                "name": "Abhishek K & Gangaram Ghadi"
+              },
+              "games": [
+                {
+                  "score_b": "7",
+                  "score_a": "21"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "decided": true,
+          "wins_a": "1",
+          "point_diff_b": "-6",
+          "squad_a": "21b1a4e1-e695-488b-a888-89381b2a7974::rep1",
+          "matches": [
+            {
+              "played": true,
+              "games": [
+                {
+                  "score_a": "21",
+                  "score_b": "15"
+                }
+              ],
+              "player_b": {
+                "members": [
+                  "c1096a1e-e449-4c9c-807a-6a85ca10623a",
+                  "95191624-fa6a-43b1-a436-8a75f2266205"
+                ],
+                "member_ratings": [
+                  "1044",
+                  "902"
+                ],
+                "name": "Abhishek Verma & Yeshwanth",
+                "player_id": "d749ee19-872b-4768-8cc5-d52e34e07c3d::rep1"
+              },
+              "winner_id": "21b1a4e1-e695-488b-a888-89381b2a7974::rep1",
+              "games_won_b": "0",
+              "player_a": {
+                "name": "Sourabh C & Aditya Yelegaon",
+                "member_ratings": [
+                  "1336",
+                  "890"
+                ],
+                "members": [
+                  "83f66cc1-8736-4822-a37d-a0508366f56a",
+                  "df471f85-9a61-4e47-b91c-891e0d3d762d"
+                ],
+                "player_id": "21b1a4e1-e695-488b-a888-89381b2a7974::rep1"
+              },
+              "match_id": "53f0b1ae-a38c-43a7-b01d-84cb5c279f07",
+              "games_won_a": "1"
+            }
+          ],
+          "tie_id": "a6115a78-0932-4969-90ac-c5ebd987d46c",
+          "winner_squad_id": "21b1a4e1-e695-488b-a888-89381b2a7974::rep1",
+          "group": "A",
+          "squad_b": "d749ee19-872b-4768-8cc5-d52e34e07c3d::rep1",
+          "point_diff_a": "6",
+          "wins_b": "0"
+        },
+        {
+          "point_diff_a": "11",
+          "group": "A",
+          "squad_b": "c9034fe1-b1ca-4542-a218-304628d21163::rep3",
+          "matches": [
+            {
+              "games_won_a": "1",
+              "player_a": {
+                "member_ratings": [
+                  "955",
+                  "1000"
+                ],
+                "members": [
+                  "a4e7c903-b5de-43bc-a18f-e5aea5bdac4a",
+                  "c90777e0-63c9-43e7-bb35-ab03de9f004f"
+                ],
+                "name": "Vipin & Krishna",
+                "player_id": "b24d1dc0-1da3-4914-8d8b-55151eb8138e::rep0"
+              },
+              "games_won_b": "0",
+              "match_id": "a0d09019-9f20-4932-9735-c4d1b6d464cc",
+              "winner_id": "b24d1dc0-1da3-4914-8d8b-55151eb8138e::rep0",
+              "games": [
+                {
+                  "score_a": "21",
+                  "score_b": "10"
+                }
+              ],
+              "played": true,
+              "player_b": {
+                "name": "Abhishek K & Gangaram Ghadi",
+                "members": [
+                  "d0b876c3-d66f-4ba3-a1d5-ad7f1369b97b",
+                  "3961c180-9057-44ae-a904-32319385c447"
+                ],
+                "player_id": "c9034fe1-b1ca-4542-a218-304628d21163::rep3",
+                "member_ratings": [
+                  "1268",
+                  "973"
+                ]
+              }
+            }
+          ],
+          "wins_b": "0",
+          "tie_id": "4f2c7656-501f-4262-a62c-445cc5fb5134",
+          "wins_a": "1",
+          "squad_a": "b24d1dc0-1da3-4914-8d8b-55151eb8138e::rep0",
+          "decided": true,
+          "point_diff_b": "-11",
+          "winner_squad_id": "b24d1dc0-1da3-4914-8d8b-55151eb8138e::rep0"
+        },
+        {
+          "wins_a": "1",
+          "point_diff_b": "-2",
+          "winner_squad_id": "b24d1dc0-1da3-4914-8d8b-55151eb8138e::rep0",
+          "point_diff_a": "2",
+          "group": "A",
+          "decided": true,
+          "squad_b": "d749ee19-872b-4768-8cc5-d52e34e07c3d::rep1",
+          "tie_id": "cdb3467b-5459-459f-87db-4b1d8f0ff632",
+          "matches": [
+            {
+              "match_id": "8b707262-8f98-4c2e-a739-b79d40c96cf5",
+              "player_a": {
+                "name": "Vipin & Krishna",
+                "members": [
+                  "a4e7c903-b5de-43bc-a18f-e5aea5bdac4a",
+                  "c90777e0-63c9-43e7-bb35-ab03de9f004f"
+                ],
+                "player_id": "b24d1dc0-1da3-4914-8d8b-55151eb8138e::rep0",
+                "member_ratings": [
+                  "955",
+                  "1000"
+                ]
+              },
+              "player_b": {
+                "player_id": "d749ee19-872b-4768-8cc5-d52e34e07c3d::rep1",
+                "members": [
+                  "c1096a1e-e449-4c9c-807a-6a85ca10623a",
+                  "95191624-fa6a-43b1-a436-8a75f2266205"
+                ],
+                "name": "Abhishek Verma & Yeshwanth",
+                "member_ratings": [
+                  "1044",
+                  "902"
+                ]
+              },
+              "played": true,
+              "games_won_a": "1",
+              "games": [
+                {
+                  "score_b": "19",
+                  "score_a": "21"
+                }
+              ],
+              "winner_id": "b24d1dc0-1da3-4914-8d8b-55151eb8138e::rep0",
+              "games_won_b": "0"
+            }
+          ],
+          "squad_a": "b24d1dc0-1da3-4914-8d8b-55151eb8138e::rep0",
+          "wins_b": "0"
+        },
+        {
+          "tie_id": "cfb1ecdb-b856-4001-86c2-d42eb0eb0d0d",
+          "matches": [
+            {
+              "player_a": {
+                "member_ratings": [
+                  "1268",
+                  "973"
+                ],
+                "members": [
+                  "d0b876c3-d66f-4ba3-a1d5-ad7f1369b97b",
+                  "3961c180-9057-44ae-a904-32319385c447"
+                ],
+                "name": "Abhishek K & Gangaram Ghadi",
+                "player_id": "c9034fe1-b1ca-4542-a218-304628d21163::rep3"
+              },
+              "games_won_b": "0",
+              "winner_id": null,
+              "player_b": {
+                "member_ratings": [
+                  "1044",
+                  "902"
+                ],
+                "player_id": "d749ee19-872b-4768-8cc5-d52e34e07c3d::rep1",
+                "members": [
+                  "c1096a1e-e449-4c9c-807a-6a85ca10623a",
+                  "95191624-fa6a-43b1-a436-8a75f2266205"
+                ],
+                "name": "Abhishek Verma & Yeshwanth"
+              },
+              "match_id": "ccf6fede-4297-434d-9ce2-06d8791bc28d",
+              "games": [],
+              "played": false,
+              "games_won_a": "0"
+            }
+          ],
+          "wins_a": "0",
+          "point_diff_a": "0",
+          "squad_a": "c9034fe1-b1ca-4542-a218-304628d21163::rep3",
+          "winner_squad_id": null,
+          "decided": false,
+          "wins_b": "0",
+          "squad_b": "d749ee19-872b-4768-8cc5-d52e34e07c3d::rep1",
+          "group": "A",
+          "point_diff_b": "0"
+        },
+        {
+          "wins_a": "0",
+          "decided": true,
+          "winner_squad_id": "b24d1dc0-1da3-4914-8d8b-55151eb8138e::rep1",
+          "matches": [
+            {
+              "winner_id": "b24d1dc0-1da3-4914-8d8b-55151eb8138e::rep1",
+              "player_b": {
+                "player_id": "b24d1dc0-1da3-4914-8d8b-55151eb8138e::rep1",
+                "name": "Aman & Mirgank",
+                "members": [
+                  "ef3d3e0c-2e65-4f36-a4e1-10b1a935c627",
+                  "b24d1dc0-1da3-4914-8d8b-55151eb8138e"
+                ],
+                "member_ratings": [
+                  "1000",
+                  "786"
+                ]
+              },
+              "games_won_a": "0",
+              "match_id": "ee008415-7a29-43af-a7f1-eed971ca3189",
+              "games": [
+                {
+                  "score_a": "19",
+                  "score_b": "21"
+                }
+              ],
+              "player_a": {
+                "member_ratings": [
+                  "1261",
+                  "903"
+                ],
+                "name": "Prasanna Varade & Deepak",
+                "members": [
+                  "fb796edf-6ffa-470b-a7ea-8d0adcafc61f",
+                  "750fb27e-d200-48f9-955f-56cd966210a0"
+                ],
+                "player_id": "21b1a4e1-e695-488b-a888-89381b2a7974::rep3"
+              },
+              "games_won_b": "1",
+              "played": true
+            }
+          ],
+          "group": "B",
+          "squad_a": "21b1a4e1-e695-488b-a888-89381b2a7974::rep3",
+          "wins_b": "1",
+          "tie_id": "18d31b0d-c711-4bf3-8179-f0e6de52da45",
+          "point_diff_b": "2",
+          "squad_b": "b24d1dc0-1da3-4914-8d8b-55151eb8138e::rep1",
+          "point_diff_a": "-2"
+        },
+        {
+          "wins_b": "1",
+          "point_diff_b": "2",
+          "squad_a": "21b1a4e1-e695-488b-a888-89381b2a7974::rep3",
+          "decided": true,
+          "squad_b": "c9034fe1-b1ca-4542-a218-304628d21163::rep2",
+          "matches": [
+            {
+              "games": [
+                {
+                  "score_b": "21",
+                  "score_a": "19"
+                }
+              ],
+              "winner_id": "c9034fe1-b1ca-4542-a218-304628d21163::rep2",
+              "played": true,
+              "match_id": "ec85b5db-bae3-48e9-9c9e-962d64b4858e",
+              "player_a": {
+                "members": [
+                  "fb796edf-6ffa-470b-a7ea-8d0adcafc61f",
+                  "750fb27e-d200-48f9-955f-56cd966210a0"
+                ],
+                "member_ratings": [
+                  "1261",
+                  "903"
+                ],
+                "player_id": "21b1a4e1-e695-488b-a888-89381b2a7974::rep3",
+                "name": "Prasanna Varade & Deepak"
+              },
+              "player_b": {
+                "member_ratings": [
+                  "1208",
+                  "849"
+                ],
+                "player_id": "c9034fe1-b1ca-4542-a218-304628d21163::rep2",
+                "members": [
+                  "97755542-3135-4012-94d5-6fc394a7cdad",
+                  "7042d45a-5e6c-4c7f-b8fd-d8d5fc6f78c3"
+                ],
+                "name": "Bibhu & Sohan"
+              },
+              "games_won_a": "0",
+              "games_won_b": "1"
+            }
+          ],
+          "winner_squad_id": "c9034fe1-b1ca-4542-a218-304628d21163::rep2",
+          "point_diff_a": "-2",
+          "tie_id": "4a721d89-e8d3-4719-bbba-ae6a41f954df",
+          "wins_a": "0",
+          "group": "B"
+        },
+        {
+          "point_diff_a": "-2",
+          "decided": true,
+          "tie_id": "1c40ad04-23ab-4899-ab12-32088d48996f",
+          "winner_squad_id": "d749ee19-872b-4768-8cc5-d52e34e07c3d::rep2",
+          "matches": [
+            {
+              "winner_id": "d749ee19-872b-4768-8cc5-d52e34e07c3d::rep2",
+              "player_b": {
+                "member_ratings": [
+                  "1000",
+                  "965"
+                ],
+                "members": [
+                  "a8b209d5-b42d-4ab8-98f0-60e2a4fdeb29",
+                  "d749ee19-872b-4768-8cc5-d52e34e07c3d"
+                ],
+                "player_id": "d749ee19-872b-4768-8cc5-d52e34e07c3d::rep2",
+                "name": "Jaydeep & Pradeep"
+              },
+              "player_a": {
+                "player_id": "21b1a4e1-e695-488b-a888-89381b2a7974::rep3",
+                "members": [
+                  "fb796edf-6ffa-470b-a7ea-8d0adcafc61f",
+                  "750fb27e-d200-48f9-955f-56cd966210a0"
+                ],
+                "member_ratings": [
+                  "1261",
+                  "903"
+                ],
+                "name": "Prasanna Varade & Deepak"
+              },
+              "games_won_b": "1",
+              "match_id": "b4880494-d93c-4386-955e-4a7cf53c1a9f",
+              "games_won_a": "0",
+              "games": [
+                {
+                  "score_a": "19",
+                  "score_b": "21"
+                }
+              ],
+              "played": true
+            }
+          ],
+          "group": "B",
+          "squad_b": "d749ee19-872b-4768-8cc5-d52e34e07c3d::rep2",
+          "wins_b": "1",
+          "squad_a": "21b1a4e1-e695-488b-a888-89381b2a7974::rep3",
+          "wins_a": "0",
+          "point_diff_b": "2"
+        },
+        {
+          "group": "B",
+          "squad_a": "b24d1dc0-1da3-4914-8d8b-55151eb8138e::rep1",
+          "wins_a": "1",
+          "winner_squad_id": "b24d1dc0-1da3-4914-8d8b-55151eb8138e::rep1",
+          "matches": [
+            {
+              "games_won_b": "0",
+              "player_a": {
+                "member_ratings": [
+                  "1000",
+                  "786"
+                ],
+                "name": "Aman & Mirgank",
+                "members": [
+                  "ef3d3e0c-2e65-4f36-a4e1-10b1a935c627",
+                  "b24d1dc0-1da3-4914-8d8b-55151eb8138e"
+                ],
+                "player_id": "b24d1dc0-1da3-4914-8d8b-55151eb8138e::rep1"
+              },
+              "winner_id": "b24d1dc0-1da3-4914-8d8b-55151eb8138e::rep1",
+              "played": true,
+              "games_won_a": "1",
+              "player_b": {
+                "members": [
+                  "97755542-3135-4012-94d5-6fc394a7cdad",
+                  "7042d45a-5e6c-4c7f-b8fd-d8d5fc6f78c3"
+                ],
+                "member_ratings": [
+                  "1208",
+                  "849"
+                ],
+                "player_id": "c9034fe1-b1ca-4542-a218-304628d21163::rep2",
+                "name": "Bibhu & Sohan"
+              },
+              "match_id": "4dcda2ce-85cd-44e3-a321-86dbb5e570c1",
+              "games": [
+                {
+                  "score_b": "16",
+                  "score_a": "21"
+                }
+              ]
+            }
+          ],
+          "tie_id": "3a815384-cfa1-4b0b-8d2b-8a010e556b76",
+          "point_diff_b": "-5",
+          "point_diff_a": "5",
+          "wins_b": "0",
+          "squad_b": "c9034fe1-b1ca-4542-a218-304628d21163::rep2",
+          "decided": true
+        },
+        {
+          "decided": true,
+          "winner_squad_id": "b24d1dc0-1da3-4914-8d8b-55151eb8138e::rep1",
+          "point_diff_b": "-2",
+          "tie_id": "034ffcb4-eb0c-4112-a06b-c800789123d3",
+          "wins_a": "1",
+          "wins_b": "0",
+          "squad_b": "d749ee19-872b-4768-8cc5-d52e34e07c3d::rep2",
+          "matches": [
+            {
+              "match_id": "1c24677d-4bae-4c2c-87cd-533240578034",
+              "player_b": {
+                "player_id": "d749ee19-872b-4768-8cc5-d52e34e07c3d::rep2",
+                "members": [
+                  "a8b209d5-b42d-4ab8-98f0-60e2a4fdeb29",
+                  "d749ee19-872b-4768-8cc5-d52e34e07c3d"
+                ],
+                "member_ratings": [
+                  "1000",
+                  "965"
+                ],
+                "name": "Jaydeep & Pradeep"
+              },
+              "winner_id": "b24d1dc0-1da3-4914-8d8b-55151eb8138e::rep1",
+              "player_a": {
+                "members": [
+                  "ef3d3e0c-2e65-4f36-a4e1-10b1a935c627",
+                  "b24d1dc0-1da3-4914-8d8b-55151eb8138e"
+                ],
+                "player_id": "b24d1dc0-1da3-4914-8d8b-55151eb8138e::rep1",
+                "name": "Aman & Mirgank",
+                "member_ratings": [
+                  "1000",
+                  "786"
+                ]
+              },
+              "games": [
+                {
+                  "score_a": "21",
+                  "score_b": "19"
+                }
+              ],
+              "games_won_a": "1",
+              "played": true,
+              "games_won_b": "0"
+            }
+          ],
+          "squad_a": "b24d1dc0-1da3-4914-8d8b-55151eb8138e::rep1",
+          "group": "B",
+          "point_diff_a": "2"
+        },
+        {
+          "decided": true,
+          "squad_b": "d749ee19-872b-4768-8cc5-d52e34e07c3d::rep2",
+          "point_diff_b": "-2",
+          "winner_squad_id": "c9034fe1-b1ca-4542-a218-304628d21163::rep2",
+          "matches": [
+            {
+              "player_b": {
+                "members": [
+                  "a8b209d5-b42d-4ab8-98f0-60e2a4fdeb29",
+                  "d749ee19-872b-4768-8cc5-d52e34e07c3d"
+                ],
+                "name": "Jaydeep & Pradeep",
+                "member_ratings": [
+                  "1000",
+                  "965"
+                ],
+                "player_id": "d749ee19-872b-4768-8cc5-d52e34e07c3d::rep2"
+              },
+              "games_won_a": "1",
+              "games_won_b": "0",
+              "games": [
+                {
+                  "score_b": "22",
+                  "score_a": "24"
+                }
+              ],
+              "played": true,
+              "match_id": "711cddb2-32d7-434d-a548-830c7e75516e",
+              "winner_id": "c9034fe1-b1ca-4542-a218-304628d21163::rep2",
+              "player_a": {
+                "player_id": "c9034fe1-b1ca-4542-a218-304628d21163::rep2",
+                "name": "Bibhu & Sohan",
+                "member_ratings": [
+                  "1208",
+                  "849"
+                ],
+                "members": [
+                  "97755542-3135-4012-94d5-6fc394a7cdad",
+                  "7042d45a-5e6c-4c7f-b8fd-d8d5fc6f78c3"
+                ]
+              }
+            }
+          ],
+          "wins_a": "1",
+          "tie_id": "ae91c6e8-4f8c-4925-a182-571d5878b519",
+          "group": "B",
+          "squad_a": "c9034fe1-b1ca-4542-a218-304628d21163::rep2",
+          "wins_b": "0",
+          "point_diff_a": "2"
+        },
+        {
+          "squad_b": "b24d1dc0-1da3-4914-8d8b-55151eb8138e::rep3",
+          "matches": [
+            {
+              "games": [],
+              "played": false,
+              "match_id": "4eaf99c6-183e-41bc-9d02-1ecfb75413d3",
+              "games_won_a": "0",
+              "winner_id": null,
+              "player_a": {
+                "player_id": "21b1a4e1-e695-488b-a888-89381b2a7974::rep0",
+                "member_ratings": [
+                  "1107",
+                  "1016"
+                ],
+                "members": [
+                  "21b1a4e1-e695-488b-a888-89381b2a7974",
+                  "e32c5654-9cee-4d10-ba14-5d40531868e6"
+                ],
+                "name": "Mayank & Rajat Mishra"
+              },
+              "player_b": {
+                "member_ratings": [
+                  "927",
+                  "1305"
+                ],
+                "members": [
+                  "c4b87c2a-22e5-4f33-bab5-75fa8a54c14f",
+                  "17aa0eb2-94ae-4dc9-9ab6-c02d2ee92599"
+                ],
+                "player_id": "b24d1dc0-1da3-4914-8d8b-55151eb8138e::rep3",
+                "name": "Pratik Kumar & Ram R"
+              },
+              "games_won_b": "0"
+            }
+          ],
+          "tie_id": "1af70720-61cd-476c-b286-d46bb636faa6",
+          "decided": false,
+          "wins_b": "0",
+          "point_diff_a": "0",
+          "wins_a": "0",
+          "point_diff_b": "0",
+          "group": "C",
+          "squad_a": "21b1a4e1-e695-488b-a888-89381b2a7974::rep0",
+          "winner_squad_id": null
+        },
+        {
+          "matches": [
+            {
+              "player_b": {
+                "player_id": "c9034fe1-b1ca-4542-a218-304628d21163::rep0",
+                "name": "Nitish & Sandeep Singh Rathore",
+                "member_ratings": [
+                  "1000",
+                  "948"
+                ],
+                "members": [
+                  "80f22187-b8b3-4e6b-9cd4-c350aeb6e1cb",
+                  "4561e6f7-cc03-4909-b415-9aadd6495b74"
+                ]
+              },
+              "match_id": "1dc6cf28-8f45-4c64-bf3b-940eb2f48827",
+              "games_won_b": "1",
+              "winner_id": "c9034fe1-b1ca-4542-a218-304628d21163::rep0",
+              "games": [
+                {
+                  "score_a": "19",
+                  "score_b": "21"
+                }
+              ],
+              "played": true,
+              "games_won_a": "0",
+              "player_a": {
+                "member_ratings": [
+                  "1107",
+                  "1016"
+                ],
+                "name": "Mayank & Rajat Mishra",
+                "player_id": "21b1a4e1-e695-488b-a888-89381b2a7974::rep0",
+                "members": [
+                  "21b1a4e1-e695-488b-a888-89381b2a7974",
+                  "e32c5654-9cee-4d10-ba14-5d40531868e6"
+                ]
+              }
+            }
+          ],
+          "point_diff_a": "-2",
+          "squad_a": "21b1a4e1-e695-488b-a888-89381b2a7974::rep0",
+          "tie_id": "6aac2a59-2278-44ef-bbee-ef55cc107e8b",
+          "winner_squad_id": "c9034fe1-b1ca-4542-a218-304628d21163::rep0",
+          "point_diff_b": "2",
+          "decided": true,
+          "squad_b": "c9034fe1-b1ca-4542-a218-304628d21163::rep0",
+          "wins_a": "0",
+          "group": "C",
+          "wins_b": "1"
+        },
+        {
+          "decided": true,
+          "point_diff_b": "-12",
+          "tie_id": "2176a766-c9de-4a2a-b416-c3f0a5cc4349",
+          "wins_a": "1",
+          "point_diff_a": "12",
+          "winner_squad_id": "21b1a4e1-e695-488b-a888-89381b2a7974::rep0",
+          "wins_b": "0",
+          "matches": [
+            {
+              "played": true,
+              "player_b": {
+                "name": "Naveen & Shashi",
+                "member_ratings": [
+                  "1000",
+                  "974"
+                ],
+                "members": [
+                  "15d41fab-b362-4cae-ba2d-7f9b3ee08736",
+                  "9f72bbce-8feb-4fa1-8c07-06865b7359de"
+                ],
+                "player_id": "d749ee19-872b-4768-8cc5-d52e34e07c3d::rep3"
+              },
+              "games_won_a": "1",
+              "games": [
+                {
+                  "score_a": "21",
+                  "score_b": "9"
+                }
+              ],
+              "winner_id": "21b1a4e1-e695-488b-a888-89381b2a7974::rep0",
+              "match_id": "b2d051a0-3a46-4752-8c36-cd6e8c168226",
+              "games_won_b": "0",
+              "player_a": {
+                "player_id": "21b1a4e1-e695-488b-a888-89381b2a7974::rep0",
+                "member_ratings": [
+                  "1107",
+                  "1016"
+                ],
+                "members": [
+                  "21b1a4e1-e695-488b-a888-89381b2a7974",
+                  "e32c5654-9cee-4d10-ba14-5d40531868e6"
+                ],
+                "name": "Mayank & Rajat Mishra"
+              }
+            }
+          ],
+          "squad_b": "d749ee19-872b-4768-8cc5-d52e34e07c3d::rep3",
+          "squad_a": "21b1a4e1-e695-488b-a888-89381b2a7974::rep0",
+          "group": "C"
+        },
+        {
+          "tie_id": "3382c5b9-aa15-4bc1-8bf7-ad4de913bfd6",
+          "winner_squad_id": "c9034fe1-b1ca-4542-a218-304628d21163::rep0",
+          "wins_a": "0",
+          "squad_b": "c9034fe1-b1ca-4542-a218-304628d21163::rep0",
+          "matches": [
+            {
+              "match_id": "d2e026a2-676b-4616-ac0b-ab93e15d3372",
+              "played": true,
+              "player_b": {
+                "member_ratings": [
+                  "1000",
+                  "948"
+                ],
+                "name": "Nitish & Sandeep Singh Rathore",
+                "members": [
+                  "80f22187-b8b3-4e6b-9cd4-c350aeb6e1cb",
+                  "4561e6f7-cc03-4909-b415-9aadd6495b74"
+                ],
+                "player_id": "c9034fe1-b1ca-4542-a218-304628d21163::rep0"
+              },
+              "player_a": {
+                "member_ratings": [
+                  "927",
+                  "1305"
+                ],
+                "name": "Pratik Kumar & Ram R",
+                "player_id": "b24d1dc0-1da3-4914-8d8b-55151eb8138e::rep3",
+                "members": [
+                  "c4b87c2a-22e5-4f33-bab5-75fa8a54c14f",
+                  "17aa0eb2-94ae-4dc9-9ab6-c02d2ee92599"
+                ]
+              },
+              "games": [
+                {
+                  "score_a": "8",
+                  "score_b": "21"
+                }
+              ],
+              "games_won_a": "0",
+              "winner_id": "c9034fe1-b1ca-4542-a218-304628d21163::rep0",
+              "games_won_b": "1"
+            }
+          ],
+          "decided": true,
+          "point_diff_a": "-13",
+          "wins_b": "1",
+          "point_diff_b": "13",
+          "group": "C",
+          "squad_a": "b24d1dc0-1da3-4914-8d8b-55151eb8138e::rep3"
+        },
+        {
+          "decided": true,
+          "matches": [
+            {
+              "player_a": {
+                "member_ratings": [
+                  "927",
+                  "1305"
+                ],
+                "members": [
+                  "c4b87c2a-22e5-4f33-bab5-75fa8a54c14f",
+                  "17aa0eb2-94ae-4dc9-9ab6-c02d2ee92599"
+                ],
+                "player_id": "b24d1dc0-1da3-4914-8d8b-55151eb8138e::rep3",
+                "name": "Pratik Kumar & Ram R"
+              },
+              "games_won_a": "0",
+              "winner_id": "d749ee19-872b-4768-8cc5-d52e34e07c3d::rep3",
+              "played": true,
+              "games": [
+                {
+                  "score_a": "18",
+                  "score_b": "21"
+                }
+              ],
+              "player_b": {
+                "name": "Naveen & Shashi",
+                "player_id": "d749ee19-872b-4768-8cc5-d52e34e07c3d::rep3",
+                "members": [
+                  "15d41fab-b362-4cae-ba2d-7f9b3ee08736",
+                  "9f72bbce-8feb-4fa1-8c07-06865b7359de"
+                ],
+                "member_ratings": [
+                  "1000",
+                  "974"
+                ]
+              },
+              "games_won_b": "1",
+              "match_id": "9d5dd9ef-7c3a-41fc-a236-e3c46781898e"
+            }
+          ],
+          "squad_b": "d749ee19-872b-4768-8cc5-d52e34e07c3d::rep3",
+          "wins_b": "1",
+          "group": "C",
+          "tie_id": "1450c305-d77b-40d6-ab21-8cf40a576aa3",
+          "point_diff_b": "3",
+          "winner_squad_id": "d749ee19-872b-4768-8cc5-d52e34e07c3d::rep3",
+          "squad_a": "b24d1dc0-1da3-4914-8d8b-55151eb8138e::rep3",
+          "wins_a": "0",
+          "point_diff_a": "-3"
+        },
+        {
+          "tie_id": "c3d33097-9869-4e8c-8a9f-f17ffc8529b3",
+          "group": "C",
+          "wins_a": "1",
+          "winner_squad_id": "c9034fe1-b1ca-4542-a218-304628d21163::rep0",
+          "squad_a": "c9034fe1-b1ca-4542-a218-304628d21163::rep0",
+          "point_diff_a": "6",
+          "point_diff_b": "-6",
+          "matches": [
+            {
+              "games_won_a": "1",
+              "player_a": {
+                "member_ratings": [
+                  "1000",
+                  "948"
+                ],
+                "members": [
+                  "80f22187-b8b3-4e6b-9cd4-c350aeb6e1cb",
+                  "4561e6f7-cc03-4909-b415-9aadd6495b74"
+                ],
+                "name": "Nitish & Sandeep Singh Rathore",
+                "player_id": "c9034fe1-b1ca-4542-a218-304628d21163::rep0"
+              },
+              "player_b": {
+                "member_ratings": [
+                  "1000",
+                  "974"
+                ],
+                "name": "Naveen & Shashi",
+                "player_id": "d749ee19-872b-4768-8cc5-d52e34e07c3d::rep3",
+                "members": [
+                  "15d41fab-b362-4cae-ba2d-7f9b3ee08736",
+                  "9f72bbce-8feb-4fa1-8c07-06865b7359de"
+                ]
+              },
+              "games_won_b": "0",
+              "winner_id": "c9034fe1-b1ca-4542-a218-304628d21163::rep0",
+              "games": [
+                {
+                  "score_a": "21",
+                  "score_b": "15"
+                }
+              ],
+              "played": true,
+              "match_id": "eac657bb-5893-4eeb-a408-e1afec10e820"
+            }
+          ],
+          "decided": true,
+          "squad_b": "d749ee19-872b-4768-8cc5-d52e34e07c3d::rep3",
+          "wins_b": "0"
+        },
+        {
+          "matches": [
+            {
+              "played": true,
+              "player_b": {
+                "member_ratings": [
+                  "1141",
+                  "979"
+                ],
+                "name": "Suren & Suraj",
+                "player_id": "b24d1dc0-1da3-4914-8d8b-55151eb8138e::rep2",
+                "members": [
+                  "b9aa5e7e-e337-4da7-877c-15ebae580df4",
+                  "3dc10d46-fd4f-49da-9773-53bcf2d140e1"
+                ]
+              },
+              "match_id": "61115559-0581-4a8f-9233-168b562527f1",
+              "games": [
+                {
+                  "score_b": "21",
+                  "score_a": "15"
+                }
+              ],
+              "games_won_a": "0",
+              "games_won_b": "1",
+              "winner_id": "b24d1dc0-1da3-4914-8d8b-55151eb8138e::rep2",
+              "player_a": {
+                "name": "Nehal & Vanshika",
+                "member_ratings": [
+                  "1000",
+                  "563"
+                ],
+                "members": [
+                  "4fcaf281-8620-49a4-8dde-ab7bf4bec4ea",
+                  "732c7c1f-9187-4b25-a2e1-65eaf641273d"
+                ],
+                "player_id": "21b1a4e1-e695-488b-a888-89381b2a7974::rep2"
+              }
+            }
+          ],
+          "decided": true,
+          "wins_b": "1",
+          "tie_id": "baef7e24-ea46-456a-9804-9530a983ed77",
+          "winner_squad_id": "b24d1dc0-1da3-4914-8d8b-55151eb8138e::rep2",
+          "point_diff_b": "6",
+          "group": "D",
+          "wins_a": "0",
+          "point_diff_a": "-6",
+          "squad_b": "b24d1dc0-1da3-4914-8d8b-55151eb8138e::rep2",
+          "squad_a": "21b1a4e1-e695-488b-a888-89381b2a7974::rep2"
+        },
+        {
+          "squad_a": "21b1a4e1-e695-488b-a888-89381b2a7974::rep2",
+          "tie_id": "455bdf10-da7d-4a62-a461-c8bd4963add8",
+          "matches": [
+            {
+              "player_a": {
+                "player_id": "21b1a4e1-e695-488b-a888-89381b2a7974::rep2",
+                "members": [
+                  "4fcaf281-8620-49a4-8dde-ab7bf4bec4ea",
+                  "732c7c1f-9187-4b25-a2e1-65eaf641273d"
+                ],
+                "member_ratings": [
+                  "1000",
+                  "563"
+                ],
+                "name": "Nehal & Vanshika"
+              },
+              "games": [
+                {
+                  "score_b": "19",
+                  "score_a": "21"
+                }
+              ],
+              "games_won_a": "1",
+              "player_b": {
+                "member_ratings": [
+                  "1000",
+                  "1000"
+                ],
+                "members": [
+                  "c9034fe1-b1ca-4542-a218-304628d21163",
+                  "4f777bc3-8578-463c-9c32-4eecc35a3147"
+                ],
+                "player_id": "c9034fe1-b1ca-4542-a218-304628d21163::rep1",
+                "name": "Tanay & Saurav Ashok"
+              },
+              "played": true,
+              "games_won_b": "0",
+              "match_id": "6c94ae7b-4666-4791-9ae6-37e2cf0480f5",
+              "winner_id": "21b1a4e1-e695-488b-a888-89381b2a7974::rep2"
+            }
+          ],
+          "point_diff_b": "-2",
+          "group": "D",
+          "wins_b": "0",
+          "wins_a": "1",
+          "point_diff_a": "2",
+          "squad_b": "c9034fe1-b1ca-4542-a218-304628d21163::rep1",
+          "decided": true,
+          "winner_squad_id": "21b1a4e1-e695-488b-a888-89381b2a7974::rep2"
+        },
+        {
+          "point_diff_b": "-3",
+          "tie_id": "cb195549-d159-44c7-b58b-1661abe72120",
+          "decided": true,
+          "squad_b": "d749ee19-872b-4768-8cc5-d52e34e07c3d::rep0",
+          "group": "D",
+          "wins_b": "0",
+          "wins_a": "1",
+          "matches": [
+            {
+              "match_id": "fd4b1c88-bfe1-4e70-ba9c-ecb42c54fe44",
+              "games_won_b": "0",
+              "winner_id": "21b1a4e1-e695-488b-a888-89381b2a7974::rep2",
+              "player_a": {
+                "player_id": "21b1a4e1-e695-488b-a888-89381b2a7974::rep2",
+                "members": [
+                  "4fcaf281-8620-49a4-8dde-ab7bf4bec4ea",
+                  "732c7c1f-9187-4b25-a2e1-65eaf641273d"
+                ],
+                "member_ratings": [
+                  "1000",
+                  "563"
+                ],
+                "name": "Nehal & Vanshika"
+              },
+              "games": [
+                {
+                  "score_b": "18",
+                  "score_a": "21"
+                }
+              ],
+              "played": true,
+              "games_won_a": "1",
+              "player_b": {
+                "player_id": "d749ee19-872b-4768-8cc5-d52e34e07c3d::rep0",
+                "member_ratings": [
+                  "1008",
+                  "966"
+                ],
+                "name": "Shyam & Ambar",
+                "members": [
+                  "ed9ef3b5-a0d9-4443-b3df-6f37dd7067b2",
+                  "6ecf17ee-af8d-4a98-b642-76823c17196a"
+                ]
+              }
+            }
+          ],
+          "point_diff_a": "3",
+          "winner_squad_id": "21b1a4e1-e695-488b-a888-89381b2a7974::rep2",
+          "squad_a": "21b1a4e1-e695-488b-a888-89381b2a7974::rep2"
+        },
+        {
+          "matches": [
+            {
+              "winner_id": "c9034fe1-b1ca-4542-a218-304628d21163::rep1",
+              "played": true,
+              "games_won_b": "1",
+              "match_id": "6409bb72-4803-48e9-b8dd-6f8b077b78e6",
+              "player_b": {
+                "name": "Tanay & Saurav Ashok",
+                "member_ratings": [
+                  "1000",
+                  "1000"
+                ],
+                "members": [
+                  "c9034fe1-b1ca-4542-a218-304628d21163",
+                  "4f777bc3-8578-463c-9c32-4eecc35a3147"
+                ],
+                "player_id": "c9034fe1-b1ca-4542-a218-304628d21163::rep1"
+              },
+              "player_a": {
+                "player_id": "b24d1dc0-1da3-4914-8d8b-55151eb8138e::rep2",
+                "name": "Suren & Suraj",
+                "member_ratings": [
+                  "1141",
+                  "979"
+                ],
+                "members": [
+                  "b9aa5e7e-e337-4da7-877c-15ebae580df4",
+                  "3dc10d46-fd4f-49da-9773-53bcf2d140e1"
+                ]
+              },
+              "games": [
+                {
+                  "score_b": "21",
+                  "score_a": "16"
+                }
+              ],
+              "games_won_a": "0"
+            }
+          ],
+          "decided": true,
+          "wins_b": "1",
+          "squad_b": "c9034fe1-b1ca-4542-a218-304628d21163::rep1",
+          "tie_id": "a51f1bbc-4fe2-4bd7-87b8-b849c6d270c0",
+          "point_diff_b": "5",
+          "group": "D",
+          "squad_a": "b24d1dc0-1da3-4914-8d8b-55151eb8138e::rep2",
+          "point_diff_a": "-5",
+          "wins_a": "0",
+          "winner_squad_id": "c9034fe1-b1ca-4542-a218-304628d21163::rep1"
+        },
+        {
+          "squad_a": "b24d1dc0-1da3-4914-8d8b-55151eb8138e::rep2",
+          "point_diff_b": "3",
+          "wins_b": "1",
+          "squad_b": "d749ee19-872b-4768-8cc5-d52e34e07c3d::rep0",
+          "decided": true,
+          "group": "D",
+          "winner_squad_id": "d749ee19-872b-4768-8cc5-d52e34e07c3d::rep0",
+          "point_diff_a": "-3",
+          "wins_a": "0",
+          "tie_id": "58e59e3a-e389-408f-8477-809d6eadaa8f",
+          "matches": [
+            {
+              "played": true,
+              "match_id": "6a0f9b46-2d1f-4eee-b2f4-cacb9a55a250",
+              "winner_id": "d749ee19-872b-4768-8cc5-d52e34e07c3d::rep0",
+              "player_a": {
+                "name": "Suren & Suraj",
+                "members": [
+                  "b9aa5e7e-e337-4da7-877c-15ebae580df4",
+                  "3dc10d46-fd4f-49da-9773-53bcf2d140e1"
+                ],
+                "player_id": "b24d1dc0-1da3-4914-8d8b-55151eb8138e::rep2",
+                "member_ratings": [
+                  "1141",
+                  "979"
+                ]
+              },
+              "games_won_b": "1",
+              "player_b": {
+                "name": "Shyam & Ambar",
+                "player_id": "d749ee19-872b-4768-8cc5-d52e34e07c3d::rep0",
+                "member_ratings": [
+                  "1008",
+                  "966"
+                ],
+                "members": [
+                  "ed9ef3b5-a0d9-4443-b3df-6f37dd7067b2",
+                  "6ecf17ee-af8d-4a98-b642-76823c17196a"
+                ]
+              },
+              "games": [
+                {
+                  "score_b": "21",
+                  "score_a": "18"
+                }
+              ],
+              "games_won_a": "0"
+            }
+          ]
+        },
+        {
+          "point_diff_a": "10",
+          "matches": [
+            {
+              "games_won_b": "0",
+              "match_id": "447e60c1-7b84-4f6f-a1fb-1cebb21601db",
+              "player_b": {
+                "name": "Shyam & Ambar",
+                "member_ratings": [
+                  "1008",
+                  "966"
+                ],
+                "members": [
+                  "ed9ef3b5-a0d9-4443-b3df-6f37dd7067b2",
+                  "6ecf17ee-af8d-4a98-b642-76823c17196a"
+                ],
+                "player_id": "d749ee19-872b-4768-8cc5-d52e34e07c3d::rep0"
+              },
+              "games_won_a": "1",
+              "player_a": {
+                "members": [
+                  "c9034fe1-b1ca-4542-a218-304628d21163",
+                  "4f777bc3-8578-463c-9c32-4eecc35a3147"
+                ],
+                "player_id": "c9034fe1-b1ca-4542-a218-304628d21163::rep1",
+                "name": "Tanay & Saurav Ashok",
+                "member_ratings": [
+                  "1000",
+                  "1000"
+                ]
+              },
+              "played": true,
+              "winner_id": "c9034fe1-b1ca-4542-a218-304628d21163::rep1",
+              "games": [
+                {
+                  "score_b": "11",
+                  "score_a": "21"
+                }
+              ]
+            }
+          ],
+          "decided": true,
+          "squad_a": "c9034fe1-b1ca-4542-a218-304628d21163::rep1",
+          "wins_a": "1",
+          "wins_b": "0",
+          "winner_squad_id": "c9034fe1-b1ca-4542-a218-304628d21163::rep1",
+          "group": "D",
+          "squad_b": "d749ee19-872b-4768-8cc5-d52e34e07c3d::rep0",
+          "tie_id": "cd94e843-778c-40c7-b4a7-5aa3cbdcbf8b",
+          "point_diff_b": "-10"
+        }
+      ],
+      "matches_per_tie": "1"
+    },
+    "reps": {
+      "d749ee19-872b-4768-8cc5-d52e34e07c3d::rep1": {
+        "entity_id": "d749ee19-872b-4768-8cc5-d52e34e07c3d::rep1",
+        "parent_squad_id": "d749ee19-872b-4768-8cc5-d52e34e07c3d",
+        "members": [
+          "c1096a1e-e449-4c9c-807a-6a85ca10623a",
+          "95191624-fa6a-43b1-a436-8a75f2266205"
+        ],
+        "member_ratings": [
+          "1044",
+          "902"
+        ],
+        "name": "Abhishek Verma & Yeshwanth",
+        "locked": true
+      },
+      "21b1a4e1-e695-488b-a888-89381b2a7974::rep3": {
+        "member_ratings": [
+          "1261",
+          "903"
+        ],
+        "locked": true,
+        "parent_squad_id": "21b1a4e1-e695-488b-a888-89381b2a7974",
+        "name": "Prasanna Varade & Deepak",
+        "entity_id": "21b1a4e1-e695-488b-a888-89381b2a7974::rep3",
+        "members": [
+          "fb796edf-6ffa-470b-a7ea-8d0adcafc61f",
+          "750fb27e-d200-48f9-955f-56cd966210a0"
+        ]
+      },
+      "c9034fe1-b1ca-4542-a218-304628d21163::rep2": {
+        "members": [
+          "97755542-3135-4012-94d5-6fc394a7cdad",
+          "7042d45a-5e6c-4c7f-b8fd-d8d5fc6f78c3"
+        ],
+        "name": "Bibhu & Sohan",
+        "member_ratings": [
+          "1208",
+          "849"
+        ],
+        "parent_squad_id": "c9034fe1-b1ca-4542-a218-304628d21163",
+        "locked": true,
+        "entity_id": "c9034fe1-b1ca-4542-a218-304628d21163::rep2"
+      },
+      "b24d1dc0-1da3-4914-8d8b-55151eb8138e::rep3": {
+        "parent_squad_id": "b24d1dc0-1da3-4914-8d8b-55151eb8138e",
+        "name": "Pratik Kumar & Ram R",
+        "locked": true,
+        "entity_id": "b24d1dc0-1da3-4914-8d8b-55151eb8138e::rep3",
+        "member_ratings": [
+          "927",
+          "1305"
+        ],
+        "members": [
+          "c4b87c2a-22e5-4f33-bab5-75fa8a54c14f",
+          "17aa0eb2-94ae-4dc9-9ab6-c02d2ee92599"
+        ]
+      },
+      "c9034fe1-b1ca-4542-a218-304628d21163::rep0": {
+        "member_ratings": [
+          "1000",
+          "948"
+        ],
+        "name": "Nitish & Sandeep Singh Rathore",
+        "members": [
+          "80f22187-b8b3-4e6b-9cd4-c350aeb6e1cb",
+          "4561e6f7-cc03-4909-b415-9aadd6495b74"
+        ],
+        "entity_id": "c9034fe1-b1ca-4542-a218-304628d21163::rep0",
+        "locked": true,
+        "parent_squad_id": "c9034fe1-b1ca-4542-a218-304628d21163"
+      },
+      "b24d1dc0-1da3-4914-8d8b-55151eb8138e::rep2": {
+        "name": "Suren & Suraj",
+        "parent_squad_id": "b24d1dc0-1da3-4914-8d8b-55151eb8138e",
+        "members": [
+          "b9aa5e7e-e337-4da7-877c-15ebae580df4",
+          "3dc10d46-fd4f-49da-9773-53bcf2d140e1"
+        ],
+        "entity_id": "b24d1dc0-1da3-4914-8d8b-55151eb8138e::rep2",
+        "locked": true,
+        "member_ratings": [
+          "1141",
+          "979"
+        ]
+      },
+      "d749ee19-872b-4768-8cc5-d52e34e07c3d::rep0": {
+        "locked": true,
+        "entity_id": "d749ee19-872b-4768-8cc5-d52e34e07c3d::rep0",
+        "name": "Shyam & Ambar",
+        "parent_squad_id": "d749ee19-872b-4768-8cc5-d52e34e07c3d",
+        "members": [
+          "ed9ef3b5-a0d9-4443-b3df-6f37dd7067b2",
+          "6ecf17ee-af8d-4a98-b642-76823c17196a"
+        ],
+        "member_ratings": [
+          "1008",
+          "966"
+        ]
+      },
+      "21b1a4e1-e695-488b-a888-89381b2a7974::rep0": {
+        "name": "Mayank & Rajat Mishra",
+        "locked": true,
+        "entity_id": "21b1a4e1-e695-488b-a888-89381b2a7974::rep0",
+        "members": [
+          "21b1a4e1-e695-488b-a888-89381b2a7974",
+          "e32c5654-9cee-4d10-ba14-5d40531868e6"
+        ],
+        "member_ratings": [
+          "1107",
+          "1016"
+        ],
+        "parent_squad_id": "21b1a4e1-e695-488b-a888-89381b2a7974"
+      },
+      "d749ee19-872b-4768-8cc5-d52e34e07c3d::rep3": {
+        "name": "Naveen & Shashi",
+        "parent_squad_id": "d749ee19-872b-4768-8cc5-d52e34e07c3d",
+        "members": [
+          "15d41fab-b362-4cae-ba2d-7f9b3ee08736",
+          "9f72bbce-8feb-4fa1-8c07-06865b7359de"
+        ],
+        "entity_id": "d749ee19-872b-4768-8cc5-d52e34e07c3d::rep3",
+        "member_ratings": [
+          "1000",
+          "974"
+        ],
+        "locked": true
+      },
+      "c9034fe1-b1ca-4542-a218-304628d21163::rep1": {
+        "name": "Tanay & Saurav Ashok",
+        "members": [
+          "c9034fe1-b1ca-4542-a218-304628d21163",
+          "4f777bc3-8578-463c-9c32-4eecc35a3147"
+        ],
+        "entity_id": "c9034fe1-b1ca-4542-a218-304628d21163::rep1",
+        "parent_squad_id": "c9034fe1-b1ca-4542-a218-304628d21163",
+        "locked": true,
+        "member_ratings": [
+          "1000",
+          "1000"
+        ]
+      },
+      "d749ee19-872b-4768-8cc5-d52e34e07c3d::rep2": {
+        "entity_id": "d749ee19-872b-4768-8cc5-d52e34e07c3d::rep2",
+        "name": "Jaydeep & Pradeep",
+        "member_ratings": [
+          "1000",
+          "965"
+        ],
+        "parent_squad_id": "d749ee19-872b-4768-8cc5-d52e34e07c3d",
+        "locked": true,
+        "members": [
+          "a8b209d5-b42d-4ab8-98f0-60e2a4fdeb29",
+          "d749ee19-872b-4768-8cc5-d52e34e07c3d"
+        ]
+      },
+      "b24d1dc0-1da3-4914-8d8b-55151eb8138e::rep0": {
+        "member_ratings": [
+          "955",
+          "1000"
+        ],
+        "entity_id": "b24d1dc0-1da3-4914-8d8b-55151eb8138e::rep0",
+        "locked": true,
+        "parent_squad_id": "b24d1dc0-1da3-4914-8d8b-55151eb8138e",
+        "name": "Vipin & Krishna",
+        "members": [
+          "a4e7c903-b5de-43bc-a18f-e5aea5bdac4a",
+          "c90777e0-63c9-43e7-bb35-ab03de9f004f"
+        ]
+      },
+      "21b1a4e1-e695-488b-a888-89381b2a7974::rep2": {
+        "locked": true,
+        "name": "Nehal & Vanshika",
+        "members": [
+          "4fcaf281-8620-49a4-8dde-ab7bf4bec4ea",
+          "732c7c1f-9187-4b25-a2e1-65eaf641273d"
+        ],
+        "member_ratings": [
+          "1000",
+          "563"
+        ],
+        "parent_squad_id": "21b1a4e1-e695-488b-a888-89381b2a7974",
+        "entity_id": "21b1a4e1-e695-488b-a888-89381b2a7974::rep2"
+      },
+      "21b1a4e1-e695-488b-a888-89381b2a7974::rep1": {
+        "member_ratings": [
+          "1336",
+          "890"
+        ],
+        "members": [
+          "83f66cc1-8736-4822-a37d-a0508366f56a",
+          "df471f85-9a61-4e47-b91c-891e0d3d762d"
+        ],
+        "name": "Sourabh C & Aditya Yelegaon",
+        "locked": true,
+        "entity_id": "21b1a4e1-e695-488b-a888-89381b2a7974::rep1",
+        "parent_squad_id": "21b1a4e1-e695-488b-a888-89381b2a7974"
+      },
+      "c9034fe1-b1ca-4542-a218-304628d21163::rep3": {
+        "locked": true,
+        "name": "Abhishek K & Gangaram Ghadi",
+        "entity_id": "c9034fe1-b1ca-4542-a218-304628d21163::rep3",
+        "members": [
+          "d0b876c3-d66f-4ba3-a1d5-ad7f1369b97b",
+          "3961c180-9057-44ae-a904-32319385c447"
+        ],
+        "parent_squad_id": "c9034fe1-b1ca-4542-a218-304628d21163",
+        "member_ratings": [
+          "1268",
+          "973"
+        ]
+      },
+      "b24d1dc0-1da3-4914-8d8b-55151eb8138e::rep1": {
+        "name": "Aman & Mirgank",
+        "locked": true,
+        "member_ratings": [
+          "1000",
+          "786"
+        ],
+        "parent_squad_id": "b24d1dc0-1da3-4914-8d8b-55151eb8138e",
+        "members": [
+          "ef3d3e0c-2e65-4f36-a4e1-10b1a935c627",
+          "b24d1dc0-1da3-4914-8d8b-55151eb8138e"
+        ],
+        "entity_id": "b24d1dc0-1da3-4914-8d8b-55151eb8138e::rep1"
+      }
+    },
+    "squad_substitutions": [
+      {
+        "squad_id": "b24d1dc0-1da3-4914-8d8b-55151eb8138e",
+        "new_player_id": "e7f2040b-b9af-4c9b-a7d0-7df006f770e3",
+        "by": "adityacodedummy@gmail.com",
+        "old_player_id": "ef3d3e0c-2e65-4f36-a4e1-10b1a935c627",
+        "at": "2026-08-22T01:49:26.836346+00:00",
+        "pending_slots_cleared": "0"
+      }
+    ]
+  },
+  "players_referenced": {
+    "732c7c1f-9187-4b25-a2e1-65eaf641273d": {
+      "name": "Vanshika",
+      "nickname": "vanshika",
+      "rating": "610"
+    },
+    "e32c5654-9cee-4d10-ba14-5d40531868e6": {
+      "name": "Rajat Mishra",
+      "nickname": "rajatnew",
+      "rating": "1013"
+    },
+    "750fb27e-d200-48f9-955f-56cd966210a0": {
+      "name": "Deepak",
+      "nickname": "deepak",
+      "rating": "838"
+    },
+    "3dc10d46-fd4f-49da-9773-53bcf2d140e1": {
+      "name": "Suraj",
+      "nickname": "suraj",
+      "rating": "949"
+    },
+    "80f22187-b8b3-4e6b-9cd4-c350aeb6e1cb": {
+      "name": "Nitish",
+      "nickname": "nitish",
+      "rating": "1062"
+    },
+    "c9034fe1-b1ca-4542-a218-304628d21163": {
+      "name": "Tanay",
+      "nickname": "tanay",
+      "rating": "1004"
+    },
+    "c4b87c2a-22e5-4f33-bab5-75fa8a54c14f": {
+      "name": "Pratik Kumar",
+      "nickname": "pratik",
+      "rating": "878"
+    },
+    "97755542-3135-4012-94d5-6fc394a7cdad": {
+      "name": "Bibhu",
+      "nickname": "bibhu",
+      "rating": "1215"
+    },
+    "b24d1dc0-1da3-4914-8d8b-55151eb8138e": {
+      "name": "Mirgank",
+      "nickname": "mirgank",
+      "rating": "853"
+    },
+    "ef3d3e0c-2e65-4f36-a4e1-10b1a935c627": {
+      "name": "Aman",
+      "nickname": "aman",
+      "rating": "1067"
+    },
+    "7042d45a-5e6c-4c7f-b8fd-d8d5fc6f78c3": {
+      "name": "Sohan",
+      "nickname": "sohan",
+      "rating": "856"
+    },
+    "ed9ef3b5-a0d9-4443-b3df-6f37dd7067b2": {
+      "name": "Shyam",
+      "nickname": "shyam",
+      "rating": "992"
+    },
+    "6ecf17ee-af8d-4a98-b642-76823c17196a": {
+      "name": "Ambar",
+      "nickname": "ambar",
+      "rating": "950"
+    },
+    "3961c180-9057-44ae-a904-32319385c447": {
+      "name": "Gangaram Ghadi",
+      "nickname": "gangaramghadi",
+      "rating": "950"
+    },
+    "b9aa5e7e-e337-4da7-877c-15ebae580df4": {
+      "name": "Suren",
+      "nickname": "suren",
+      "rating": "1111"
+    },
+    "a4e7c903-b5de-43bc-a18f-e5aea5bdac4a": {
+      "name": "Vipin",
+      "nickname": "vipin",
+      "rating": "985"
+    },
+    "e7f2040b-b9af-4c9b-a7d0-7df006f770e3": {
+      "name": "Guddu",
+      "nickname": "guddu",
+      "rating": "1000"
+    },
+    "4fcaf281-8620-49a4-8dde-ab7bf4bec4ea": {
+      "name": "Nehal",
+      "nickname": "nehal",
+      "rating": "1047"
+    },
+    "95191624-fa6a-43b1-a436-8a75f2266205": {
+      "name": "Yeshwanth",
+      "nickname": "yeshwanth",
+      "rating": "873"
+    },
+    "df471f85-9a61-4e47-b91c-891e0d3d762d": {
+      "name": "Aditya Yelegaon",
+      "nickname": "y_aadi_y",
+      "rating": "912"
+    },
+    "4f777bc3-8578-463c-9c32-4eecc35a3147": {
+      "name": "Saurav Ashok",
+      "nickname": "saurav",
+      "rating": "1004"
+    },
+    "15d41fab-b362-4cae-ba2d-7f9b3ee08736": {
+      "name": "Naveen",
+      "nickname": "naveen",
+      "rating": "990"
+    },
+    "fb796edf-6ffa-470b-a7ea-8d0adcafc61f": {
+      "name": "Prasanna Varade",
+      "nickname": "prasannavarade",
+      "rating": "1196"
+    },
+    "83f66cc1-8736-4822-a37d-a0508366f56a": {
+      "name": "Sourabh C",
+      "nickname": "sourabhc",
+      "rating": "1358"
+    },
+    "a8b209d5-b42d-4ab8-98f0-60e2a4fdeb29": {
+      "name": "Jaydeep",
+      "nickname": "jaydeep",
+      "rating": "984"
+    },
+    "17aa0eb2-94ae-4dc9-9ab6-c02d2ee92599": {
+      "name": "Ram R",
+      "nickname": "ramchander",
+      "rating": "1256"
+    },
+    "4561e6f7-cc03-4909-b415-9aadd6495b74": {
+      "name": "Sandeep Singh Rathore",
+      "nickname": "sandy",
+      "rating": "1010"
+    },
+    "9f72bbce-8feb-4fa1-8c07-06865b7359de": {
+      "name": "Shashi",
+      "nickname": "shashi",
+      "rating": "964"
+    },
+    "c1096a1e-e449-4c9c-807a-6a85ca10623a": {
+      "name": "Abhishek Verma",
+      "nickname": "abhishekverma",
+      "rating": "1015"
+    },
+    "d0b876c3-d66f-4ba3-a1d5-ad7f1369b97b": {
+      "name": "Abhishek K",
+      "nickname": "abhishekk",
+      "rating": "1245"
+    },
+    "d749ee19-872b-4768-8cc5-d52e34e07c3d": {
+      "name": "Pradeep",
+      "nickname": "pradeep",
+      "rating": "949"
+    },
+    "c90777e0-63c9-43e7-bb35-ab03de9f004f": {
+      "name": "Krishna",
+      "nickname": "krishna",
+      "rating": "1030"
+    },
+    "21b1a4e1-e695-488b-a888-89381b2a7974": {
+      "name": "Mayank",
+      "nickname": "mayank",
+      "rating": "1104"
+    }
+  },
+  "match_log_entries": [
+    {
+      "match_id": "43d779b7-334a-4b0c-bf0f-dd2ea29e263a",
+      "stage": "group",
+      "momentum": {
+        "longest_streak_b": "4",
+        "winner_overcame_deficit": "2",
+        "longest_streak_a": "4"
+      },
+      "ratings_after": {
+        "7042d45a-5e6c-4c7f-b8fd-d8d5fc6f78c3": "858",
+        "a8b209d5-b42d-4ab8-98f0-60e2a4fdeb29": "983",
+        "d749ee19-872b-4768-8cc5-d52e34e07c3d": "948",
+        "97755542-3135-4012-94d5-6fc394a7cdad": "1217"
+      },
+      "match_type": "doubles",
+      "tournament_id": "656de879-ad8c-46ee-8aa0-65467d82692c",
+      "group_id": "712c0ba3-f1a6-443a-b0be-04c2cabb2c89",
+      "games": [
+        {
+          "score_a": "24",
+          "score_b": "22"
+        }
+      ],
+      "date": "2026-08-22T02:04:15.916059+00:00",
+      "winner": "A",
+      "team_b": [
+        "a8b209d5-b42d-4ab8-98f0-60e2a4fdeb29",
+        "d749ee19-872b-4768-8cc5-d52e34e07c3d"
+      ],
+      "team_b_names": [
+        "Jaydeep",
+        "Pradeep"
+      ],
+      "team_a": [
+        "97755542-3135-4012-94d5-6fc394a7cdad",
+        "7042d45a-5e6c-4c7f-b8fd-d8d5fc6f78c3"
+      ],
+      "point_log": [
+        "B",
+        "A",
+        "A",
+        "B",
+        "B",
+        "B",
+        "B",
+        "A",
+        "A",
+        "A",
+        "B",
+        "B",
+        "A",
+        "B",
+        "B",
+        "A",
+        "B",
+        "A",
+        "B",
+        "A",
+        "A",
+        "A",
+        "B",
+        "A",
+        "A",
+        "A",
+        "A",
+        "B",
+        "A",
+        "B",
+        "B",
+        "B",
+        "B",
+        "A",
+        "A",
+        "A",
+        "B",
+        "B",
+        "A",
+        "B",
+        "A",
+        "B",
+        "A",
+        "B",
+        "A",
+        "A"
+      ],
+      "score_b": "22",
+      "score_a": "24",
+      "team_a_names": [
+        "Bibhu",
+        "Sohan"
+      ]
+    },
+    {
+      "match_id": "d574a2db-8838-4a28-af0a-3f255a6bade1",
+      "stage": "group",
+      "ratings_after": {
+        "15d41fab-b362-4cae-ba2d-7f9b3ee08736": "984",
+        "9f72bbce-8feb-4fa1-8c07-06865b7359de": "958",
+        "e32c5654-9cee-4d10-ba14-5d40531868e6": "1032",
+        "21b1a4e1-e695-488b-a888-89381b2a7974": "1123"
+      },
+      "match_type": "doubles",
+      "tournament_id": "656de879-ad8c-46ee-8aa0-65467d82692c",
+      "games": [
+        {
+          "score_a": "21",
+          "score_b": "9"
+        }
+      ],
+      "group_id": "712c0ba3-f1a6-443a-b0be-04c2cabb2c89",
+      "winner": "A",
+      "date": "2026-08-22T02:12:06.610121+00:00",
+      "team_b_names": [
+        "Naveen",
+        "Shashi"
+      ],
+      "team_b": [
+        "15d41fab-b362-4cae-ba2d-7f9b3ee08736",
+        "9f72bbce-8feb-4fa1-8c07-06865b7359de"
+      ],
+      "team_a": [
+        "21b1a4e1-e695-488b-a888-89381b2a7974",
+        "e32c5654-9cee-4d10-ba14-5d40531868e6"
+      ],
+      "score_b": "9",
+      "score_a": "21",
+      "team_a_names": [
+        "Mayank",
+        "Rajat Mishra"
+      ]
+    },
+    {
+      "match_id": "9e13019f-3214-4fca-8ba2-3b7dcf70a342",
+      "stage": "group",
+      "momentum": {
+        "longest_streak_a": "3",
+        "winner_overcame_deficit": "2",
+        "longest_streak_b": "4"
+      },
+      "ratings_after": {
+        "b9aa5e7e-e337-4da7-877c-15ebae580df4": "1122",
+        "3dc10d46-fd4f-49da-9773-53bcf2d140e1": "960",
+        "6ecf17ee-af8d-4a98-b642-76823c17196a": "990",
+        "ed9ef3b5-a0d9-4443-b3df-6f37dd7067b2": "1032"
+      },
+      "match_type": "doubles",
+      "tournament_id": "656de879-ad8c-46ee-8aa0-65467d82692c",
+      "games": [
+        {
+          "score_b": "21",
+          "score_a": "18"
+        }
+      ],
+      "group_id": "712c0ba3-f1a6-443a-b0be-04c2cabb2c89",
+      "date": "2026-08-22T02:14:04.857484+00:00",
+      "winner": "B",
+      "team_b": [
+        "ed9ef3b5-a0d9-4443-b3df-6f37dd7067b2",
+        "6ecf17ee-af8d-4a98-b642-76823c17196a"
+      ],
+      "team_b_names": [
+        "Shyam",
+        "Ambar"
+      ],
+      "team_a": [
+        "b9aa5e7e-e337-4da7-877c-15ebae580df4",
+        "3dc10d46-fd4f-49da-9773-53bcf2d140e1"
+      ],
+      "point_log": [
+        "A",
+        "A",
+        "A",
+        "B",
+        "A",
+        "B",
+        "B",
+        "A",
+        "B",
+        "A",
+        "B",
+        "B",
+        "A",
+        "A",
+        "B",
+        "A",
+        "B",
+        "B",
+        "B",
+        "B",
+        "A",
+        "A",
+        "B",
+        "B",
+        "B",
+        "A",
+        "A",
+        "A",
+        "B",
+        "B",
+        "A",
+        "B",
+        "B",
+        "B",
+        "A",
+        "A",
+        "A",
+        "B",
+        "B"
+      ],
+      "score_b": "21",
+      "score_a": "18",
+      "team_a_names": [
+        "Suren",
+        "Suraj"
+      ]
+    },
+    {
+      "match_id": "1954157a-457e-4d34-b5b3-bf0a016e8687",
+      "stage": "group",
+      "momentum": {
+        "longest_streak_b": "3",
+        "longest_streak_a": "4",
+        "winner_overcame_deficit": "1"
+      },
+      "ratings_after": {
+        "a4e7c903-b5de-43bc-a18f-e5aea5bdac4a": "975",
+        "c1096a1e-e449-4c9c-807a-6a85ca10623a": "1024",
+        "c90777e0-63c9-43e7-bb35-ab03de9f004f": "1020",
+        "95191624-fa6a-43b1-a436-8a75f2266205": "882"
+      },
+      "match_type": "doubles",
+      "tournament_id": "656de879-ad8c-46ee-8aa0-65467d82692c",
+      "group_id": "712c0ba3-f1a6-443a-b0be-04c2cabb2c89",
+      "games": [
+        {
+          "score_b": "19",
+          "score_a": "21"
+        }
+      ],
+      "winner": "A",
+      "date": "2026-08-22T02:16:55.997112+00:00",
+      "team_b": [
+        "c1096a1e-e449-4c9c-807a-6a85ca10623a",
+        "95191624-fa6a-43b1-a436-8a75f2266205"
+      ],
+      "team_b_names": [
+        "Abhishek Verma",
+        "Yeshwanth"
+      ],
+      "team_a": [
+        "a4e7c903-b5de-43bc-a18f-e5aea5bdac4a",
+        "c90777e0-63c9-43e7-bb35-ab03de9f004f"
+      ],
+      "score_b": "19",
+      "point_log": [
+        "A",
+        "B",
+        "A",
+        "B",
+        "B",
+        "A",
+        "A",
+        "A",
+        "B",
+        "B",
+        "A",
+        "B",
+        "B",
+        "A",
+        "A",
+        "B",
+        "A",
+        "B",
+        "A",
+        "B",
+        "B",
+        "B",
+        "A",
+        "A",
+        "A",
+        "A",
+        "B",
+        "B",
+        "B",
+        "A",
+        "A",
+        "B",
+        "A",
+        "B",
+        "A",
+        "A",
+        "B",
+        "B",
+        "A",
+        "A"
+      ],
+      "score_a": "21",
+      "team_a_names": [
+        "Vipin",
+        "Krishna"
+      ]
+    },
+    {
+      "match_id": "d92821f5-2f50-467d-9546-c3a6adba63a5",
+      "stage": "group",
+      "momentum": {
+        "longest_streak_a": "4",
+        "longest_streak_b": "9",
+        "winner_overcame_deficit": "0"
+      },
+      "ratings_after": {
+        "c4b87c2a-22e5-4f33-bab5-75fa8a54c14f": "899",
+        "4561e6f7-cc03-4909-b415-9aadd6495b74": "976",
+        "17aa0eb2-94ae-4dc9-9ab6-c02d2ee92599": "1277",
+        "80f22187-b8b3-4e6b-9cd4-c350aeb6e1cb": "1028"
+      },
+      "match_type": "doubles",
+      "tournament_id": "656de879-ad8c-46ee-8aa0-65467d82692c",
+      "games": [
+        {
+          "score_a": "8",
+          "score_b": "21"
+        }
+      ],
+      "group_id": "712c0ba3-f1a6-443a-b0be-04c2cabb2c89",
+      "date": "2026-08-22T02:24:19.835875+00:00",
+      "winner": "B",
+      "team_b": [
+        "80f22187-b8b3-4e6b-9cd4-c350aeb6e1cb",
+        "4561e6f7-cc03-4909-b415-9aadd6495b74"
+      ],
+      "team_b_names": [
+        "Nitish",
+        "Sandeep Singh Rathore"
+      ],
+      "team_a": [
+        "c4b87c2a-22e5-4f33-bab5-75fa8a54c14f",
+        "17aa0eb2-94ae-4dc9-9ab6-c02d2ee92599"
+      ],
+      "point_log": [
+        "B",
+        "B",
+        "B",
+        "B",
+        "B",
+        "A",
+        "B",
+        "B",
+        "A",
+        "B",
+        "A",
+        "A",
+        "A",
+        "A",
+        "B",
+        "B",
+        "A",
+        "B",
+        "B",
+        "B",
+        "B",
+        "B",
+        "B",
+        "B",
+        "B",
+        "B",
+        "A",
+        "B",
+        "B"
+      ],
+      "score_b": "21",
+      "score_a": "8",
+      "team_a_names": [
+        "Pratik Kumar",
+        "Ram R"
+      ]
+    },
+    {
+      "match_id": "5ba461d4-ba87-476f-b66f-0df393cb9ea9",
+      "momentum": {
+        "longest_streak_b": "5",
+        "longest_streak_a": "4",
+        "winner_overcame_deficit": "1"
+      },
+      "stage": "group",
+      "ratings_after": {
+        "b24d1dc0-1da3-4914-8d8b-55151eb8138e": "810",
+        "a8b209d5-b42d-4ab8-98f0-60e2a4fdeb29": "964",
+        "d749ee19-872b-4768-8cc5-d52e34e07c3d": "929",
+        "ef3d3e0c-2e65-4f36-a4e1-10b1a935c627": "1024"
+      },
+      "match_type": "doubles",
+      "tournament_id": "656de879-ad8c-46ee-8aa0-65467d82692c",
+      "games": [
+        {
+          "score_a": "21",
+          "score_b": "19"
+        }
+      ],
+      "group_id": "712c0ba3-f1a6-443a-b0be-04c2cabb2c89",
+      "winner": "A",
+      "date": "2026-08-22T02:29:32.421315+00:00",
+      "team_b_names": [
+        "Jaydeep",
+        "Pradeep"
+      ],
+      "team_b": [
+        "a8b209d5-b42d-4ab8-98f0-60e2a4fdeb29",
+        "d749ee19-872b-4768-8cc5-d52e34e07c3d"
+      ],
+      "team_a": [
+        "ef3d3e0c-2e65-4f36-a4e1-10b1a935c627",
+        "b24d1dc0-1da3-4914-8d8b-55151eb8138e"
+      ],
+      "score_b": "19",
+      "point_log": [
+        "A",
+        "A",
+        "B",
+        "B",
+        "B",
+        "B",
+        "A",
+        "A",
+        "B",
+        "B",
+        "A",
+        "A",
+        "A",
+        "A",
+        "B",
+        "A",
+        "A",
+        "B",
+        "B",
+        "B",
+        "B",
+        "B",
+        "A",
+        "A",
+        "B",
+        "B",
+        "A",
+        "A",
+        "A",
+        "A",
+        "B",
+        "B",
+        "A",
+        "A",
+        "A",
+        "B",
+        "B",
+        "A",
+        "B",
+        "A"
+      ],
+      "score_a": "21",
+      "team_a_names": [
+        "Aman",
+        "Mirgank"
+      ]
+    },
+    {
+      "match_id": "ee0106c8-6d43-48ea-a69f-9f8026b0e78e",
+      "momentum": {
+        "longest_streak_a": "4",
+        "longest_streak_b": "3",
+        "winner_overcame_deficit": "2"
+      },
+      "stage": "group",
+      "ratings_after": {
+        "732c7c1f-9187-4b25-a2e1-65eaf641273d": "594",
+        "4f777bc3-8578-463c-9c32-4eecc35a3147": "969",
+        "4fcaf281-8620-49a4-8dde-ab7bf4bec4ea": "1031",
+        "c9034fe1-b1ca-4542-a218-304628d21163": "969"
+      },
+      "match_type": "doubles",
+      "tournament_id": "656de879-ad8c-46ee-8aa0-65467d82692c",
+      "group_id": "712c0ba3-f1a6-443a-b0be-04c2cabb2c89",
+      "games": [
+        {
+          "score_b": "19",
+          "score_a": "21"
+        }
+      ],
+      "date": "2026-08-22T02:38:12.530810+00:00",
+      "winner": "A",
+      "team_b": [
+        "c9034fe1-b1ca-4542-a218-304628d21163",
+        "4f777bc3-8578-463c-9c32-4eecc35a3147"
+      ],
+      "team_b_names": [
+        "Tanay",
+        "Saurav Ashok"
+      ],
+      "team_a": [
+        "4fcaf281-8620-49a4-8dde-ab7bf4bec4ea",
+        "732c7c1f-9187-4b25-a2e1-65eaf641273d"
+      ],
+      "score_b": "19",
+      "point_log": [
+        "A",
+        "B",
+        "B",
+        "A",
+        "B",
+        "B",
+        "A",
+        "B",
+        "B",
+        "A",
+        "A",
+        "B",
+        "A",
+        "A",
+        "B",
+        "B",
+        "B",
+        "A",
+        "A",
+        "A",
+        "A",
+        "B",
+        "A",
+        "A",
+        "A",
+        "B",
+        "B",
+        "A",
+        "A",
+        "B",
+        "B",
+        "B",
+        "A",
+        "A",
+        "B",
+        "A",
+        "B",
+        "A",
+        "B",
+        "A"
+      ],
+      "score_a": "21",
+      "team_a_names": [
+        "Nehal",
+        "Vanshika"
+      ]
+    },
+    {
+      "match_id": "910c5346-28ed-450c-bbca-bd81ff917000",
+      "stage": "group",
+      "momentum": {
+        "winner_overcame_deficit": "1",
+        "longest_streak_a": "5",
+        "longest_streak_b": "4"
+      },
+      "ratings_after": {
+        "7042d45a-5e6c-4c7f-b8fd-d8d5fc6f78c3": "869",
+        "fb796edf-6ffa-470b-a7ea-8d0adcafc61f": "1238",
+        "97755542-3135-4012-94d5-6fc394a7cdad": "1228",
+        "750fb27e-d200-48f9-955f-56cd966210a0": "880"
+      },
+      "match_type": "doubles",
+      "tournament_id": "656de879-ad8c-46ee-8aa0-65467d82692c",
+      "games": [
+        {
+          "score_a": "19",
+          "score_b": "21"
+        }
+      ],
+      "group_id": "712c0ba3-f1a6-443a-b0be-04c2cabb2c89",
+      "winner": "B",
+      "date": "2026-08-22T02:40:03.546338+00:00",
+      "team_b_names": [
+        "Bibhu",
+        "Sohan"
+      ],
+      "team_b": [
+        "97755542-3135-4012-94d5-6fc394a7cdad",
+        "7042d45a-5e6c-4c7f-b8fd-d8d5fc6f78c3"
+      ],
+      "team_a": [
+        "fb796edf-6ffa-470b-a7ea-8d0adcafc61f",
+        "750fb27e-d200-48f9-955f-56cd966210a0"
+      ],
+      "score_b": "21",
+      "point_log": [
+        "B",
+        "A",
+        "A",
+        "A",
+        "B",
+        "B",
+        "A",
+        "B",
+        "B",
+        "A",
+        "B",
+        "A",
+        "A",
+        "B",
+        "B",
+        "A",
+        "B",
+        "B",
+        "B",
+        "A",
+        "B",
+        "B",
+        "A",
+        "B",
+        "B",
+        "B",
+        "B",
+        "A",
+        "A",
+        "A",
+        "B",
+        "A",
+        "A",
+        "A",
+        "A",
+        "A",
+        "B",
+        "B",
+        "A",
+        "B"
+      ],
+      "score_a": "19",
+      "team_a_names": [
+        "Prasanna Varade",
+        "Deepak"
+      ]
+    },
+    {
+      "match_id": "67141bcd-cf7f-4b3b-966a-4d5aa7a94998",
+      "stage": "group",
+      "momentum": {
+        "longest_streak_a": "4",
+        "longest_streak_b": "8",
+        "winner_overcame_deficit": "4"
+      },
+      "ratings_after": {
+        "c4b87c2a-22e5-4f33-bab5-75fa8a54c14f": "878",
+        "17aa0eb2-94ae-4dc9-9ab6-c02d2ee92599": "1256",
+        "15d41fab-b362-4cae-ba2d-7f9b3ee08736": "1005",
+        "9f72bbce-8feb-4fa1-8c07-06865b7359de": "979"
+      },
+      "match_type": "doubles",
+      "tournament_id": "656de879-ad8c-46ee-8aa0-65467d82692c",
+      "games": [
+        {
+          "score_a": "18",
+          "score_b": "21"
+        }
+      ],
+      "group_id": "712c0ba3-f1a6-443a-b0be-04c2cabb2c89",
+      "winner": "B",
+      "date": "2026-08-22T02:53:22.086198+00:00",
+      "team_b": [
+        "15d41fab-b362-4cae-ba2d-7f9b3ee08736",
+        "9f72bbce-8feb-4fa1-8c07-06865b7359de"
+      ],
+      "team_b_names": [
+        "Naveen",
+        "Shashi"
+      ],
+      "team_a": [
+        "c4b87c2a-22e5-4f33-bab5-75fa8a54c14f",
+        "17aa0eb2-94ae-4dc9-9ab6-c02d2ee92599"
+      ],
+      "point_log": [
+        "B",
+        "A",
+        "A",
+        "A",
+        "B",
+        "B",
+        "B",
+        "A",
+        "B",
+        "A",
+        "A",
+        "A",
+        "A",
+        "B",
+        "B",
+        "A",
+        "B",
+        "A",
+        "A",
+        "A",
+        "A",
+        "B",
+        "A",
+        "B",
+        "B",
+        "B",
+        "B",
+        "B",
+        "B",
+        "B",
+        "B",
+        "A",
+        "B",
+        "B",
+        "A",
+        "A",
+        "A",
+        "B",
+        "B"
+      ],
+      "score_b": "21",
+      "score_a": "18",
+      "team_a_names": [
+        "Pratik Kumar",
+        "Ram R"
+      ]
+    },
+    {
+      "match_id": "47f76ef1-37d3-4b55-b0a4-6b98f24283b4",
+      "stage": "group",
+      "ratings_after": {
+        "4fcaf281-8620-49a4-8dde-ab7bf4bec4ea": "1055",
+        "6ecf17ee-af8d-4a98-b642-76823c17196a": "966",
+        "ed9ef3b5-a0d9-4443-b3df-6f37dd7067b2": "1008",
+        "732c7c1f-9187-4b25-a2e1-65eaf641273d": "618"
+      },
+      "match_type": "doubles",
+      "tournament_id": "656de879-ad8c-46ee-8aa0-65467d82692c",
+      "games": [
+        {
+          "score_b": "18",
+          "score_a": "21"
+        }
+      ],
+      "group_id": "712c0ba3-f1a6-443a-b0be-04c2cabb2c89",
+      "date": "2026-08-22T02:53:54.505531+00:00",
+      "winner": "A",
+      "team_b": [
+        "ed9ef3b5-a0d9-4443-b3df-6f37dd7067b2",
+        "6ecf17ee-af8d-4a98-b642-76823c17196a"
+      ],
+      "team_b_names": [
+        "Shyam",
+        "Ambar"
+      ],
+      "team_a": [
+        "4fcaf281-8620-49a4-8dde-ab7bf4bec4ea",
+        "732c7c1f-9187-4b25-a2e1-65eaf641273d"
+      ],
+      "score_b": "18",
+      "score_a": "21",
+      "team_a_names": [
+        "Nehal",
+        "Vanshika"
+      ]
+    },
+    {
+      "match_id": "8c7ff530-e659-432b-a135-91df0d889af5",
+      "stage": "group",
+      "ratings_after": {
+        "3961c180-9057-44ae-a904-32319385c447": "960",
+        "c90777e0-63c9-43e7-bb35-ab03de9f004f": "1041",
+        "d0b876c3-d66f-4ba3-a1d5-ad7f1369b97b": "1255",
+        "a4e7c903-b5de-43bc-a18f-e5aea5bdac4a": "996"
+      },
+      "match_type": "doubles",
+      "tournament_id": "656de879-ad8c-46ee-8aa0-65467d82692c",
+      "games": [
+        {
+          "score_b": "10",
+          "score_a": "21"
+        }
+      ],
+      "group_id": "712c0ba3-f1a6-443a-b0be-04c2cabb2c89",
+      "winner": "A",
+      "date": "2026-08-22T02:55:53.767041+00:00",
+      "team_b_names": [
+        "Abhishek K",
+        "Gangaram Ghadi"
+      ],
+      "team_b": [
+        "d0b876c3-d66f-4ba3-a1d5-ad7f1369b97b",
+        "3961c180-9057-44ae-a904-32319385c447"
+      ],
+      "team_a": [
+        "a4e7c903-b5de-43bc-a18f-e5aea5bdac4a",
+        "c90777e0-63c9-43e7-bb35-ab03de9f004f"
+      ],
+      "score_b": "10",
+      "score_a": "21",
+      "team_a_names": [
+        "Vipin",
+        "Krishna"
+      ]
+    },
+    {
+      "match_id": "8bad4b98-90ed-4b19-abbf-9f5a63ee7f67",
+      "stage": "group",
+      "ratings_after": {
+        "df471f85-9a61-4e47-b91c-891e0d3d762d": "900",
+        "83f66cc1-8736-4822-a37d-a0508366f56a": "1346",
+        "d0b876c3-d66f-4ba3-a1d5-ad7f1369b97b": "1245",
+        "3961c180-9057-44ae-a904-32319385c447": "950"
+      },
+      "match_type": "doubles",
+      "tournament_id": "656de879-ad8c-46ee-8aa0-65467d82692c",
+      "group_id": "712c0ba3-f1a6-443a-b0be-04c2cabb2c89",
+      "games": [
+        {
+          "score_a": "21",
+          "score_b": "7"
+        }
+      ],
+      "winner": "A",
+      "date": "2026-08-22T03:02:34.212227+00:00",
+      "team_b_names": [
+        "Abhishek K",
+        "Gangaram Ghadi"
+      ],
+      "team_b": [
+        "d0b876c3-d66f-4ba3-a1d5-ad7f1369b97b",
+        "3961c180-9057-44ae-a904-32319385c447"
+      ],
+      "team_a": [
+        "83f66cc1-8736-4822-a37d-a0508366f56a",
+        "df471f85-9a61-4e47-b91c-891e0d3d762d"
+      ],
+      "score_b": "7",
+      "score_a": "21",
+      "team_a_names": [
+        "Sourabh C",
+        "Aditya Yelegaon"
+      ]
+    },
+    {
+      "match_id": "880c9963-076e-4f6f-aeb7-4321551a83d7",
+      "momentum": {
+        "winner_overcame_deficit": "0",
+        "longest_streak_a": "4",
+        "longest_streak_b": "5"
+      },
+      "stage": "group",
+      "ratings_after": {
+        "4f777bc3-8578-463c-9c32-4eecc35a3147": "988",
+        "3dc10d46-fd4f-49da-9773-53bcf2d140e1": "941",
+        "b9aa5e7e-e337-4da7-877c-15ebae580df4": "1103",
+        "c9034fe1-b1ca-4542-a218-304628d21163": "988"
+      },
+      "match_type": "doubles",
+      "tournament_id": "656de879-ad8c-46ee-8aa0-65467d82692c",
+      "games": [
+        {
+          "score_b": "21",
+          "score_a": "16"
+        }
+      ],
+      "group_id": "712c0ba3-f1a6-443a-b0be-04c2cabb2c89",
+      "winner": "B",
+      "date": "2026-08-22T03:04:56.675997+00:00",
+      "team_b_names": [
+        "Tanay",
+        "Saurav Ashok"
+      ],
+      "team_b": [
+        "c9034fe1-b1ca-4542-a218-304628d21163",
+        "4f777bc3-8578-463c-9c32-4eecc35a3147"
+      ],
+      "team_a": [
+        "b9aa5e7e-e337-4da7-877c-15ebae580df4",
+        "3dc10d46-fd4f-49da-9773-53bcf2d140e1"
+      ],
+      "point_log": [
+        "B",
+        "B",
+        "B",
+        "B",
+        "B",
+        "A",
+        "B",
+        "A",
+        "B",
+        "B",
+        "B",
+        "A",
+        "A",
+        "A",
+        "A",
+        "B",
+        "B",
+        "A",
+        "A",
+        "B",
+        "A",
+        "A",
+        "B",
+        "B",
+        "A",
+        "B",
+        "A",
+        "A",
+        "B",
+        "B",
+        "A",
+        "B",
+        "A",
+        "B",
+        "A",
+        "B",
+        "B"
+      ],
+      "score_b": "21",
+      "score_a": "16",
+      "team_a_names": [
+        "Suren",
+        "Suraj"
+      ]
+    },
+    {
+      "match_id": "afb3438c-f96e-40fe-aa43-4a45833e3f15",
+      "stage": "group",
+      "ratings_after": {
+        "21b1a4e1-e695-488b-a888-89381b2a7974": "1104",
+        "4561e6f7-cc03-4909-b415-9aadd6495b74": "995",
+        "e32c5654-9cee-4d10-ba14-5d40531868e6": "1013",
+        "80f22187-b8b3-4e6b-9cd4-c350aeb6e1cb": "1047"
+      },
+      "match_type": "doubles",
+      "tournament_id": "656de879-ad8c-46ee-8aa0-65467d82692c",
+      "games": [
+        {
+          "score_b": "21",
+          "score_a": "19"
+        }
+      ],
+      "group_id": "712c0ba3-f1a6-443a-b0be-04c2cabb2c89",
+      "winner": "B",
+      "date": "2026-08-22T03:11:04.000028+00:00",
+      "team_b": [
+        "80f22187-b8b3-4e6b-9cd4-c350aeb6e1cb",
+        "4561e6f7-cc03-4909-b415-9aadd6495b74"
+      ],
+      "team_b_names": [
+        "Nitish",
+        "Sandeep Singh Rathore"
+      ],
+      "team_a": [
+        "21b1a4e1-e695-488b-a888-89381b2a7974",
+        "e32c5654-9cee-4d10-ba14-5d40531868e6"
+      ],
+      "score_b": "21",
+      "score_a": "19",
+      "team_a_names": [
+        "Mayank",
+        "Rajat Mishra"
+      ]
+    },
+    {
+      "match_id": "b1993d88-ccf2-4a50-9cc3-82f9dd21dca4",
+      "stage": "group",
+      "ratings_after": {
+        "fb796edf-6ffa-470b-a7ea-8d0adcafc61f": "1216",
+        "750fb27e-d200-48f9-955f-56cd966210a0": "858",
+        "ef3d3e0c-2e65-4f36-a4e1-10b1a935c627": "1046",
+        "b24d1dc0-1da3-4914-8d8b-55151eb8138e": "832"
+      },
+      "match_type": "doubles",
+      "tournament_id": "656de879-ad8c-46ee-8aa0-65467d82692c",
+      "group_id": "712c0ba3-f1a6-443a-b0be-04c2cabb2c89",
+      "games": [
+        {
+          "score_a": "19",
+          "score_b": "21"
+        }
+      ],
+      "date": "2026-08-22T03:13:45.721682+00:00",
+      "winner": "B",
+      "team_b_names": [
+        "Aman",
+        "Mirgank"
+      ],
+      "team_b": [
+        "ef3d3e0c-2e65-4f36-a4e1-10b1a935c627",
+        "b24d1dc0-1da3-4914-8d8b-55151eb8138e"
+      ],
+      "team_a": [
+        "fb796edf-6ffa-470b-a7ea-8d0adcafc61f",
+        "750fb27e-d200-48f9-955f-56cd966210a0"
+      ],
+      "score_b": "21",
+      "score_a": "19",
+      "team_a_names": [
+        "Prasanna Varade",
+        "Deepak"
+      ]
+    },
+    {
+      "match_id": "48cb0482-2df5-4be8-88c0-cfb1259e607f",
+      "stage": "group",
+      "momentum": {
+        "longest_streak_a": "11",
+        "longest_streak_b": "2",
+        "winner_overcame_deficit": "0"
+      },
+      "ratings_after": {
+        "ed9ef3b5-a0d9-4443-b3df-6f37dd7067b2": "992",
+        "c9034fe1-b1ca-4542-a218-304628d21163": "1004",
+        "4f777bc3-8578-463c-9c32-4eecc35a3147": "1004",
+        "6ecf17ee-af8d-4a98-b642-76823c17196a": "950"
+      },
+      "match_type": "doubles",
+      "tournament_id": "656de879-ad8c-46ee-8aa0-65467d82692c",
+      "group_id": "712c0ba3-f1a6-443a-b0be-04c2cabb2c89",
+      "games": [
+        {
+          "score_b": "11",
+          "score_a": "21"
+        }
+      ],
+      "winner": "A",
+      "date": "2026-08-22T03:14:02.440728+00:00",
+      "team_b": [
+        "ed9ef3b5-a0d9-4443-b3df-6f37dd7067b2",
+        "6ecf17ee-af8d-4a98-b642-76823c17196a"
+      ],
+      "team_b_names": [
+        "Shyam",
+        "Ambar"
+      ],
+      "team_a": [
+        "c9034fe1-b1ca-4542-a218-304628d21163",
+        "4f777bc3-8578-463c-9c32-4eecc35a3147"
+      ],
+      "score_b": "11",
+      "point_log": [
+        "B",
+        "A",
+        "A",
+        "A",
+        "A",
+        "A",
+        "A",
+        "A",
+        "A",
+        "A",
+        "A",
+        "A",
+        "B",
+        "B",
+        "A",
+        "B",
+        "A",
+        "A",
+        "B",
+        "A",
+        "B",
+        "A",
+        "B",
+        "B",
+        "A",
+        "B",
+        "A",
+        "B",
+        "A",
+        "B",
+        "A",
+        "A"
+      ],
+      "score_a": "21",
+      "team_a_names": [
+        "Tanay",
+        "Saurav Ashok"
+      ]
+    },
+    {
+      "match_id": "f1882674-1928-4a94-b37c-b2c7f34eae9b",
+      "stage": "group",
+      "momentum": {
+        "winner_overcame_deficit": "1",
+        "longest_streak_b": "3",
+        "longest_streak_a": "4"
+      },
+      "ratings_after": {
+        "c1096a1e-e449-4c9c-807a-6a85ca10623a": "1015",
+        "df471f85-9a61-4e47-b91c-891e0d3d762d": "905",
+        "95191624-fa6a-43b1-a436-8a75f2266205": "873",
+        "83f66cc1-8736-4822-a37d-a0508366f56a": "1351"
+      },
+      "match_type": "doubles",
+      "tournament_id": "656de879-ad8c-46ee-8aa0-65467d82692c",
+      "games": [
+        {
+          "score_a": "21",
+          "score_b": "15"
+        }
+      ],
+      "group_id": "712c0ba3-f1a6-443a-b0be-04c2cabb2c89",
+      "date": "2026-08-22T03:15:49.126803+00:00",
+      "winner": "A",
+      "team_b_names": [
+        "Abhishek Verma",
+        "Yeshwanth"
+      ],
+      "team_b": [
+        "c1096a1e-e449-4c9c-807a-6a85ca10623a",
+        "95191624-fa6a-43b1-a436-8a75f2266205"
+      ],
+      "team_a": [
+        "83f66cc1-8736-4822-a37d-a0508366f56a",
+        "df471f85-9a61-4e47-b91c-891e0d3d762d"
+      ],
+      "score_b": "15",
+      "point_log": [
+        "B",
+        "B",
+        "A",
+        "B",
+        "A",
+        "A",
+        "A",
+        "A",
+        "B",
+        "A",
+        "A",
+        "B",
+        "A",
+        "B",
+        "A",
+        "A",
+        "A",
+        "B",
+        "A",
+        "B",
+        "A",
+        "A",
+        "A",
+        "B",
+        "B",
+        "B",
+        "A",
+        "B",
+        "B",
+        "A",
+        "A",
+        "B",
+        "A",
+        "B",
+        "A",
+        "A"
+      ],
+      "score_a": "21",
+      "team_a_names": [
+        "Sourabh C",
+        "Aditya Yelegaon"
+      ]
+    },
+    {
+      "match_id": "126f4c3d-0c7f-4a0f-9921-87a7d3e4d95c",
+      "stage": "group",
+      "ratings_after": {
+        "4561e6f7-cc03-4909-b415-9aadd6495b74": "1010",
+        "15d41fab-b362-4cae-ba2d-7f9b3ee08736": "990",
+        "80f22187-b8b3-4e6b-9cd4-c350aeb6e1cb": "1062",
+        "9f72bbce-8feb-4fa1-8c07-06865b7359de": "964"
+      },
+      "match_type": "doubles",
+      "tournament_id": "656de879-ad8c-46ee-8aa0-65467d82692c",
+      "group_id": "712c0ba3-f1a6-443a-b0be-04c2cabb2c89",
+      "games": [
+        {
+          "score_b": "15",
+          "score_a": "21"
+        }
+      ],
+      "winner": "A",
+      "date": "2026-08-22T03:22:55.690532+00:00",
+      "team_b": [
+        "15d41fab-b362-4cae-ba2d-7f9b3ee08736",
+        "9f72bbce-8feb-4fa1-8c07-06865b7359de"
+      ],
+      "team_b_names": [
+        "Naveen",
+        "Shashi"
+      ],
+      "team_a": [
+        "80f22187-b8b3-4e6b-9cd4-c350aeb6e1cb",
+        "4561e6f7-cc03-4909-b415-9aadd6495b74"
+      ],
+      "score_b": "15",
+      "score_a": "21",
+      "team_a_names": [
+        "Nitish",
+        "Sandeep Singh Rathore"
+      ]
+    },
+    {
+      "match_id": "fab45148-9902-4129-9e26-b966c0699db4",
+      "stage": "group",
+      "momentum": {
+        "winner_overcame_deficit": "2",
+        "longest_streak_b": "4",
+        "longest_streak_a": "3"
+      },
+      "ratings_after": {
+        "fb796edf-6ffa-470b-a7ea-8d0adcafc61f": "1196",
+        "750fb27e-d200-48f9-955f-56cd966210a0": "838",
+        "d749ee19-872b-4768-8cc5-d52e34e07c3d": "949",
+        "a8b209d5-b42d-4ab8-98f0-60e2a4fdeb29": "984"
+      },
+      "match_type": "doubles",
+      "tournament_id": "656de879-ad8c-46ee-8aa0-65467d82692c",
+      "group_id": "712c0ba3-f1a6-443a-b0be-04c2cabb2c89",
+      "games": [
+        {
+          "score_b": "21",
+          "score_a": "19"
+        }
+      ],
+      "date": "2026-08-22T03:25:37.840262+00:00",
+      "winner": "B",
+      "team_b": [
+        "a8b209d5-b42d-4ab8-98f0-60e2a4fdeb29",
+        "d749ee19-872b-4768-8cc5-d52e34e07c3d"
+      ],
+      "team_b_names": [
+        "Jaydeep",
+        "Pradeep"
+      ],
+      "team_a": [
+        "fb796edf-6ffa-470b-a7ea-8d0adcafc61f",
+        "750fb27e-d200-48f9-955f-56cd966210a0"
+      ],
+      "score_b": "21",
+      "point_log": [
+        "A",
+        "A",
+        "B",
+        "A",
+        "A",
+        "B",
+        "A",
+        "B",
+        "B",
+        "B",
+        "A",
+        "B",
+        "A",
+        "A",
+        "A",
+        "B",
+        "A",
+        "B",
+        "B",
+        "A",
+        "B",
+        "A",
+        "B",
+        "B",
+        "A",
+        "A",
+        "B",
+        "A",
+        "B",
+        "B",
+        "B",
+        "A",
+        "A",
+        "A",
+        "B",
+        "B",
+        "B",
+        "B",
+        "A",
+        "B"
+      ],
+      "score_a": "19",
+      "team_a_names": [
+        "Prasanna Varade",
+        "Deepak"
+      ]
+    },
+    {
+      "match_id": "3eb91a71-24c0-41a8-9cf0-c3d60249912f",
+      "stage": "group",
+      "ratings_after": {
+        "ef3d3e0c-2e65-4f36-a4e1-10b1a935c627": "1067",
+        "b24d1dc0-1da3-4914-8d8b-55151eb8138e": "853",
+        "7042d45a-5e6c-4c7f-b8fd-d8d5fc6f78c3": "856",
+        "97755542-3135-4012-94d5-6fc394a7cdad": "1215"
+      },
+      "match_type": "doubles",
+      "tournament_id": "656de879-ad8c-46ee-8aa0-65467d82692c",
+      "games": [
+        {
+          "score_a": "21",
+          "score_b": "16"
+        }
+      ],
+      "group_id": "712c0ba3-f1a6-443a-b0be-04c2cabb2c89",
+      "date": "2026-08-22T03:31:37.985892+00:00",
+      "winner": "A",
+      "team_b_names": [
+        "Bibhu",
+        "Sohan"
+      ],
+      "team_b": [
+        "97755542-3135-4012-94d5-6fc394a7cdad",
+        "7042d45a-5e6c-4c7f-b8fd-d8d5fc6f78c3"
+      ],
+      "team_a": [
+        "ef3d3e0c-2e65-4f36-a4e1-10b1a935c627",
+        "b24d1dc0-1da3-4914-8d8b-55151eb8138e"
+      ],
+      "score_b": "16",
+      "score_a": "21",
+      "team_a_names": [
+        "Aman",
+        "Mirgank"
+      ]
+    },
+    {
+      "match_id": "ec3f360b-ddfb-4a2f-a93c-f108aa3f7708",
+      "stage": "group",
+      "ratings_after": {
+        "732c7c1f-9187-4b25-a2e1-65eaf641273d": "610",
+        "b9aa5e7e-e337-4da7-877c-15ebae580df4": "1111",
+        "3dc10d46-fd4f-49da-9773-53bcf2d140e1": "949",
+        "4fcaf281-8620-49a4-8dde-ab7bf4bec4ea": "1047"
+      },
+      "match_type": "doubles",
+      "tournament_id": "656de879-ad8c-46ee-8aa0-65467d82692c",
+      "group_id": "712c0ba3-f1a6-443a-b0be-04c2cabb2c89",
+      "games": [
+        {
+          "score_b": "21",
+          "score_a": "15"
+        }
+      ],
+      "date": "2026-08-22T03:34:37.585214+00:00",
+      "winner": "B",
+      "team_b_names": [
+        "Suren",
+        "Suraj"
+      ],
+      "team_b": [
+        "b9aa5e7e-e337-4da7-877c-15ebae580df4",
+        "3dc10d46-fd4f-49da-9773-53bcf2d140e1"
+      ],
+      "team_a": [
+        "4fcaf281-8620-49a4-8dde-ab7bf4bec4ea",
+        "732c7c1f-9187-4b25-a2e1-65eaf641273d"
+      ],
+      "score_b": "21",
+      "score_a": "15",
+      "team_a_names": [
+        "Nehal",
+        "Vanshika"
+      ]
+    },
+    {
+      "match_id": "9dde9243-9dc9-4303-b1af-46d54e81f7b5",
+      "stage": "group",
+      "momentum": {
+        "winner_overcame_deficit": "0",
+        "longest_streak_a": "6",
+        "longest_streak_b": "2"
+      },
+      "ratings_after": {
+        "df471f85-9a61-4e47-b91c-891e0d3d762d": "912",
+        "c90777e0-63c9-43e7-bb35-ab03de9f004f": "1030",
+        "a4e7c903-b5de-43bc-a18f-e5aea5bdac4a": "985",
+        "83f66cc1-8736-4822-a37d-a0508366f56a": "1358"
+      },
+      "match_type": "doubles",
+      "tournament_id": "656de879-ad8c-46ee-8aa0-65467d82692c",
+      "games": [
+        {
+          "score_a": "21",
+          "score_b": "8"
+        }
+      ],
+      "group_id": "712c0ba3-f1a6-443a-b0be-04c2cabb2c89",
+      "date": "2026-08-22T03:38:17.425552+00:00",
+      "winner": "A",
+      "team_b": [
+        "a4e7c903-b5de-43bc-a18f-e5aea5bdac4a",
+        "c90777e0-63c9-43e7-bb35-ab03de9f004f"
+      ],
+      "team_b_names": [
+        "Vipin",
+        "Krishna"
+      ],
+      "team_a": [
+        "83f66cc1-8736-4822-a37d-a0508366f56a",
+        "df471f85-9a61-4e47-b91c-891e0d3d762d"
+      ],
+      "point_log": [
+        "A",
+        "A",
+        "B",
+        "B",
+        "A",
+        "A",
+        "B",
+        "A",
+        "A",
+        "A",
+        "B",
+        "A",
+        "A",
+        "A",
+        "A",
+        "A",
+        "B",
+        "A",
+        "A",
+        "B",
+        "A",
+        "B",
+        "B",
+        "A",
+        "A",
+        "A",
+        "A",
+        "A",
+        "A"
+      ],
+      "score_b": "8",
+      "score_a": "21",
+      "team_a_names": [
+        "Sourabh C",
+        "Aditya Yelegaon"
+      ]
+    }
+  ]
+}
