@@ -8567,10 +8567,17 @@ let userPool = null;
       // downloadTournamentImage() this is available at ANY schedule status
       // (group stage in progress, knockout in progress, or completed), not
       // just once the tournament is over, since a live event wants to
-      // share progress as it happens.
+      // share progress as it happens. Kept as a SEPARATE download from the
+      // leaderboard image below - owner (2026-08-22, once both existed):
+      // "can we not have the leaderboard image downloadable or shareable
+      // separately? ... the group one is useful ... before the matches
+      // start or in the middle, but yeah this leaderboard one ... looks
+      // cooler" - two different images for two different moments, not one
+      // combined export.
       if (hasAnyTies || (t.knockout && t.knockout.rounds)) {
-        html += `<div class="card" style="margin-top:10px;text-align:center;">
-          <button type="button" onclick="downloadDraftShareImage()">Download share image</button>
+        html += `<div class="card" style="margin-top:10px;text-align:center;display:flex;gap:8px;justify-content:center;flex-wrap:wrap;">
+          <button type="button" onclick="downloadDraftShareImage()">Download standings image</button>
+          ${(t.player_tournament_stats && t.player_tournament_stats.length) ? `<button type="button" onclick="downloadDraftLeaderboardImage()">Download leaderboard image</button>` : ''}
         </div>`;
       }
       return html;
@@ -8693,7 +8700,14 @@ let userPool = null;
      *  photo avatars via the same vsPlayerVisual/vsAvatarHtml helpers a
      *  match banner uses - just grouped by squad and with per-player
      *  Played/W/L/diff stacked under the name instead of a VS opponent. */
-    function renderPlayerTournamentStatsTable(stats, t) {
+    /** Shared by the HTML leaderboard render and the downloadable
+     *  leaderboard image export (downloadDraftLeaderboardImage) - computes
+     *  one ranked row per real playing pair, so both stay in perfect sync
+     *  rather than reimplementing the pairing/placement logic twice.
+     *  Returns [{group, memberStats, sid, squadName, placement,
+     *  isDecidingPair}], sorted by performance (wins desc, point_diff
+     *  desc, matches_played desc), NOT grouped or sorted by squad. */
+    function computeLeaderboardRows(stats, t) {
       const squads = (t && t.squads) || {};
       const statsByPid = {};
       stats.forEach(s => { statsByPid[s.player_id] = s; });
@@ -8789,8 +8803,6 @@ let userPool = null;
           placements[tp.winner_squad_id] = { tier: 'bronze', pairKey: decidingPairKey(tp, tp.winner_squad_id) };
         }
       }
-      const TIER_COLOR = { gold: '#F5C542', silver: '#C7CCD1', bronze: '#CD7F32' };
-      const TIER_EMOJI = { gold: '🥇', silver: '🥈', bronze: '🥉' };
 
       // ---- one row per pair, ranked by performance across the whole
       // tournament (wins, then point diff, then matches played) - NOT
@@ -8810,6 +8822,15 @@ let userPool = null;
         if (s2.matches_played !== s1.matches_played) return s2.matches_played - s1.matches_played;
         return r1.memberStats.map(s => s.name).join(' ').localeCompare(r2.memberStats.map(s => s.name).join(' '));
       });
+      return rows;
+    }
+
+    const LEADERBOARD_TIER_COLOR = { gold: '#F5C542', silver: '#C7CCD1', bronze: '#CD7F32' };
+    const LEADERBOARD_TIER_EMOJI = { gold: '🥇', silver: '🥈', bronze: '🥉' };
+
+    function renderPlayerTournamentStatsTable(stats, t) {
+      const rows = computeLeaderboardRows(stats, t);
+      const TIER_COLOR = LEADERBOARD_TIER_COLOR, TIER_EMOJI = LEADERBOARD_TIER_EMOJI;
 
       // Owner report (2026-08-22): the previous version's two avatars used
       // a negative margin to overlap - "the profile pic you used is good
@@ -10309,6 +10330,159 @@ let userPool = null;
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url; a.download = `${t.name.replace(/[^a-z0-9]+/gi, '_')}_status.png`;
+        a.click();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+      }, 'image/png');
+    }
+
+    // Hand-picked start/end colors lifted from each BANNER_PRESETS gradient
+    // string (canvas can't render an arbitrary multi-layer CSS
+    // gradient/pattern directly) - used only as the row background when a
+    // pair's picked banner is a PRESET, not an upload.
+    const LEADERBOARD_PRESET_CANVAS_COLORS = {
+      court: ['#0b3018', '#2FA968'], smash: ['#5c0d1c', '#ff7a2f'], mesh: ['#0f0c29', '#2a1f55'],
+      carbon: ['#1c2126', '#2b333b'], blueprint: ['#04263b', '#005C97'], chevron: ['#1a2b4a', '#37507d'],
+      dots: ['#0f2027', '#2c5364'], aurora: ['#06231c', '#0d3b34'], ember: ['#1a0b06', '#3b1207'],
+    };
+
+    /** Sibling of downloadDraftShareImage() - a SEPARATE download for the
+     *  pair leaderboard specifically. Owner (2026-08-22, after the
+     *  standings-and-matchup share image and the redesigned leaderboard
+     *  were both live): "can we not have the leaderboard image downloadable
+     *  or shareable separately? ... the group one is useful ... before the
+     *  matches start or in the middle, but yeah this leaderboard one with
+     *  custom background being picked by different banner looks cooler."
+     *  Reuses computeLeaderboardRows so the image always matches whatever
+     *  the on-screen leaderboard shows. Each row's background is drawn from
+     *  the SAME banner teamBanner() would pick for that pair - the real
+     *  uploaded photo when there is one (loaded and cover-cropped, same
+     *  crossOrigin Image technique used for avatars), or a 2-stop gradient
+     *  approximating the CSS preset otherwise - so the "different banner
+     *  per pair" look survives into the exported image, not just a flat
+     *  single background color. */
+    async function downloadDraftLeaderboardImage() {
+      const t = currentTournamentData;
+      if (!t || t.format !== 'manual_draft' || !(t.player_tournament_stats && t.player_tournament_stats.length)) {
+        nwAlert('No leaderboard to share yet.');
+        return;
+      }
+      const rows = computeLeaderboardRows(t.player_tournament_stats, t);
+      if (!rows.length) { nwAlert('No leaderboard to share yet.'); return; }
+
+      const loadImg = (src) => new Promise((res) => {
+        if (!src) { res(null); return; }
+        const img = new Image();
+        img.crossOrigin = 'anonymous';
+        img.onload = () => res(img);
+        img.onerror = () => res(null);
+        img.src = src;
+      });
+
+      const presetKeyFor = (bannerCss) => Object.keys(BANNER_PRESETS).find(k => BANNER_PRESETS[k] === bannerCss) || 'court';
+
+      const rowVisuals = rows.map(row => {
+        const visuals = row.memberStats.map(s => {
+          const v = vsPlayerVisual(s.player_id, t.card_snapshot);
+          return s.name ? { ...v, name: s.name } : v;
+        });
+        const bannerCss = teamBanner(visuals);
+        const uploadMatch = bannerCss.match(/url\("([^"]+)"\)/);
+        return { row, visuals, bannerUrl: uploadMatch ? uploadMatch[1] : null, presetKey: uploadMatch ? null : presetKeyFor(bannerCss) };
+      });
+
+      const imgCache = {};
+      const toLoad = [];
+      rowVisuals.forEach(rv => {
+        rv.visuals.forEach(v => { if (v.avatarUrl) toLoad.push(v.avatarUrl); });
+        if (rv.bannerUrl) toLoad.push(rv.bannerUrl);
+      });
+      await Promise.all([...new Set(toLoad)].map(async src => { imgCache[src] = await loadImg(src); }));
+
+      const W = 900, pad = 40, rowH = 52, rowGap = 7;
+      const H = pad * 2 + 66 + rowVisuals.length * (rowH + rowGap);
+      const canvas = document.createElement('canvas');
+      canvas.width = W; canvas.height = H;
+      const ctx = canvas.getContext('2d');
+
+      ctx.fillStyle = '#0F1B15'; ctx.fillRect(0, 0, W, H);
+      ctx.fillStyle = '#fff'; ctx.font = "800 30px 'Rajdhani', system-ui, sans-serif"; ctx.textBaseline = 'top';
+      ctx.fillText(t.name, pad, pad);
+      ctx.font = "600 14px system-ui, sans-serif"; ctx.fillStyle = '#9fb3a8';
+      ctx.fillText('Player leaderboard (this tournament only, not Elo)', pad, pad + 34);
+
+      let y = pad + 66;
+      rowVisuals.forEach(({ row, visuals, bannerUrl, presetKey }) => {
+        const { memberStats, squadName, placement, isDecidingPair } = row;
+        const s0 = memberStats[0];
+        const rowW = W - pad * 2;
+
+        ctx.save();
+        roundRect(ctx, pad, y, rowW, rowH, 8);
+        ctx.clip();
+        const bannerImg = bannerUrl && imgCache[bannerUrl];
+        if (bannerImg) {
+          const scale = Math.max(rowW / bannerImg.width, rowH / bannerImg.height);
+          const sw = rowW / scale, sh = rowH / scale;
+          const sx = (bannerImg.width - sw) / 2, sy = (bannerImg.height - sh) / 2;
+          ctx.drawImage(bannerImg, sx, sy, sw, sh, pad, y, rowW, rowH);
+          ctx.fillStyle = 'rgba(0,0,0,.42)'; ctx.fillRect(pad, y, rowW, rowH);
+        } else {
+          const [c1, c2] = LEADERBOARD_PRESET_CANVAS_COLORS[presetKey] || LEADERBOARD_PRESET_CANVAS_COLORS.court;
+          const g = ctx.createLinearGradient(pad, y, pad + rowW, y + rowH);
+          g.addColorStop(0, c1); g.addColorStop(1, c2);
+          ctx.fillStyle = g; ctx.fillRect(pad, y, rowW, rowH);
+          ctx.fillStyle = 'rgba(0,0,0,.22)'; ctx.fillRect(pad, y, rowW, rowH);
+        }
+        ctx.restore();
+
+        if (placement) {
+          const tierColor = LEADERBOARD_TIER_COLOR[placement.tier];
+          ctx.save();
+          roundRect(ctx, pad, y, rowW, rowH, 8);
+          ctx.lineWidth = isDecidingPair ? 3 : 2;
+          ctx.strokeStyle = tierColor;
+          ctx.stroke();
+          ctx.restore();
+        }
+
+        visuals.forEach((v, i) => {
+          const cx = pad + 22 + i * 38, cy = y + rowH / 2, r = 16;
+          ctx.save();
+          ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2);
+          ctx.lineWidth = 2; ctx.strokeStyle = 'rgba(255,255,255,.85)'; ctx.stroke();
+          ctx.clip();
+          const img = v.avatarUrl && imgCache[v.avatarUrl];
+          if (img) { ctx.drawImage(img, cx - r, cy - r, r * 2, r * 2); }
+          else {
+            ctx.fillStyle = '#1c2a22'; ctx.fillRect(cx - r, cy - r, r * 2, r * 2);
+            ctx.fillStyle = '#fff'; ctx.font = '15px system-ui'; ctx.textAlign = 'center';
+            ctx.fillText(v.avatarEmoji || '', cx, cy - 7); ctx.textAlign = 'left';
+          }
+          ctx.restore();
+        });
+
+        const namesX = pad + 22 + visuals.length * 38 + 8;
+        const medal = isDecidingPair ? `${LEADERBOARD_TIER_EMOJI[placement.tier]} ` : '';
+        ctx.textAlign = 'left'; ctx.font = "700 15px 'Rajdhani', sans-serif"; ctx.fillStyle = '#fff';
+        ctx.fillText(medal + visuals.map(v => v.name).join(' & '), namesX, y + rowH / 2 - 9);
+
+        ctx.textAlign = 'right';
+        if (squadName) {
+          ctx.font = "600 10.5px system-ui"; ctx.fillStyle = '#c9d4ce';
+          ctx.fillText(squadName, pad + rowW - 10, y + 8);
+        }
+        ctx.font = "700 13px 'Rajdhani', sans-serif"; ctx.fillStyle = '#fff';
+        ctx.fillText(`${s0.matches_played}P · ${s0.wins}-${s0.losses} · ${s0.point_diff > 0 ? '+' : ''}${s0.point_diff}`, pad + rowW - 10, y + rowH - 24);
+        ctx.textAlign = 'left';
+
+        y += rowH + rowGap;
+      });
+
+      canvas.toBlob((blob) => {
+        if (!blob) { nwAlert('Could not generate the image.'); return; }
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url; a.download = `${t.name.replace(/[^a-z0-9]+/gi, '_')}_leaderboard.png`;
         a.click();
         setTimeout(() => URL.revokeObjectURL(url), 1000);
       }, 'image/png');
