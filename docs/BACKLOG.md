@@ -370,11 +370,38 @@
   underneath — the stats entry's own server-computed `name` wins over the live-roster name for the label
   (a sub-match participant isn't guaranteed to already be in the loaded player list). Any stat entries
   that don't map to a squad member fall back to the old plain table underneath, so nothing silently
-  disappears. Tightened for compactness before first deploy (owner: "i hope the leaderboard is showing
-  the banner style but does not too much of height, it should feel compact") - swapped the initial
-  design (each player's photo + name + stats stacked vertically, reusing the 52px `.vsc-av` match-card
-  avatar) for a smaller 34px avatar with name and one terse stat line ("2P · 1-1 · +1") side-by-side in a
-  single compact row per player, and trimmed the card's padding/margins/header size throughout.
+  disappears. Revised twice before first deploy, both still under v1.61.0 (never tagged/deployed yet, so
+  no version bump needed either time): (a) compactness pass (owner: "i hope the leaderboard is showing
+  the banner style but does not too much of height, it should feel compact") - swapped stacked
+  photo+name+stats per player for a smaller 34px avatar with name and one terse stat line side-by-side.
+  (b) real DOUBLES-PAIR grouping + placement medals (owner, after seeing (a) render every squad member as
+  its own row: "i did mean to club all the team members like this... a compressed banner in which each
+  pair['s] names and profile pic is displayed with their squad name in the middle and then later when the
+  finals and third place matches complete a gold silver and bronze rims around their slot"). Clarified via
+  AskUserQuestion that manual-draft doubles partners aren't a separately-stored field (`pick_tie_player`
+  lets a leader nominate a different 2-person combo for every match - see backend investigation), but the
+  owner pointed out the real tell: "you can see the ones with the same points are the partners" - since
+  `compute_player_tournament_scores` credits BOTH members of a played doubles match the identical result,
+  two players who've always played together end up with identical Played/W/L/diff numbers. New
+  reconstruction in `renderPlayerTournamentStatsTable`: scans every played match in `group_stage.ties` +
+  `knockout.rounds` + `knockout.third_place_match` for 2-person `player_a`/`player_b.members` sides,
+  tallies co-occurrence per squad, and pairs each player with their most-frequent mutual partner (falls
+  back to a solo "pair of one" for anyone with no played match yet, or for a singles tournament where a
+  match side never carries 2 members). Each squad card now renders one compact row per PAIR (two
+  overlapping 28px avatars + "Name & Name" + one shared stat line) instead of one row per player, with the
+  squad name centered above like a banner headline. Placement rims: once `status === 'completed'`, the
+  champion/runner-up/third-place squads (from the final tie's `winner_squad_id` + the losing side, and
+  `knockout.third_place_match.winner_squad_id`) get a gold/silver/bronze inset ring around the WHOLE squad
+  card (`box-shadow:inset 0 0 0 2px <tier color>`) plus a medal label ("🥇 Champion" etc) - and per the
+  owner's second clarification ("no the entire squad but [also] the pair from the squad who won the
+  finals and so on"), the SPECIFIC pair that actually played the deciding match (found by walking that
+  tie's `matches` backwards for the last played one on that squad's side) gets its own separate highlight
+  ring on just its row, distinct from the squad-wide ring. New `/tmp/test_leaderboard_pairs_ui.js`
+  (Playwright, 9 checks: a 4-member squad's two real pairs - established by both members always appearing
+  together in `player_a`/`player_b.members` across 3 played matches - render as 2 grouped rows not 4 solo
+  ones, same for a 2-member squad, the champion/runner-up/third-place squad cards get the correct gold/
+  silver/bronze inset ring and medal label, and exactly one pair-row - the actual final-winning pair - gets
+  the additional non-inset highlight, not the whole champion squad uniformly).
   (4) "can you make other sections also collapsible, like the pairing sections under each squad" — added
   a second tracked-open-state `Set` (`draftOpenSquadSections`, deliberately separate from the existing
   `draftOpenGroups` since a squad_id and a group name could collide, e.g. both "A") + `toggleDraftSquadSection`;
