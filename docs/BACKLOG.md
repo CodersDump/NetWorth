@@ -17,8 +17,10 @@
   the same projection extended into the bracket view, plus a per-group advancing/contested panel for
   real named groups, added 2026-08-22 (v1.60.0, see Done); the same group-stage projection surfaced in
   Table view, inline new-player registration during squad substitution, the player leaderboard
-  redesigned into squad-grouped photo banner cards, more sections made collapsible, and a downloadable
-  share image of the tournament's CURRENT (in-progress) state, added 2026-08-22 (v1.61.0, see Done).**
+  redesigned into a flat, performance-ranked pair leaderboard with placement medals, more sections made
+  collapsible, and a downloadable share image of the tournament's CURRENT (in-progress) state, added
+  2026-08-22 (v1.61.0, see Done); the leaderboard also got its OWN separate downloadable image, drawn
+  with each pair's real picked banner as its row background, added 2026-08-22 (v1.62.0, see Done).**
   Full design: organizer names leaders, splits every player into ranked pools (drag/tap board -
   **done**), leaders draft squads via a live organizer-paced point-budget auction (**done**), then a
   squad-vs-squad group stage (round robin, N individual matches per tie) and knockout (final/semi/3rd-
@@ -340,6 +342,30 @@
 ---
 
 ## Done
+
+- ✅ 2026-08-22 (v1.62.0) — **Manual-mode tournaments: a SEPARATE downloadable image for the pair
+  leaderboard, distinct from the group/standings share image.** Owner, once both the v1.61.0 standings
+  share image and the redesigned flat pair leaderboard were live: "can we not have the leaderboard image
+  downloadable or shareable separately? i meant the group one is useful when sharing it as an image
+  before the matches start or in the middle, but yeah this leaderboard one with custom background being
+  picked by different banner looks cooler." Two distinct exports for two distinct moments, not merged
+  into one image. Refactored `renderPlayerTournamentStatsTable`'s pairing/ranking/placement logic out
+  into a standalone `computeLeaderboardRows(stats, t)` (returns the same ranked-pair-row array the HTML
+  render consumes), so the new canvas export and the on-screen leaderboard can never drift apart - one
+  source of truth for who's paired with whom, the sort order, and which pair gets which placement ring.
+  New `downloadDraftLeaderboardImage()` (sibling of `downloadDraftShareImage()`): draws one row per pair
+  exactly as computed, with each row's background matching what `teamBanner()` would actually pick for
+  that pair on screen - the real uploaded banner photo when there is one (loaded via the same crossOrigin
+  `Image()` + cover-crop technique the avatar/match-card exports already use), or a 2-stop canvas gradient
+  approximating that preset's CSS colors otherwise (`LEADERBOARD_PRESET_CANVAS_COLORS`, hand-picked from
+  each `BANNER_PRESETS` entry's own gradient stops, since canvas can't render an arbitrary multi-layer CSS
+  gradient/pattern string directly) - so the "different banner per pair" look the owner liked on screen
+  survives into the exported PNG rather than flattening to one plain background. Gold/silver/bronze rings
+  carry over identically. New "Download leaderboard image" button next to the existing (now relabeled
+  "Download standings image" for clarity) share button in `renderDraftScheduleView`, shown whenever
+  `player_tournament_stats` has data. `/tmp/test_draft_round5_ui.js` extended (now 18 checks): both
+  buttons present and independently labeled, `downloadDraftLeaderboardImage()` completes and triggers a
+  download without throwing, alongside the existing standings-image checks.
 
 - ✅ 2026-08-22 (v1.61.0) — **Manual-mode tournaments: group-stage projection in Table view, inline
   new-player registration for squad substitution, squad-banner leaderboard redesign, more collapsible
