@@ -7463,6 +7463,8 @@ let userPool = null;
         viewModeSelect.value = 'table';
         const svg = document.getElementById('bracket-svg');
         if (svg) svg.style.display = 'none';
+        const groupsPanelEl = document.getElementById('bracket-groups-panel');
+        if (groupsPanelEl) { groupsPanelEl.innerHTML = ''; groupsPanelEl.style.display = 'none'; }
         el.style.display = '';
       }
       let html = `<h3 style="font-size:16px;">${escapeHtml(t.name)} - manual draft (${t.status})</h3>`;
@@ -7509,6 +7511,8 @@ let userPool = null;
 
       el.innerHTML = html;
       if (hasSchedule) {
+        const groupsPanelEl = document.getElementById('bracket-groups-panel');
+        if (groupsPanelEl) groupsPanelEl.innerHTML = renderDraftBracketGroupsPanel(t);
         renderDraftBracketView(t);
         applyTournamentViewMode();
       }
@@ -9168,6 +9172,16 @@ let userPool = null;
       const mode = document.getElementById('tournament_view_mode').value;
       document.getElementById('tournament-detail').style.display = mode === 'table' ? 'block' : 'none';
       document.getElementById('bracket-svg').style.display = mode === 'bracket' ? 'block' : 'none';
+      // Manual-draft real-named-groups only (owner request, 2026-08-22:
+      // "under bracket it should also just list the groups... the ones who
+      // [advance] to be projected to the knockout stage as well") - empty
+      // (no innerHTML set) for every legacy tournament and every
+      // manual-draft tournament without real named groups, so this is a
+      // no-op there. Toggled together with the bracket SVG since it's
+      // conceptually part of the same "Bracket" view - the group-stage
+      // qualifiers feeding into the (still-empty) knockout bracket below.
+      const groupsPanel = document.getElementById('bracket-groups-panel');
+      if (groupsPanel) groupsPanel.style.display = (mode === 'bracket' && groupsPanel.innerHTML) ? 'block' : 'none';
     }
 
     function matchTotals(match) {
@@ -9299,6 +9313,44 @@ let userPool = null;
       svg.innerHTML = content;
     }
 
+    /** Owner request (2026-08-22, live event with real named groups):
+     * "under bracket it should also just list the groups... group A has
+     * these teams and then these teams proceed to knockout." Renders as
+     * plain HTML above the SVG (not inside it) - the real knockout pairing
+     * among group qualifiers is drawn RANDOMLY once every group finishes
+     * (see _advance_squads_to_knockout_from_groups), so there's no
+     * deterministic matchup geometry to hand-draw into the bracket's
+     * coordinate math the way a normal round is; this shows WHO's
+     * projected to advance from each group instead; using
+     * t.group_stage_projection (see compute_group_stage_projection) -
+     * empty/no-op for every legacy tournament and every manual-draft
+     * tournament without real named groups. */
+    function renderDraftBracketGroupsPanel(t) {
+      const gp = t.group_stage_projection;
+      if (!gp) return '';
+      const names = Object.keys(gp).sort();
+      let html = '<div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:4px;">';
+      names.forEach(name => {
+        const g = gp[name];
+        html += `<div class="card" style="min-width:200px;flex:1 1 200px;">
+          <h4 style="font-size:13px;margin:0 0 6px;">Group ${escapeHtml(name)}</h4>`;
+        (g.squads || []).forEach(s => {
+          const advancing = (g.advancing_ids || []).includes(s.squad_id);
+          const contested = (g.contested_ids || []).includes(s.squad_id);
+          const style = advancing ? 'font-weight:600;color:var(--court);'
+            : (contested ? 'font-style:italic;color:var(--text-secondary);' : 'color:var(--text-secondary);');
+          const tag = advancing ? ' &rarr; knockout' : (contested ? ' (contesting last spot)' : '');
+          html += `<div style="font-size:12px;padding:2px 0;${style}">${escapeHtml(draftSquadName(t, s.squad_id))}${tag}</div>`;
+        });
+        if (g.pending_ties > 0) {
+          html += `<p class="card-sub" style="margin:6px 0 0;font-size:11px;">${g.pending_ties} match${g.pending_ties === 1 ? '' : 'es'} still pending in this group</p>`;
+        }
+        html += '</div>';
+      });
+      html += '</div><p class="card-sub" style="margin:4px 0 10px;">Projected from current standings - the actual knockout matchup is drawn randomly once every group finishes, so no specific pairing is shown yet.</p>';
+      return html;
+    }
+
     /** Manual-draft sibling of renderBracketView, adapted for tie-shaped
      * knockout rounds instead of plain matches: squad_a/squad_b instead of
      * player_a/player_b, draftSquadName(t, squadId) instead of an entity's
@@ -9312,6 +9364,32 @@ let userPool = null;
     function renderDraftBracketView(t) {
       const svg = document.getElementById('bracket-svg');
       if (!t.knockout || !t.knockout.rounds || !t.knockout.rounds.length) {
+        // Owner request (2026-08-22, live event): don't just say "no
+        // bracket yet" when there's already a projected matchup to show
+        // (flat round-robin case - real named groups render their own
+        // panel above via renderDraftBracketGroupsPanel instead, since
+        // that case has no single deterministic pairing to draw here -
+        // see that function's comment). One simple dashed-box row, not a
+        // full multi-round tree, since a projection only ever knows the
+        // immediate next round.
+        if (t.projected_knockout && t.projected_knockout.rounds && t.projected_knockout.rounds.length) {
+          const boxWidth = 200, boxHeight = 56, baseSpacing = 90;
+          const round = t.projected_knockout.rounds[0];
+          const totalHeight = round.length * baseSpacing + 40;
+          let content = `<text x="20" y="16" font-size="12" fill="var(--text-secondary)">Projected (preview - ${t.projected_knockout.pending_group_ties || 0} group match${(t.projected_knockout.pending_group_ties || 0) === 1 ? '' : 'es'} still pending)</text>`;
+          round.forEach((tie, i) => {
+            const x = 20, y = i * baseSpacing + 24;
+            const nameA = truncateBracketName(tie.squad_a ? draftSquadName(t, tie.squad_a) : 'TBD');
+            const nameB = tie.bye ? 'BYE' : truncateBracketName(tie.squad_b ? draftSquadName(t, tie.squad_b) : 'TBD');
+            content += `<rect x="${x}" y="${y}" width="${boxWidth}" height="${boxHeight}" fill="var(--surface)" stroke="var(--border)" stroke-dasharray="4 3" rx="6"/>`;
+            content += `<line x1="${x}" y1="${y + boxHeight / 2}" x2="${x + boxWidth}" y2="${y + boxHeight / 2}" stroke="var(--border)" stroke-dasharray="4 3"/>`;
+            content += `<text x="${x + 8}" y="${y + 20}" font-size="13" fill="var(--text-secondary)">${nameA}</text>`;
+            content += `<text x="${x + 8}" y="${y + boxHeight - 8}" font-size="13" fill="var(--text-secondary)">${nameB}</text>`;
+          });
+          svg.setAttribute('viewBox', `0 0 ${boxWidth + 40} ${totalHeight}`);
+          svg.innerHTML = content;
+          return;
+        }
         svg.innerHTML = '<text x="10" y="20" font-size="13" fill="var(--text-secondary)">No knockout bracket for this tournament yet.</text>';
         svg.setAttribute('viewBox', '0 0 400 40');
         return;

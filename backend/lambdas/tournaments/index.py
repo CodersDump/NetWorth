@@ -1569,6 +1569,60 @@ def compute_projected_knockout(item):
     }
 
 
+def compute_group_stage_projection(item):
+    """Real-separate-groups sibling of compute_projected_knockout (owner
+    report, 2026-08-22, live event with real named groups: "group A has
+    these teams and then these teams proceed to knockout... under bracket
+    it should also just list the groups"). The real advancement path
+    (_advance_squads_to_knockout_from_groups) shuffles qualifiers into the
+    knockout pairing RANDOMLY (with a best-effort same-group swap to avoid
+    round-1 rematches) - so unlike the flat round-robin case, there's no
+    single deterministic "projected matchup" to show even once every
+    qualifier is fully known. What IS knowable ahead of time, from the
+    exact same per-group standings the Table view already shows
+    (`group_standings`), is WHICH squads are projected to advance from
+    each group - so that's what this returns instead of a pairing.
+
+    One entry per group name: `squads` (that group's own
+    compute_squad_standings output, already in current-standings order),
+    `advancing_ids` (squads currently safely inside the top
+    advance_per_group cutoff), `contested_ids` (empty, unless the group's
+    standings are EXACTLY level - both ties_won and point_diff - right at
+    that cutoff, in which case this holds the two squads contesting the
+    last spot and advancing_ids stops one short of advance_per_group -
+    mirrors the exact same boundary check
+    _inject_group_tiebreakers_if_needed uses for real, which would append
+    a tiebreaker match rather than guess), and `pending_ties` (how many of
+    THIS group's own ties are still undecided). Never persisted - same
+    "computed fresh on every read" convention as the rest of this file's
+    read-time-only fields. Only meaningful while `status == 'group_stage'`
+    - by the time the real knockout exists there's nothing left to add."""
+    group_stage = item.get('group_stage') or {}
+    groups = group_stage.get('groups')
+    if not groups:
+        return None
+    advance_n = int(item.get('manual_draft', {}).get('advance_per_group', 1))
+    result = {}
+    for name, members in groups.items():
+        standings = compute_squad_standings(item, squad_ids=members)
+        group_ties = [t for t in group_stage.get('ties', []) if t.get('group') == name]
+        pending_ties = sum(1 for t in group_ties if not t.get('decided'))
+        contested_ids = []
+        advancing_ids = [s['squad_id'] for s in standings[:advance_n]]
+        if 0 < advance_n < len(standings):
+            boundary_a, boundary_b = standings[advance_n - 1], standings[advance_n]
+            if boundary_a['ties_won'] == boundary_b['ties_won'] and boundary_a['point_diff'] == boundary_b['point_diff']:
+                contested_ids = [boundary_a['squad_id'], boundary_b['squad_id']]
+                advancing_ids = advancing_ids[:advance_n - 1]
+        result[name] = {
+            'squads': standings,
+            'advancing_ids': advancing_ids,
+            'contested_ids': contested_ids,
+            'pending_ties': pending_ties,
+        }
+    return result
+
+
 def compute_squad_standings_by_parent(item):
     """Cross-squad group mode sibling of compute_squad_standings: rolls
     each real squad's several rep entities (one fixed pair/player per
@@ -2617,9 +2671,14 @@ def get_tournament(tournament_id):
                                         for name, members in groups.items()}
         item['player_tournament_stats'] = compute_player_tournament_scores(item)
         if item.get('status') == 'group_stage':
-            projected = compute_projected_knockout(item)
-            if projected:
-                item['projected_knockout'] = projected
+            if groups:
+                group_projection = compute_group_stage_projection(item)
+                if group_projection:
+                    item['group_stage_projection'] = group_projection
+            else:
+                projected = compute_projected_knockout(item)
+                if projected:
+                    item['projected_knockout'] = projected
     if item.get('format') == 'manual_draft':
         item = _redact_pool_auction_detail(item)
     return _response(200, item)
