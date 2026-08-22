@@ -88,7 +88,7 @@ of `{proxy+}` at the same parent — that constraint drives most of the odd rout
 | ANY `/profile-secure/{proxy+}` | matches | COGNITO | Gated profile-data catch-all |
 | POST `/create-tournament` | tournaments | COGNITO | Create tournament |
 | GET/DELETE `/tournaments` `/tournaments/{proxy+}` | tournaments | NONE | List/get/delete + score submission |
-| ANY `/tournament-draft` `/tournament-draft/{proxy+}` | tournaments | COGNITO | Manual-draft mode: leaders, pool board (Phase A); `remove-player` — organizer excuses a group member (e.g. themselves, if not playing) from the roster entirely, `pools_open` only, rejects removing a current leader; auction (`start-auction`/`open-lot`/`bid`/`close-lot`/`skip-lot`/`state`, Phase B); tie-based schedule (`generate-schedule`/`pick-tie-player`/`group-tie-score`/`knockout-tie-score`, Phase C) — `generate-schedule` builds either the original flat round-robin (`manual_draft.num_groups<=1`, the default, byte-identical to before) or real separate named groups (A, B, C...) with squads randomly split and a round-robin only within each group, top `manual_draft.advance_per_group` per group advancing to a combined knockout (boundary ties injected as an extra tie via `_inject_group_tiebreakers_if_needed`, round-1 same-group rematches avoided where possible via `_advance_squads_to_knockout_from_groups` — both mirror the legacy `groups_then_knockout` format's own `inject_tiebreakers_if_needed`/`advance_to_knockout`); both `generate-schedule` and `regenerate-schedule` share `_build_group_stage`, which now also rejects any `num_groups` that would leave a group with fewer than 2 squads (previously only `num_groups > squad count` was rejected, so e.g. 4 squads split into 4 groups silently produced 4 unplayable 1-squad groups); `regenerate-schedule` — organizer-only repair action, only while still `group_stage` and nothing in it has been played yet: optionally updates `manual_draft.num_groups`/`advance_per_group` from the request body, then reruns `_build_group_stage` to rebuild the whole schedule from the existing (untouched) squads, without redoing leaders/pools/auction; `pick-tie-player` nominates either one `player_id` (singles) or a `player_ids` pair (doubles, per `manual_draft.match_type`); a leader nominates for their own squad, and the organizer can now also nominate for either squad given `squad_id` to disambiguate — the frontend's tie-card picker now actually offers this to an organizer viewing a tie (previously it only ever rendered a picker for the tie's own two leaders, so the backend's organizer path had no UI to trigger it from); `rename-squad` — organizer or that squad's own leader renames it, `squads_locked` onward (cosmetic, never locked); `move-squad-player` — organizer rebalances a picked player to a different squad, `squads_locked` only (before a schedule exists); `substitute-squad-player` — organizer swaps a squad member for a new replacement, `squads_locked` through `knockout`, clears any not-yet-played lineup pick for the outgoing player, leaves played-match history untouched; `organizer-assign` — organizer directly awards a queued player to a chosen leader for a chosen amount, no open lot / leader bid required (for leaders without app access); `GET /tournament-draft/{id}` — privileged pool/auction detail (organizer always, a leader only while their phase is still live), the only route that ever returns real `pools`/`draft` data — the public `GET /tournaments/{id}` always redacts both for manual-draft tournaments; `set-squad-pairs` + `manual_draft.group_mode='cross_squad'` (owner request, 2026-08-21, same-day rush) — an alternate group-stage shape where each squad first fixes exactly `num_groups` pairs (or solo reps, for singles) via `set-squad-pairs` (organizer or that squad's own leader), then `_build_cross_squad_group_stage` sends exactly ONE of those fixed units from EVERY squad into EVERY group (stored as `item['reps']`, id shape `{squad_id}::rep{n}`, each carrying `parent_squad_id`) instead of splitting whole squads across groups; a cross-squad tie's matches are pre-filled with both reps at build time via the shared `_fill_cross_squad_match_players` helper (used for the group stage, the first knockout round, later knockout rounds, and the third-place match) since the rep is already fully fixed — no `pick-tie-player` lineup step; `_tie_side_leader_id` resolves a tie's squad_a/squad_b (a rep_id in this mode) back to the real leader id so scoring auth (`_authorize_tie_scorer`) and the champion banner (`champion_squad_id`) still work per-squad; `compute_squad_standings` now reads `item['squads']` merged with `item['reps']` (a no-op for every tournament without reps); new `compute_squad_standings_by_parent` rolls a squad's several reps back into one overall standings row (used for `get_tournament`'s `squad_standings` when `group_stage.cross_squad` is set — `group_standings`, the per-group breakdown, stays rep-level since that's who actually plays within a group); `regenerate-schedule` also accepts `group_mode` to switch an already-generated tournament between the two modes in place (clears stale `item['reps']` when switching back to `'squads'`); `generate-schedule` accepts the same `group_mode` override for a tournament's first-ever schedule generation, so the frontend's Pairing panel can drive both first-time generation and in-place repair through one "Generate groups" button/function; the frontend's Pairing panel labels pair slots "Pair N:" (not "Group N:") since which named group a pair lands in is decided randomly at generation time, never chosen by the user, and `renderDraftScheduleView` suppresses the per-group squad-name cards entirely (showing a plain "no matches yet" message instead) whenever a `group_stage.groups` exists with zero total ties, to avoid the misleading pre-generation/stale-schedule view; `create_manual_draft_tournament` also accepts `group_best_of`/`knockout_best_of` (each `1` or `3`, default `1` — byte-identical to every tournament created before this existed), stored in `manual_draft`; `_score_tie_match` picks `best_of` per-stage off its existing `stage_label` parameter (`'group'` vs `'knockout'`/`'third_place'`) rather than a flat field manual-draft items never actually had — `_submit_game`'s `needed_wins=(best_of//2)+1` engine needed no changes, already shared/generic with legacy tournaments — and the frontend's `renderDraftBracketView` (a tie-shaped sibling of the legacy `renderBracketView`, reusing `draftSquadName`/`truncateBracketName`/`item_has_third_place`) now backs the shared View:Table/Bracket toggle once a manual-draft tournament reaches `group_stage`/`knockout`/`completed` (toggle hidden + forced to table before that, since nothing bracket-shaped exists yet) |
+| ANY `/tournament-draft` `/tournament-draft/{proxy+}` | tournaments | COGNITO | Manual-draft mode: leaders, pool board (Phase A); `remove-player` — organizer excuses a group member (e.g. themselves, if not playing) from the roster entirely, `pools_open` only, rejects removing a current leader; auction (`start-auction`/`open-lot`/`bid`/`close-lot`/`skip-lot`/`state`, Phase B); tie-based schedule (`generate-schedule`/`pick-tie-player`/`group-tie-score`/`knockout-tie-score`, Phase C) — `generate-schedule` builds either the original flat round-robin (`manual_draft.num_groups<=1`, the default, byte-identical to before) or real separate named groups (A, B, C...) with squads randomly split and a round-robin only within each group, top `manual_draft.advance_per_group` per group advancing to a combined knockout (boundary ties injected as an extra tie via `_inject_group_tiebreakers_if_needed`, round-1 same-group rematches avoided where possible via `_advance_squads_to_knockout_from_groups` — both mirror the legacy `groups_then_knockout` format's own `inject_tiebreakers_if_needed`/`advance_to_knockout`); both `generate-schedule` and `regenerate-schedule` share `_build_group_stage`, which now also rejects any `num_groups` that would leave a group with fewer than 2 squads (previously only `num_groups > squad count` was rejected, so e.g. 4 squads split into 4 groups silently produced 4 unplayable 1-squad groups); `regenerate-schedule` — organizer-only repair action, only while still `group_stage` and nothing in it has been played yet: optionally updates `manual_draft.num_groups`/`advance_per_group` from the request body, then reruns `_build_group_stage` to rebuild the whole schedule from the existing (untouched) squads, without redoing leaders/pools/auction; `pick-tie-player` nominates either one `player_id` (singles) or a `player_ids` pair (doubles, per `manual_draft.match_type`); a leader nominates for their own squad, and the organizer can now also nominate for either squad given `squad_id` to disambiguate — the frontend's tie-card picker now actually offers this to an organizer viewing a tie (previously it only ever rendered a picker for the tie's own two leaders, so the backend's organizer path had no UI to trigger it from); `rename-squad` — organizer or that squad's own leader renames it, `squads_locked` onward (cosmetic, never locked); `move-squad-player` — organizer rebalances a picked player to a different squad, `squads_locked` only (before a schedule exists); `substitute-squad-player` — organizer swaps a squad member for a new replacement, `squads_locked` through `knockout`, clears any not-yet-played lineup pick for the outgoing player, leaves played-match history untouched; `organizer-assign` — organizer directly awards a queued player to a chosen leader for a chosen amount, no open lot / leader bid required (for leaders without app access); `GET /tournament-draft/{id}` — privileged pool/auction detail (organizer always, a leader only while their phase is still live), the only route that ever returns real `pools`/`draft` data — the public `GET /tournaments/{id}` always redacts both for manual-draft tournaments; `set-squad-pairs` + `manual_draft.group_mode='cross_squad'` (owner request, 2026-08-21, same-day rush) — an alternate group-stage shape where each squad first fixes exactly `num_groups` pairs (or solo reps, for singles) via `set-squad-pairs` (organizer or that squad's own leader), then `_build_cross_squad_group_stage` sends exactly ONE of those fixed units from EVERY squad into EVERY group (stored as `item['reps']`, id shape `{squad_id}::rep{n}`, each carrying `parent_squad_id`) instead of splitting whole squads across groups; a cross-squad tie's matches are pre-filled with both reps at build time via the shared `_fill_cross_squad_match_players` helper (used for the group stage, the first knockout round, later knockout rounds, and the third-place match) since the rep is already fully fixed — no `pick-tie-player` lineup step; `_tie_side_leader_id` resolves a tie's squad_a/squad_b (a rep_id in this mode) back to the real leader id so scoring auth (`_authorize_tie_scorer`) and the champion banner (`champion_squad_id`) still work per-squad; `compute_squad_standings` now reads `item['squads']` merged with `item['reps']` (a no-op for every tournament without reps); new `compute_squad_standings_by_parent` rolls a squad's several reps back into one overall standings row (used for `get_tournament`'s `squad_standings` when `group_stage.cross_squad` is set — `group_standings`, the per-group breakdown, stays rep-level since that's who actually plays within a group); `regenerate-schedule` also accepts `group_mode` to switch an already-generated tournament between the two modes in place (clears stale `item['reps']` when switching back to `'squads'`); `generate-schedule` accepts the same `group_mode` override for a tournament's first-ever schedule generation, so the frontend's Pairing panel can drive both first-time generation and in-place repair through one "Generate groups" button/function; the frontend's Pairing panel labels pair slots "Pair N:" (not "Group N:") since which named group a pair lands in is decided randomly at generation time, never chosen by the user, and `renderDraftScheduleView` suppresses the per-group squad-name cards entirely (showing a plain "no matches yet" message instead) whenever a `group_stage.groups` exists with zero total ties, to avoid the misleading pre-generation/stale-schedule view; `create_manual_draft_tournament` also accepts `group_best_of`/`knockout_best_of` (each `1` or `3`, default `1` — byte-identical to every tournament created before this existed), stored in `manual_draft`; `_score_tie_match` picks `best_of` per-stage off its existing `stage_label` parameter (`'group'` vs `'knockout'`/`'third_place'`) rather than a flat field manual-draft items never actually had — `_submit_game`'s `needed_wins=(best_of//2)+1` engine needed no changes, already shared/generic with legacy tournaments — and the frontend's `renderDraftBracketView` (a tie-shaped sibling of the legacy `renderBracketView`, reusing `draftSquadName`/`truncateBracketName`/`item_has_third_place`) now backs the shared View:Table/Bracket toggle once a manual-draft tournament reaches `group_stage`/`knockout`/`completed` (toggle hidden + forced to table before that, since nothing bracket-shaped exists yet); `get_tournament` also attaches `projected_knockout` (via `compute_projected_knockout`) whenever `status=='group_stage'` and at least one group tie is still pending — a read-only preview of the knockout pairing seeded from the CURRENT (partial) standings via the same `build_knockout_tie_round` the real knockout uses, absent once every tie decides (the real `knockout` takes over) or when real separate named groups are in play (advance_per_group/tiebreak-injection eligibility isn't replicated for the projection); rendered by the frontend's `renderProjectedKnockout` as a plain, non-scoreable card in `renderDraftScheduleView` |
 | ANY `/finance/{proxy+}` | finance | **NONE (legacy open)** | View-key/confirmation-code gated finance ops |
 | ANY `/finance-secure/{proxy+}` | finance | COGNITO | Same ops, Cognito-gated by finance role |
 | DELETE `/finance-delete/{record_type}/{record_id}` | finance | COGNITO | Triple-gated delete |
@@ -322,7 +322,7 @@ _NetWorth - matches Lambda (singles + doubles)_
 | `compute_partner_distribution` | player_id, items, top_n | 2536 | For the radar/spider chart: one player's doubles partners, sorted by |
 | `_response` | status_code, body_dict | 2583 | — |
 
-#### `tournaments` — 3207 LOC
+#### `tournaments` — 3260 LOC
 _NetWorth - tournaments Lambda (singles or doubles)_
 
 **Module constants:** `K_FACTOR`, `COMEBACK_BONUS_THRESHOLD`, `COMEBACK_BONUS_PER_POINT`, `COMEBACK_BONUS_CAP`, `CONFIRMATION_CODE`, `MANUAL_DRAFT_ACCEPTED_TARGETS`
@@ -376,43 +376,44 @@ _NetWorth - tournaments Lambda (singles or doubles)_
 | `_tie_side_leader_id` | item, side_id | 1456 | Resolves a tie's squad_a/squad_b value to the leader id who's |
 | `_authorize_tie_scorer` | item, tie, claims | 1467 | Organizer, or one of THIS tie's own two squad leaders - matches the |
 | `compute_squad_standings` | item, squad_ids | 1482 | Squad-level standings: sorted by (ties_won desc, aggregate point |
-| `compute_squad_standings_by_parent` | item | 1523 | Cross-squad group mode sibling of compute_squad_standings: rolls |
-| `compute_player_tournament_scores` | item | 1560 | A tournament-scoped, non-Elo per-player score/leaderboard - a |
-| `rename_squad` | tournament_id, event, claims | 1634 | Squads get an auto-generated name ("Team <leader>") the instant the |
-| `set_squad_pairs` | tournament_id, event, claims | 1668 | Cross-squad group mode only (owner request, 2026-08-21): before the |
-| `move_squad_player` | tournament_id, event, claims | 1729 | Organizer-only roster rebalancing between two squads, before the |
-| `_rebuild_entity_after_substitution` | entity, old_player_id, new_player_id, new_pla | 1775 | Swaps old_player_id for new_player_id inside a squad-pair/rep/ |
-| `substitute_squad_player` | tournament_id, event, claims | 1800 | Organizer-only real substitution for a manual-draft squad: swaps a |
-| `_build_group_stage` | item | 1920 | Shared schedule-building logic, used both by generate_schedule (the |
-| `_fill_cross_squad_match_players` | item, ties | 1975 | Cross-squad group mode (owner request, 2026-08-21): a tie's two |
-| `_build_cross_squad_group_stage` | item | 2004 | Cross-squad group mode (owner request, 2026-08-21): instead of |
-| `generate_schedule` | tournament_id, event, claims | 2082 | — |
-| `regenerate_schedule` | tournament_id, event, claims | 2117 | Organizer repair action: re-run schedule generation for a tournament |
-| `pick_tie_player` | tournament_id, event, claims | 2178 | A leader nominates which of their own squad's members plays a given |
-| `_generate_knockout_from_group_stage` | item | 2280 | — |
-| `_inject_group_tiebreakers_if_needed` | item | 2288 | Real-separate-groups sibling of the legacy groups_then_knockout |
-| `_advance_squads_to_knockout_from_groups` | item | 2332 | Real-separate-groups sibling of the legacy groups_then_knockout |
-| `record_group_tie_score` | tournament_id, event, claims | 2363 | — |
-| `_advance_knockout_ties_if_round_complete` | item | 2404 | Mirrors record_knockout_score's round-advancement + third-place- |
-| `record_knockout_tie_score` | tournament_id, event, claims | 2441 | — |
-| `list_tournaments` | event | 2482 | — |
-| `_redact_pool_auction_detail` | item | 2506 | GET /tournaments/{id} is unauthenticated - literally anyone browsing |
-| `_hide_pool_auction_from_non_organizer` | item, claims | 2529 | pick_tie_player/record_group_tie_score/record_knockout_tie_score are |
-| `get_tournament` | tournament_id | 2543 | — |
-| `recompute_all_ratings` |  | 2575 | Elo is path-dependent - each match's rating change depends on the |
-| `delete_tournament` | tournament_id, event | 2653 | Deletes this tournament AND every match record tagged with its |
-| `compute_standings` | fixtures, entities | 2687 | — |
-| `compute_all_standings` | item | 2719 | — |
-| `_submit_game` | fixture, score_a, score_b, best_of, target, o | 2725 | Append one game's score to a fixture/match. Returns True if the match is now decided. |
-| `record_group_score` | tournament_id, event | 2754 | — |
-| `inject_tiebreakers_if_needed` | item | 2808 | Checks each subgroup for a genuine tie (same wins AND point_diff) at |
-| `advance_to_knockout` | item | 2859 | — |
-| `record_knockout_score` | tournament_id, event | 2884 | — |
-| `compute_adaptive_k` | pairing_count | 2995 | Higher K for a fresh/novel doubles pairing (each match together is |
-| `get_pairing_count` | team_ids | 3009 | How many prior doubles matches has this exact 2-player team played |
-| `update_elo_and_log` | match_type, entity_a, entity_b, score_a, scor | 3027 | — |
-| `substitute_player` | tournament_id, event | 3105 | Swap a player out of a team for all of that team's FUTURE (unplayed) |
-| `_response` | status_code, body_dict | 3198 | — |
+| `compute_projected_knockout` | item | 1523 | Read-time-only preview of the knockout matchup, computed from the |
+| `compute_squad_standings_by_parent` | item | 1572 | Cross-squad group mode sibling of compute_squad_standings: rolls |
+| `compute_player_tournament_scores` | item | 1609 | A tournament-scoped, non-Elo per-player score/leaderboard - a |
+| `rename_squad` | tournament_id, event, claims | 1683 | Squads get an auto-generated name ("Team <leader>") the instant the |
+| `set_squad_pairs` | tournament_id, event, claims | 1717 | Cross-squad group mode only (owner request, 2026-08-21): before the |
+| `move_squad_player` | tournament_id, event, claims | 1778 | Organizer-only roster rebalancing between two squads, before the |
+| `_rebuild_entity_after_substitution` | entity, old_player_id, new_player_id, new_pla | 1824 | Swaps old_player_id for new_player_id inside a squad-pair/rep/ |
+| `substitute_squad_player` | tournament_id, event, claims | 1849 | Organizer-only real substitution for a manual-draft squad: swaps a |
+| `_build_group_stage` | item | 1969 | Shared schedule-building logic, used both by generate_schedule (the |
+| `_fill_cross_squad_match_players` | item, ties | 2024 | Cross-squad group mode (owner request, 2026-08-21): a tie's two |
+| `_build_cross_squad_group_stage` | item | 2053 | Cross-squad group mode (owner request, 2026-08-21): instead of |
+| `generate_schedule` | tournament_id, event, claims | 2131 | — |
+| `regenerate_schedule` | tournament_id, event, claims | 2166 | Organizer repair action: re-run schedule generation for a tournament |
+| `pick_tie_player` | tournament_id, event, claims | 2227 | A leader nominates which of their own squad's members plays a given |
+| `_generate_knockout_from_group_stage` | item | 2329 | — |
+| `_inject_group_tiebreakers_if_needed` | item | 2337 | Real-separate-groups sibling of the legacy groups_then_knockout |
+| `_advance_squads_to_knockout_from_groups` | item | 2381 | Real-separate-groups sibling of the legacy groups_then_knockout |
+| `record_group_tie_score` | tournament_id, event, claims | 2412 | — |
+| `_advance_knockout_ties_if_round_complete` | item | 2453 | Mirrors record_knockout_score's round-advancement + third-place- |
+| `record_knockout_tie_score` | tournament_id, event, claims | 2490 | — |
+| `list_tournaments` | event | 2531 | — |
+| `_redact_pool_auction_detail` | item | 2555 | GET /tournaments/{id} is unauthenticated - literally anyone browsing |
+| `_hide_pool_auction_from_non_organizer` | item, claims | 2578 | pick_tie_player/record_group_tie_score/record_knockout_tie_score are |
+| `get_tournament` | tournament_id | 2592 | — |
+| `recompute_all_ratings` |  | 2628 | Elo is path-dependent - each match's rating change depends on the |
+| `delete_tournament` | tournament_id, event | 2706 | Deletes this tournament AND every match record tagged with its |
+| `compute_standings` | fixtures, entities | 2740 | — |
+| `compute_all_standings` | item | 2772 | — |
+| `_submit_game` | fixture, score_a, score_b, best_of, target, o | 2778 | Append one game's score to a fixture/match. Returns True if the match is now decided. |
+| `record_group_score` | tournament_id, event | 2807 | — |
+| `inject_tiebreakers_if_needed` | item | 2861 | Checks each subgroup for a genuine tie (same wins AND point_diff) at |
+| `advance_to_knockout` | item | 2912 | — |
+| `record_knockout_score` | tournament_id, event | 2937 | — |
+| `compute_adaptive_k` | pairing_count | 3048 | Higher K for a fresh/novel doubles pairing (each match together is |
+| `get_pairing_count` | team_ids | 3062 | How many prior doubles matches has this exact 2-player team played |
+| `update_elo_and_log` | match_type, entity_a, entity_b, score_a, scor | 3080 | — |
+| `substitute_player` | tournament_id, event | 3158 | Swap a player out of a team for all of that team's FUTURE (unplayed) |
+| `_response` | status_code, body_dict | 3251 | — |
 
 #### `finance` — 1571 LOC
 _NetWorth - finance Lambda_
@@ -482,7 +483,7 @@ _NetWorth - progress_scheduler Lambda_
 ## 6. Frontend function reference
 
 <!-- AUTOGEN:FRONTEND START (regenerated by tools/generate_codebase_map.py — do not hand-edit below) -->
-### Frontend (`frontend/js/app.js` — 10096 LOC, flat global script, ~436 functions)
+### Frontend (`frontend/js/app.js` — 10132 LOC, flat global script, ~437 functions)
 
 _Loaded by `index.html` after an inline `<script>` defines the globals `API_BASE_URL`, `COGNITO_USER_POOL_ID`, `COGNITO_CLIENT_ID`, `UPI_ID`, `FINANCE_VIEW_KEY` placeholders. Functions live in global scope (not an IIFE); most are wired to `onclick=` in the HTML._
 
@@ -919,59 +920,60 @@ _Loaded by `index.html` after an inline `<script>` defines the globals `API_BASE
 - `draftSquadName(t, squadId)` — L8396
 - `toggleDraftGroupOpen(name, detailsEl)` — L8418
 - `renderDraftScheduleView(t)` — L8422
-- `renderRegenerateScheduleGroupPanel(t)` — L8487
-- `regenerateDraftSchedule(tournamentId)` — L8511
-- `renderSquadStandingsTable(standings)` — L8529
-- `renderPlayerTournamentStatsTable(stats)` — L8541
-- `renderTieSection(title, ties, t, stageKind)` — L8554
-- `renderTieCard(tie, t, stageKind)` — L8561
-- `renderTieMatchRow(tie, m, idx, t, stageKind, iLeadA, iLead)` — L8580
-- `draftPlayerPickerHtml(tournamentId, tieId, matchIndex, members)` — L8718
-- `opts(selected)` — L8724
-- `pickTiePlayer(tournamentId, tieId, matchIndex, playerI)` — L8744
-- `pickTiePlayerPair(tournamentId, tieId, matchIndex, squadId)` — L8756
-- `submitDraftTieScore(tournamentId, tieId, matchIndex, stageKi)` — L8772
-- `submitDraftTieScoreDirect(tournamentId, tieId, matchIndex, stageKi)` — L8789
-- `collectAllEntities(t)` — L8955
-- `getAllTeamEntities(t)` — L8971
-- `renderTeamCompositionBars(t, containerId)` — L8989
-- `populateSubstitutionSection(t)` — L9024
-- `updateSubOldPlayerOptions()` — L9035
-- `formatGames(games)` — L9124
-- `applyTournamentViewMode()` — L9131
-- `matchTotals(match)` — L9137
-- `truncateBracketName(name, maxChars = 22)` — L9145
-- `renderBracketView(t)` — L9150
-- `renderDraftBracketView(t)` — L9276
-- `renderTournament(t)` — L9381
-- `generateTournamentRecap(t)` — L9556
-- `downloadTournamentImage()` — L9588
-- `loadImg(src)` — L9615
-- `sideVisuals(side)` — L9625
-- `drawCard(x, y, w, match, isFinal)` — L9632
-- `drawAvatars(ctx, x, y, side, isWinner)` — L9678
-- `paintTeam(ctx, x, y, w, h, side, fallback)` — L9697
-- `roundRect(ctx, x, y, w, h, r)` — L9725
-- `copyTournamentRecap()` — L9735
-- `item_has_third_place(t)` — L9746
-- `submitGroupScore(tournamentId, subgroup, fixtureId)` — L9750
-- `submitGroupScoreDirect(tournamentId, subgroup, fixtureId, score)` — L9756
-- `submitKnockoutScore(tournamentId, roundIndex, matchIndex)` — L9793
-- `submitKnockoutScoreDirect(tournamentId, roundIndex, matchIndex, sc)` — L9799
-- `submitThirdPlaceScore(tournamentId)` — L9826
-- `submitThirdPlaceScoreDirect(tournamentId, score_a, score_b, override)` — L9832
-- `getTournamentLiveLog(matchKey)` — L9863
-- `tournamentLivePoint(matchKey, side, target)` — L9868
-- `tournamentUndoPoint(matchKey, target)` — L9877
-- `updateTournamentLiveDisplay(matchKey, target)` — L9883
-- `finishGroupLiveGame(matchKey, tournamentId, subgroup, fixtur)` — L9901
-- `finishKnockoutLiveGame(matchKey, tournamentId, roundIndex, matc)` — L9915
-- `finishThirdPlaceLiveGame(matchKey, tournamentId)` — L9924
-- `finishDraftTieLiveGame(matchKey, tournamentId, tieId, matchInde)` — L9942
-- `renderLiveScoreControls(matchKey, target, finishCallExpr, nameA,)` — L9951
-- `activateTab(tabName)` — L9975
-- `jumpToRecordMatch()` — L10071
-- `applyTheme(theme)` — L10077
+- `renderProjectedKnockout(t)` — L8501
+- `renderRegenerateScheduleGroupPanel(t)` — L8523
+- `regenerateDraftSchedule(tournamentId)` — L8547
+- `renderSquadStandingsTable(standings)` — L8565
+- `renderPlayerTournamentStatsTable(stats)` — L8577
+- `renderTieSection(title, ties, t, stageKind)` — L8590
+- `renderTieCard(tie, t, stageKind)` — L8597
+- `renderTieMatchRow(tie, m, idx, t, stageKind, iLeadA, iLead)` — L8616
+- `draftPlayerPickerHtml(tournamentId, tieId, matchIndex, members)` — L8754
+- `opts(selected)` — L8760
+- `pickTiePlayer(tournamentId, tieId, matchIndex, playerI)` — L8780
+- `pickTiePlayerPair(tournamentId, tieId, matchIndex, squadId)` — L8792
+- `submitDraftTieScore(tournamentId, tieId, matchIndex, stageKi)` — L8808
+- `submitDraftTieScoreDirect(tournamentId, tieId, matchIndex, stageKi)` — L8825
+- `collectAllEntities(t)` — L8991
+- `getAllTeamEntities(t)` — L9007
+- `renderTeamCompositionBars(t, containerId)` — L9025
+- `populateSubstitutionSection(t)` — L9060
+- `updateSubOldPlayerOptions()` — L9071
+- `formatGames(games)` — L9160
+- `applyTournamentViewMode()` — L9167
+- `matchTotals(match)` — L9173
+- `truncateBracketName(name, maxChars = 22)` — L9181
+- `renderBracketView(t)` — L9186
+- `renderDraftBracketView(t)` — L9312
+- `renderTournament(t)` — L9417
+- `generateTournamentRecap(t)` — L9592
+- `downloadTournamentImage()` — L9624
+- `loadImg(src)` — L9651
+- `sideVisuals(side)` — L9661
+- `drawCard(x, y, w, match, isFinal)` — L9668
+- `drawAvatars(ctx, x, y, side, isWinner)` — L9714
+- `paintTeam(ctx, x, y, w, h, side, fallback)` — L9733
+- `roundRect(ctx, x, y, w, h, r)` — L9761
+- `copyTournamentRecap()` — L9771
+- `item_has_third_place(t)` — L9782
+- `submitGroupScore(tournamentId, subgroup, fixtureId)` — L9786
+- `submitGroupScoreDirect(tournamentId, subgroup, fixtureId, score)` — L9792
+- `submitKnockoutScore(tournamentId, roundIndex, matchIndex)` — L9829
+- `submitKnockoutScoreDirect(tournamentId, roundIndex, matchIndex, sc)` — L9835
+- `submitThirdPlaceScore(tournamentId)` — L9862
+- `submitThirdPlaceScoreDirect(tournamentId, score_a, score_b, override)` — L9868
+- `getTournamentLiveLog(matchKey)` — L9899
+- `tournamentLivePoint(matchKey, side, target)` — L9904
+- `tournamentUndoPoint(matchKey, target)` — L9913
+- `updateTournamentLiveDisplay(matchKey, target)` — L9919
+- `finishGroupLiveGame(matchKey, tournamentId, subgroup, fixtur)` — L9937
+- `finishKnockoutLiveGame(matchKey, tournamentId, roundIndex, matc)` — L9951
+- `finishThirdPlaceLiveGame(matchKey, tournamentId)` — L9960
+- `finishDraftTieLiveGame(matchKey, tournamentId, tieId, matchInde)` — L9978
+- `renderLiveScoreControls(matchKey, target, finishCallExpr, nameA,)` — L9987
+- `activateTab(tabName)` — L10011
+- `jumpToRecordMatch()` — L10107
+- `applyTheme(theme)` — L10113
 <!-- AUTOGEN:FRONTEND END -->
 
 ---

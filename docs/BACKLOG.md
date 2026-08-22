@@ -12,7 +12,8 @@
 ## Now / high priority
 
 - `[feat] L` **Manual-mode tournaments (leaders + pool draft/auction) — Phases A-D all done, feature
-  complete. Configurable best-of-3 + real visual bracket added 2026-08-22 (v1.58.0, see Done).**
+  complete. Configurable best-of-3 + real visual bracket added 2026-08-22 (v1.58.0, see Done); a
+  projected-knockout preview while group ties are still pending added 2026-08-22 (v1.59.0, see Done).**
   Full design: organizer names leaders, splits every player into ranked pools (drag/tap board -
   **done**), leaders draft squads via a live organizer-paced point-budget auction (**done**), then a
   squad-vs-squad group stage (round robin, N individual matches per tie) and knockout (final/semi/3rd-
@@ -334,6 +335,39 @@
 ---
 
 ## Done
+
+- ✅ 2026-08-22 (v1.59.0) — **Manual-mode tournaments: projected knockout matchup while group
+  ties are still pending.** Live-event owner report: "2 matches are pending in group stage but we
+  clearly see the teams qualifying for semifinal, will that matchup not be released? ideally it
+  should be right?" The real bracket only gets built once every single group tie is `decided` (see
+  `record_group_tie_score`), so it genuinely doesn't exist in the data yet while any tie is still
+  pending, however obvious the outcome looks on the standings table. Rather than trying to prove
+  qualification is mathematically locked (`point_diff`, part of the tiebreak, is unbounded, so that
+  would need real worst-case-swing reasoning - too much to rush into a live event), new
+  `compute_projected_knockout(item)` computes a clearly-labeled **preview** instead: it reads
+  `compute_squad_standings`' current output (which already only credits *decided* ties, so it's
+  exactly what the standings table already shows) and runs it through the existing
+  `build_knockout_tie_round` seeding — same pairing the real knockout would use once it exists —
+  without creating any real tie objects, writing anything, or touching scoring/Elo in any way.
+  Attached to `get_tournament`'s response as `projected_knockout` (read-time-only, same "never
+  persisted" convention as `squad_standings`/`player_tournament_stats`) whenever `status ==
+  'group_stage'` and at least one group tie is still pending; automatically absent again the moment
+  every tie is decided (the real `knockout` supersedes it) or once real separate named groups
+  (`group_stage.groups`) are in play — `advance_per_group`/tiebreaker-injection eligibility isn't
+  replicated here, so this deliberately returns `None` for that case rather than guessing at a shape
+  that could turn out wrong. Frontend: new `renderProjectedKnockout(t)`, a plain dashed-border card
+  (no score inputs, no lineup pickers — it's a preview, not a real tie) reading "Based on the current
+  standings, with N group match(es) still pending. This is a preview, not the final bracket - it can
+  still change..." with each projected pairing (or bye) listed below, shown in `renderDraftScheduleView`
+  only while no real knockout exists yet. New `/tmp/test_projected_knockout.py` (8 checks: appears with
+  the correct pending-tie count, correctly seeds the actual top-2-by-standings pairing from a synthetic
+  4-squad partial group stage, remaining squads correctly paired, projected ties never marked
+  decided/no real `knockout` key created, disappears once every tie is decided, withheld for real
+  separate groups, an odd squad count still projects the right bye). New
+  `/tmp/test_projected_knockout_ui.js` (Playwright: card renders with heading/pending-count/squad names,
+  contains no scoring controls, and correctly disappears once the real knockout exists even with stale
+  `projected_knockout` still present in the payload). Full existing backend (28 files) and Playwright
+  (12 files, including the two new ones) suites re-verified passing throughout.
 
 - ✅ 2026-08-22 (v1.58.0) — **Manual-mode tournaments: configurable best-of-3, a real visual
   bracket, and a smoother multi-game entry flow.** Owner follow-up on v1.57.0 ("the tournament format
