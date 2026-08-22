@@ -1334,6 +1334,26 @@
             </div>
             <div class="row">
               <div>
+                <label>Games per group match
+                  <span class="info-tip" tabindex="0">i<span class="info-tip-text">How many games it takes to win ONE individual match within a group-stage tie. Best of 1 means a single decisive game. Best of 3 means whoever wins 2 out of 3 games wins that match &mdash; the group stage is usually kept at Best of 1 even when the knockout is Best of 3, so pick this independently of the knockout setting below.</span></span>
+                  <select id="draft_group_best_of">
+                    <option value="1" selected>Best of 1</option>
+                    <option value="3">Best of 3</option>
+                  </select>
+                </label>
+              </div>
+              <div>
+                <label>Games per knockout match
+                  <span class="info-tip" tabindex="0">i<span class="info-tip-text">Same idea, but for the knockout rounds (semifinal, final, third-place). Best of 3 means whoever wins 2 out of 3 games wins that individual match &mdash; a common choice for knockout rounds even when the group stage stays Best of 1.</span></span>
+                  <select id="draft_knockout_best_of">
+                    <option value="1" selected>Best of 1</option>
+                    <option value="3">Best of 3</option>
+                  </select>
+                </label>
+              </div>
+            </div>
+            <div class="row">
+              <div>
                 <label>Number of groups
                   <span class="info-tip" tabindex="0">i<span class="info-tip-text">Splits your squads into this many separate named groups (Group A, Group B, ...) once the auction is done, with squads assigned randomly. Each squad only plays a round-robin against the OTHER squads in its own group, not squads in other groups. Leave this at 1 for a single round-robin across every squad instead (no separate groups, no one is eliminated before the knockout).</span></span>
                   <input type="number" id="draft_num_groups" value="1" min="1">

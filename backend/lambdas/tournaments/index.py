@@ -625,13 +625,30 @@ def create_manual_draft_tournament(event, claims):
         knockout_matches_per_tie = int(body.get('knockout_matches_per_tie', 1))
         num_groups = int(body.get('num_groups', 1))
         advance_per_group = int(body.get('advance_per_group', 1))
+        # Games per individual match, per stage (owner request, 2026-08-22:
+        # "group stages are played with 21 and the knockout are played with
+        # 3 set of 15 or 11 - but it is not guaranteed"). Defaults to 1
+        # (today's behavior, byte-identical for every existing tournament)
+        # - an organizer opts a new tournament into best-of-3 per stage
+        # independently, since the group stage is usually still single-game
+        # even when the knockout isn't. The per-game point target itself
+        # stays flexible (11/15/21 all accepted without an override - see
+        # MANUAL_DRAFT_ACCEPTED_TARGETS) regardless of best_of.
+        group_best_of = int(body.get('group_best_of', 1))
+        knockout_best_of = int(body.get('knockout_best_of', 1))
     except (TypeError, ValueError):
         return _response(400, {'error': 'budget_per_leader, num_pools, picks_per_pool, group_matches_per_tie, '
-                                         'knockout_matches_per_tie, num_groups, advance_per_group must be numbers'})
+                                         'knockout_matches_per_tie, num_groups, advance_per_group, group_best_of, '
+                                         'knockout_best_of must be numbers'})
 
     match_type = body.get('match_type', 'singles')
     if match_type not in ('singles', 'doubles'):
         return _response(400, {'error': "match_type must be 'singles' or 'doubles'"})
+
+    if group_best_of not in (1, 3):
+        return _response(400, {'error': 'group_best_of must be 1 or 3'})
+    if knockout_best_of not in (1, 3):
+        return _response(400, {'error': 'knockout_best_of must be 1 or 3'})
 
     group_mode = body.get('group_mode', 'squads')
     if group_mode not in ('squads', 'cross_squad'):
@@ -674,6 +691,8 @@ def create_manual_draft_tournament(event, claims):
             'num_groups': num_groups,
             'advance_per_group': advance_per_group,
             'group_mode': group_mode,
+            'group_best_of': group_best_of,
+            'knockout_best_of': knockout_best_of,
         },
         'leaders': [],
         'pools': {
@@ -1387,7 +1406,13 @@ def _score_tie_match(item, tie, match_index, score_a, score_b, override, point_l
     if not match.get('player_a') or not match.get('player_b'):
         raise ValueError('both squads must nominate a player for this match before it can be scored')
 
-    best_of = item.get('best_of', 1)
+    # best_of is stage-specific (owner request, 2026-08-22: group stage is
+    # usually single-game even when the knockout is best-of-3) - a group
+    # match uses manual_draft.group_best_of, a knockout or third-place
+    # match uses manual_draft.knockout_best_of. Both default to 1, matching
+    # every tournament created before this config existed.
+    md = item.get('manual_draft', {})
+    best_of = md.get('group_best_of', 1) if stage_label == 'group' else md.get('knockout_best_of', 1)
     target = item.get('points_to_win', 21)
     # Score flexibility (owner report, 2026-08-21) - see
     # _is_valid_manual_draft_game_score above: a completed game at any of
