@@ -137,6 +137,25 @@ def _is_valid_completed_game(score_a, score_b, target):
     return False
 
 
+# Manual-draft tie matches (unlike legacy tournaments) have no organizer-
+# configured scoring target at all today - points_to_win/best_of are
+# hardcoded defaults (21, best-of-1), never something set at creation for
+# this format - and in practice a club tournament's individual matches may
+# genuinely be played to 11, 15, or 21 points depending on the day/court/
+# time available, not one fixed rule (owner report, 2026-08-21: "it might
+# be group stages at 21 and knockout at 11 or 15, but it's not
+# guaranteed"). _score_tie_match below accepts a completed game at ANY of
+# these common targets without the "invalid score, submit anyway?"
+# confirmation a single fixed target would otherwise force on every
+# non-21 finish - genuinely implausible entries (an evident typo) still
+# fall through to that same confirmation as a safety net.
+MANUAL_DRAFT_ACCEPTED_TARGETS = (11, 15, 21)
+
+
+def _is_valid_manual_draft_game_score(score_a, score_b):
+    return any(_is_valid_completed_game(score_a, score_b, t) for t in MANUAL_DRAFT_ACCEPTED_TARGETS)
+
+
 def _caller_claims(event):
     """Same pattern as matches lambda - see that file's comment for
     context. Present on /create-tournament and, as of manual-draft mode,
@@ -1370,6 +1389,12 @@ def _score_tie_match(item, tie, match_index, score_a, score_b, override, point_l
 
     best_of = item.get('best_of', 1)
     target = item.get('points_to_win', 21)
+    # Score flexibility (owner report, 2026-08-21) - see
+    # _is_valid_manual_draft_game_score above: a completed game at any of
+    # the common 11/15/21 targets is accepted directly, without forcing
+    # the caller through an explicit override confirmation first.
+    if not override and score_a != score_b and _is_valid_manual_draft_game_score(score_a, score_b):
+        override = True
     decided = _submit_game(match, score_a, score_b, best_of, target, override)
     if decided:
         total_a = sum(g['score_a'] for g in match['games'])
@@ -1722,6 +1747,31 @@ def move_squad_player(tournament_id, event, claims):
     return _response(200, item)
 
 
+def _rebuild_entity_after_substitution(entity, old_player_id, new_player_id, new_player):
+    """Swaps old_player_id for new_player_id inside a squad-pair/rep/
+    match-player entity's members + member_ratings, and regenerates its
+    display name from the (now different) member names - mirrors how
+    pick_tie_player and _build_cross_squad_group_stage build these names
+    in the first place. Never touches entity_id/player_id, which is the
+    synthetic pair/rep identity and doesn't change just because one of its
+    humans did. Returns False (no-op) if old_player_id isn't actually one
+    of this entity's members."""
+    members = entity.get('members')
+    if not members or old_player_id not in members:
+        return False
+    idx = members.index(old_player_id)
+    members[idx] = new_player_id
+    ratings = entity.get('member_ratings')
+    if ratings is not None and idx < len(ratings):
+        ratings[idx] = new_player.get('rating', 1000)
+    names = []
+    for pid in members:
+        p = players_table.get_item(Key={'player_id': pid}).get('Item')
+        names.append(p['name'] if p else pid)
+    entity['name'] = ' & '.join(names) if len(names) > 1 else names[0]
+    return True
+
+
 def substitute_squad_player(tournament_id, event, claims):
     """Organizer-only real substitution for a manual-draft squad: swaps a
     current squad member out for a brand-new replacement who isn't already
@@ -1773,37 +1823,69 @@ def substitute_squad_player(tournament_id, event, claims):
     if idx < len(squad.get('member_ratings', [])):
         squad['member_ratings'][idx] = new_player.get('rating', 1000)
 
-    # Any not-yet-played match slot where the outgoing player was already
-    # nominated is no longer valid - clear it back to None (leaving the
-    # slot picked but unplayed would let a player who has left the squad
-    # still take the court). Walk every tie this squad appears in.
-    cleared = 0
+    # Cross-squad group mode (owner report, 2026-08-21: a substituted-out
+    # player still showed up in the schedule, and still got credited the
+    # Elo for a match the replacement actually played): a squad's fixed
+    # `pairs` (set via set_squad_pairs) and the rep entities built from
+    # them (item['reps']) are snapshots taken once, at group-generation
+    # time - updating squad['members'] alone, as above, never reaches
+    # either of them, so the outgoing player kept appearing everywhere the
+    # schedule had already baked their name in. Both need the same swap.
+    cross_squad = bool(item.get('reps'))
+    if cross_squad:
+        for pair in squad.get('pairs') or []:
+            if old_player_id in pair:
+                pair[pair.index(old_player_id)] = new_player_id
+        for rep in (item.get('reps') or {}).values():
+            if rep.get('parent_squad_id') == squad_id:
+                _rebuild_entity_after_substitution(rep, old_player_id, new_player_id, new_player)
 
-    def clear_pending(tie):
-        nonlocal cleared
-        if squad_id not in (tie.get('squad_a'), tie.get('squad_b')):
+    # Any not-yet-played match slot where the outgoing player was already
+    # nominated needs fixing too. Regular squads-per-group mode still has
+    # a re-nomination step (pick_tie_player), so clearing the slot back to
+    # None there is correct, exactly as before. Cross-squad reps have NO
+    # re-nomination step at all - clearing would strand that match at
+    # "waiting on lineup" forever - so those get repaired in place with
+    # the same swap instead. _tie_side_leader_id resolves squad_a/squad_b
+    # correctly either way (it's a no-op passthrough for regular mode,
+    # and resolves a rep_id back to its parent squad for cross-squad).
+    cleared = 0
+    repaired = 0
+
+    def fix_pending(tie):
+        nonlocal cleared, repaired
+        if _tie_side_leader_id(item, tie.get('squad_a')) == squad_id:
+            side_key = 'player_a'
+        elif _tie_side_leader_id(item, tie.get('squad_b')) == squad_id:
+            side_key = 'player_b'
+        else:
             return
-        side_key = 'player_a' if tie.get('squad_a') == squad_id else 'player_b'
         for m in tie.get('matches', []):
             if m['played']:
                 continue
             entity = m.get(side_key)
-            if entity and old_player_id in entity.get('members', [entity.get('player_id')]):
+            if not entity or old_player_id not in entity.get('members', [entity.get('player_id')]):
+                continue
+            if cross_squad:
+                _rebuild_entity_after_substitution(entity, old_player_id, new_player_id, new_player)
+                repaired += 1
+            else:
                 m[side_key] = None
                 cleared += 1
 
     for tie in (item.get('group_stage') or {}).get('ties', []):
-        clear_pending(tie)
+        fix_pending(tie)
     for rnd in (item.get('knockout') or {}).get('rounds', []):
         for tie in rnd:
-            clear_pending(tie)
+            fix_pending(tie)
     tpm = (item.get('knockout') or {}).get('third_place_match')
     if tpm:
-        clear_pending(tpm)
+        fix_pending(tpm)
 
     item.setdefault('squad_substitutions', []).append({
         'squad_id': squad_id, 'old_player_id': old_player_id, 'new_player_id': new_player_id,
-        'at': datetime.now(timezone.utc).isoformat(), 'by': claims.get('email'), 'pending_slots_cleared': cleared,
+        'at': datetime.now(timezone.utc).isoformat(), 'by': claims.get('email'),
+        'pending_slots_cleared': cleared, 'pending_slots_repaired': repaired,
     })
 
     tournaments_table.put_item(Item=item)

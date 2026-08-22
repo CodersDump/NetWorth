@@ -334,6 +334,49 @@
 
 ## Done
 
+- ✅ 2026-08-22 (v1.57.0) — **Manual-mode tournaments: flexible game targets, winner-highlight fix,
+  cross-squad substitution repair, collapsible groups.** Four owner reports from the same live event.
+  (1) *Scoring flexibility*: "group stages are played with 21 and the knockout are played with 3 set
+  of 15 or 11 but it is not guaranteed" - manual-draft ties were hardcoded to `target=21`,
+  `best_of=1` (never read from the creation request, unlike legacy `create_tournament`), so any 11 or
+  15-point finish needed a manual per-submission "override" confirmation. New
+  `MANUAL_DRAFT_ACCEPTED_TARGETS = (11, 15, 21)` /  `_is_valid_manual_draft_game_score`, wired into
+  `_score_tie_match` so a decisive 11, 15, or 21-point finish is now accepted directly, no override
+  prompt, while non-standard scores still require the existing override safety net. **Not done**: true
+  best-of-3 (multiple games per match) is still not supported for this format - `best_of` remains
+  hardcoded to 1, so "3 sets" would need a separate follow-up if that's actually the ask for
+  knockout. (2) *Winner-highlight bug*: "few matches where the losing team is highlighted as the
+  winner" on the tie's banner card, though standings elsewhere were correct. `renderTieMatchRow`'s
+  winner computation used a raw point-sum comparison (`totalA > totalB`) instead of the backend's
+  authoritative `m.winner_id` - every other winner-highlight in the app (legacy fixtures) already
+  keys off a game-count/`winner_id` field, never a point sum. Fixed to
+  `m.winner_id === m.player_a.player_id`. (3) *Cross-squad substitution not propagating*: "Aman...was
+  replaced by...guddu...but it showcases aman still and also aman's profile got the elo update."
+  `substitute_squad_player` only ever touched `squad['members']`/`member_ratings` - for cross-squad
+  tournaments the fixed-pairs `squad['pairs']` and the `item['reps']` map (both frozen snapshots taken
+  at group-generation time) were never touched, and its pending-match side-detection compared
+  `tie['squad_a']` (a rep_id in cross-squad mode) directly against `squad_id`, which can never match,
+  so it silently no-op'd on every cross-squad tie. New `_rebuild_entity_after_substitution` repairs a
+  rep or match-player entity's `members`/`member_ratings`/`name` in place; `substitute_squad_player`
+  now also fixes `squad['pairs']` and every affected rep, and repairs (rather than blanking) every
+  not-yet-played match's player snapshot for cross-squad ties. **Known limitation**: this fixes future
+  substitutions and unplayed matches going forward only - a match already scored before the fix, whose
+  Elo was credited to the wrong (substituted-out) player, is not auto-corrected; needs manual
+  identification per-match if the owner wants it reversed. (4) *Collapsible groups*: "make the groups
+  banner sections collapsible so that i can see which player is under which group and then expand...to
+  start or enter the matches" - each group in `renderDraftScheduleView` is now a `<details class="card">`
+  with the group name + member list always visible in the `<summary>` (readable while collapsed) and
+  the standings table + tie matches in the collapsible body; open/closed state tracked in a
+  module-level `draftOpenGroups` Set (native `<details open>` state resets on every `innerHTML`
+  rebuild, so this survives poll-triggered and score-triggered re-renders). New/updated tests:
+  `/tmp/test_cross_squad_groups.py` grew from 23 to 31 checks (scoring flexibility x4, substitution
+  repair x4, including a real Elo-delta check confirming the *replacement* player is credited);
+  `/tmp/test_squad_roster_editing.py` updated for the new `pending_slots_repaired` audit field;
+  `/tmp/test_manual_draft_groups_ui.js` grew with 6 new checks covering collapsibility (one `<details>`
+  per group, member list visible in `<summary>`, collapsed by default, standings nested in the body,
+  toggling sets `open`, and open/closed state survives a `renderTournament` re-render). Full existing
+  backend (24 files) and Playwright (10 files) suites re-verified passing throughout.
+
 - ✅ 2026-08-21 (v1.56.0) — **Manual-mode tournaments: live point-by-point scoring for tie matches,
   photo/VS banner cards, and submit-path hardening.** Owner report during the live Rally Royale event:
   "Use live point-by-point scoring for tournament matches" (the +1 A/+1 B/Undo/Submit game/Split-screen

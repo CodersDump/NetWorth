@@ -8388,6 +8388,17 @@ let userPool = null;
       return squadId;
     }
 
+    // Which named groups are currently expanded in the collapsible group
+    // view below (owner request, 2026-08-21) - a plain Set rather than
+    // per-<details> DOM state, since the whole view gets rebuilt from an
+    // HTML string on every re-render (score submit, live-score poll tick),
+    // which would otherwise silently re-collapse everything the viewer had
+    // open. Persists for the page session; starts empty (all collapsed).
+    let draftOpenGroups = new Set();
+    function toggleDraftGroupOpen(name, detailsEl) {
+      if (detailsEl.open) draftOpenGroups.add(name); else draftOpenGroups.delete(name);
+    }
+
     function renderDraftScheduleView(t) {
       let html = '';
       if (t.status === 'completed' && t.champion_squad_id) {
@@ -8408,13 +8419,28 @@ let userPool = null;
         // Real separate groups (owner request, 2026-08-21): one section per
         // named group, each with its OWN standings table and only that
         // group's own ties - not a single combined table/list, since
-        // groups don't play each other.
+        // groups don't play each other. Made collapsible (owner request,
+        // 2026-08-21): with several groups' worth of match banners on one
+        // page, the group name + who's in it should be visible at a
+        // glance without having to scroll past every match card first -
+        // expanding a group is what reveals its standings and matches to
+        // actually score. draftOpenGroups tracks which groups are
+        // expanded across re-renders (native <details> state would
+        // otherwise reset to closed every time this view re-renders -
+        // after a score submit, or the live-score poll tick).
         Object.keys(groups).sort().forEach(name => {
-          html += `<div class="card" style="margin-top:10px;"><h4 style="font-size:14px;margin:0 0 4px;">Group ${escapeHtml(name)}</h4>` +
-            `<p class="card-sub" style="margin:0 0 8px;">${groups[name].map(sid => escapeHtml(draftSquadName(t, sid))).join(', ')}</p></div>`;
-          if (t.group_standings[name]) html += renderSquadStandingsTable(t.group_standings[name]);
+          const memberList = groups[name].map(sid => escapeHtml(draftSquadName(t, sid))).join(', ');
+          let body = '';
+          if (t.group_standings[name]) body += renderSquadStandingsTable(t.group_standings[name]);
           const groupTies = (t.group_stage.ties || []).filter(tie => tie.group === name);
-          if (groupTies.length) html += renderTieSection(`Group ${name} matches`, groupTies, t, 'group');
+          if (groupTies.length) body += renderTieSection(`Group ${name} matches`, groupTies, t, 'group');
+          const isOpen = draftOpenGroups.has(name);
+          html += `<details class="card" style="margin-top:10px;" ${isOpen ? 'open' : ''} ontoggle="toggleDraftGroupOpen('${name}', this)">
+            <summary style="cursor:pointer;font-size:14px;font-weight:600;">Group ${escapeHtml(name)}
+              <span class="card-sub" style="font-weight:normal;display:block;margin-top:2px;">${memberList}</span>
+            </summary>
+            <div style="margin-top:8px;">${body}</div>
+          </details>`;
         });
       } else {
         if (t.squad_standings && t.squad_standings.length) html += renderSquadStandingsTable(t.squad_standings);
@@ -8561,7 +8587,18 @@ let userPool = null;
           isFinal: false,
           scoreA: m.played ? totalA : gameScore(lastGame, 'a'),
           scoreB: m.played ? totalB : gameScore(lastGame, 'b'),
-          winner: m.played ? (totalA > totalB ? 'a' : 'b') : null,
+          // Bug fix (owner report, 2026-08-21: a match card highlighted the
+          // LOSING side as the winner, though standings elsewhere - which
+          // are built from the backend's own authoritative winner_id -
+          // were correct): this used to re-derive the winner from a raw
+          // point-total comparison (totalA > totalB), which is NOT always
+          // the same side m.winner_id names as the winner (best-of-N ties
+          // are decided by games WON, not aggregate points - and the two
+          // can disagree). Compare against the authoritative winner_id
+          // directly instead of recomputing it, matching how the legacy
+          // group/knockout view already does this (games_won_a >
+          // games_won_b, never a point-sum comparison).
+          winner: m.played ? (m.winner_id === m.player_a.player_id ? 'a' : 'b') : null,
         });
         let controls = '';
         if (m.played) {
