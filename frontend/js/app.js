@@ -8472,6 +8472,8 @@ let userPool = null;
           html += renderTieSection(label, rnd, t, 'knockout');
         });
         if (t.knockout.third_place_match) html += renderTieSection('Third place', [t.knockout.third_place_match], t, 'knockout');
+      } else if (t.projected_knockout) {
+        html += renderProjectedKnockout(t);
       }
       if (t.player_tournament_stats && t.player_tournament_stats.length) html += renderPlayerTournamentStatsTable(t.player_tournament_stats);
       // Organizer repair action: only while still in the group stage AND
@@ -8481,6 +8483,40 @@ let userPool = null;
       // leader/pool/auction process, since squads stay locked and untouched.
       if (t.status === 'group_stage') { html += renderSetSquadPairsPanel(t); html += renderRegenerateScheduleGroupPanel(t); }
       if (t.status !== 'completed') html += renderSquadRosterEditPanel(t, false); // substitution only - moving between squads no longer makes sense once ties exist
+      return html;
+    }
+
+    /** Owner report (2026-08-22, mid-event): "2 matches are pending in
+     * group stage but we clearly see the teams qualifying for semifinal,
+     * will that matchup not be released?" The real bracket only builds
+     * once every group tie is decided - this renders the backend's
+     * projected_knockout (see compute_projected_knockout) as a clearly
+     * labeled, read-only preview in the meantime, so nobody has to wait
+     * for the last couple of matches once the outcome already looks
+     * obvious from the standings table above. Deliberately plain (no
+     * score inputs, no pick-tie-player pickers) since these aren't real
+     * ties - just names, with an explicit "still pending / can still
+     * change" note, matching the backend's own caveat that point
+     * differential (part of the tiebreak) is unbounded. */
+    function renderProjectedKnockout(t) {
+      const pk = t.projected_knockout;
+      if (!pk || !pk.rounds || !pk.rounds.length) return '';
+      const pending = pk.pending_group_ties || 0;
+      let html = `<div class="card" style="margin-top:10px;border-style:dashed;">
+        <h4 style="font-size:14px;margin:0 0 4px;">Projected knockout matchup</h4>
+        <p class="card-sub" style="margin:0 0 8px;">Based on the current standings, with ${pending} group
+          match${pending === 1 ? '' : 'es'} still pending. This is a preview, not the final bracket - it
+          can still change depending on how those remaining matches go.</p>`;
+      pk.rounds[0].forEach(tie => {
+        const nameA = escapeHtml(draftSquadName(t, tie.squad_a));
+        if (tie.bye) {
+          html += `<div style="padding:4px 0;font-size:13px;"><strong>${nameA}</strong> <span class="card-sub">- projected bye</span></div>`;
+        } else {
+          const nameB = escapeHtml(draftSquadName(t, tie.squad_b));
+          html += `<div style="padding:4px 0;font-size:13px;">${nameA} <span class="card-sub">vs</span> ${nameB}</div>`;
+        }
+      });
+      html += '</div>';
       return html;
     }
 

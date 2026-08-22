@@ -1520,6 +1520,55 @@ def compute_squad_standings(item, squad_ids=None):
     return standings
 
 
+def compute_projected_knockout(item):
+    """Read-time-only preview of the knockout matchup, computed from the
+    group stage's CURRENT standings - shown while one or more group ties
+    are still undecided (owner report, 2026-08-22: "2 matches are pending
+    in group stage but we clearly see the teams qualifying for semifinal,
+    will that matchup not be released?"). The real item['knockout'] only
+    gets built once EVERY group tie is decided (see record_group_tie_score)
+    - this fills that gap with a clearly-labeled projection instead of
+    making everyone wait for the last couple of matches once the outcome
+    is already obvious from the table.
+
+    Never persisted (same "computed fresh on every read" convention as
+    squad_standings/player_tournament_stats), and entirely separate from
+    the real knockout - no tie objects are created, nothing here is ever
+    scored. compute_squad_standings only credits DECIDED ties, so a squad
+    with pending ties gets no partial credit either way - this is exactly
+    the same ranking a viewer would read off the standings table right
+    now. It's still just a projection, not a guarantee: point
+    differential (part of the tiebreak) is unbounded, so a squad's
+    position here could still change depending on how the remaining
+    matches go - the frontend must label this "projected", never final.
+
+    Scoped to the simple case only: real separate named groups
+    (group_stage['groups']) need advance_per_group + tiebreak-injection
+    logic (_inject_group_tiebreakers_if_needed/
+    _advance_squads_to_knockout_from_groups) to know who's even eligible
+    to advance - deliberately not replicated here, so this returns None
+    for that case rather than guessing at a shape that could turn out
+    wrong. Also None once there's nothing left pending (the real knockout
+    is either already built or about to be on the next score submission)."""
+    group_stage = item.get('group_stage') or {}
+    if group_stage.get('groups'):
+        return None
+    ties = group_stage.get('ties', [])
+    if not ties:
+        return None
+    pending_ties = [t for t in ties if not t.get('decided')]
+    if not pending_ties:
+        return None
+
+    standings = compute_squad_standings(item)
+    seeded_squad_ids = [s['squad_id'] for s in standings]
+    matches_per_tie = int(item.get('manual_draft', {}).get('knockout_matches_per_tie', 1))
+    return {
+        'rounds': [build_knockout_tie_round(seeded_squad_ids, matches_per_tie)],
+        'pending_group_ties': len(pending_ties),
+    }
+
+
 def compute_squad_standings_by_parent(item):
     """Cross-squad group mode sibling of compute_squad_standings: rolls
     each real squad's several rep entities (one fixed pair/player per
@@ -2567,6 +2616,10 @@ def get_tournament(tournament_id):
             item['group_standings'] = {name: compute_squad_standings(item, squad_ids=members)
                                         for name, members in groups.items()}
         item['player_tournament_stats'] = compute_player_tournament_scores(item)
+        if item.get('status') == 'group_stage':
+            projected = compute_projected_knockout(item)
+            if projected:
+                item['projected_knockout'] = projected
     if item.get('format') == 'manual_draft':
         item = _redact_pool_auction_detail(item)
     return _response(200, item)
