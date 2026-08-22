@@ -13,7 +13,9 @@
 
 - `[feat] L` **Manual-mode tournaments (leaders + pool draft/auction) — Phases A-D all done, feature
   complete. Configurable best-of-3 + real visual bracket added 2026-08-22 (v1.58.0, see Done); a
-  projected-knockout preview while group ties are still pending added 2026-08-22 (v1.59.0, see Done).**
+  projected-knockout preview while group ties are still pending added 2026-08-22 (v1.59.0, see Done);
+  the same projection extended into the bracket view, plus a per-group advancing/contested panel for
+  real named groups, added 2026-08-22 (v1.60.0, see Done).**
   Full design: organizer names leaders, splits every player into ranked pools (drag/tap board -
   **done**), leaders draft squads via a live organizer-paced point-budget auction (**done**), then a
   squad-vs-squad group stage (round robin, N individual matches per tie) and knockout (final/semi/3rd-
@@ -335,6 +337,47 @@
 ---
 
 ## Done
+
+- ✅ 2026-08-22 (v1.60.0) — **Manual-mode tournaments: bracket-view group panel + projected
+  pairing in the SVG itself, for real named groups.** Immediate owner follow-up on v1.59.0: "will the
+  v1.59.0 version not show the probable semifinal matches in table or bracket section in staging?" →
+  confirmed the projection only rendered in Table view, not Bracket → owner: "add it in the bracket view
+  as well and the bracket only shows knockout. so can't we have the groups and their teams listed inside
+  each and the ones who [advance] to be projected to the knockout stage as well." Turned out Rally Royale
+  uses real separate named groups (confirmed by the owner checking their screen), which v1.59.0's
+  `compute_projected_knockout` deliberately didn't cover (it only handles the flat single-round-robin
+  case). New `compute_group_stage_projection(item)`: per named group, returns that group's own standings
+  (`compute_squad_standings` scoped to the group, exactly what `group_standings` already shows in Table
+  view), `advancing_ids` (currently-safe top `advance_per_group` squads), `contested_ids` (populated only
+  when the group's standings are EXACTLY level - both `ties_won` and `point_diff` - right at the
+  `advance_per_group` cutoff, mirroring the exact same boundary check
+  `_inject_group_tiebreakers_if_needed` uses for real, rather than guessing who wins a tie the real system
+  would resolve with an extra match), and `pending_ties` (that group's own undecided-tie count).
+  **Deliberately does NOT attempt a projected knockout PAIRING for this case** (unlike the flat
+  round-robin's `projected_knockout`): the real advancement path
+  (`_advance_squads_to_knockout_from_groups`) draws the knockout pairing among qualifiers RANDOMLY (with
+  a same-group same-round-1 avoidance swap), so even once every qualifier is 100% known there is no
+  single deterministic matchup to show - showing one anyway would be actively misleading. Attached to
+  `get_tournament` as `item['group_stage_projection']` (read-time-only) whenever `status=='group_stage'`
+  and real named groups exist; `projected_knockout` and `group_stage_projection` are mutually exclusive
+  per tournament. Frontend: new `#bracket-groups-panel` div (index.html, sits above `#bracket-svg`,
+  toggled together with it by `applyTournamentViewMode`) populated by new `renderDraftBracketGroupsPanel`
+  — one card per group listing every squad, advancing ones bold + "→ knockout", the contested boundary
+  pair shown in italics + "(contesting last spot)", a pending-match-count note per group, and a plain
+  disclaimer that the real pairing is drawn randomly once groups finish. Separately, `renderDraftBracketView`
+  now also draws the flat round-robin case's `projected_knockout` directly into the SVG (one dashed
+  preview box per projected tie, labeled "Projected (preview - N group matches still pending)") instead
+  of just saying "No knockout bracket for this tournament yet" — this part *is* deterministic, so it gets
+  drawn as a real (if dashed) box rather than a separate panel. New `/tmp/test_group_stage_projection.py`
+  (6 checks: appears with real groups present, one entry per group, correctly separates safely-advancing
+  from a genuinely-tied contested pair with the right pending-tie count, a clean non-tied boundary group
+  shows no contested_ids, each group's `squads` field is the real per-group standings, disappears once
+  status leaves `group_stage`). New `/tmp/test_bracket_groups_panel_ui.js` (Playwright: groups panel shows
+  in bracket mode with both groups/all 6 squad names/advancing markers/the contested flag/the pending-count
+  note, hides again in table mode, the flat round-robin case draws its projected pairing straight into the
+  SVG instead of "no bracket yet", and the groups panel correctly stays empty for that flat case). Full
+  existing backend (29 files) and Playwright (13 files, including the two new ones) suites re-verified
+  passing throughout.
 
 - ✅ 2026-08-22 (v1.59.0) — **Manual-mode tournaments: projected knockout matchup while group
   ties are still pending.** Live-event owner report: "2 matches are pending in group stage but we
