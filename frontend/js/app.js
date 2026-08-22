@@ -8155,8 +8155,13 @@ let userPool = null;
       const squads = t.squads || {};
       let html = '<div class="card" style="margin-top:10px;"><h4 style="font-size:14px;margin:0 0 6px;">Squads</h4>';
       html += '<p class="card-sub" style="margin:0 0 8px;">The auction is complete.</p>';
-      Object.entries(squads).forEach(([, squad]) => {
-        html += `<div style="margin-bottom:10px;"><strong>${escapeHtml(squad.name)}</strong><br>${(squad.members || []).map(pid => escapeHtml(draftPlayerName(pid))).join(', ')}</div>`;
+      Object.entries(squads).forEach(([sid, squad]) => {
+        const key = `review:${sid}`;
+        const isOpen = draftOpenSquadSections.has(key);
+        html += `<details style="margin-bottom:6px;" ${isOpen ? 'open' : ''} ontoggle="toggleDraftSquadSection('${key}', this)">
+          <summary style="cursor:pointer;font-size:13px;font-weight:600;">${escapeHtml(squad.name)}</summary>
+          <div style="margin-top:4px;font-size:13px;">${(squad.members || []).map(pid => escapeHtml(draftPlayerName(pid))).join(', ')}</div>
+        </details>`;
       });
       html += `<button type="button" onclick="generateDraftSchedule('${t.tournament_id}')">Generate schedule</button>
         <div id="draft-generate-schedule-status" class="result"></div>`;
@@ -8195,11 +8200,16 @@ let userPool = null;
         const squad = squads[sid];
         const members = squad.members || [];
         const currentPairs = squad.pairs || [];
-        html += `<div style="margin-bottom:10px;padding-bottom:8px;border-bottom:1px solid var(--border);">
-          <strong style="font-size:13px;">${escapeHtml(squad.name)}</strong>`;
-        if (currentPairs.length === numGroups) {
-          html += `<div class="card-sub" style="margin:2px 0 4px;">Currently set: ${currentPairs.map(p => p.map(pid => escapeHtml(draftPlayerName(pid))).join(' & ')).join(', ')}</div>`;
-        }
+        const pairsSummary = currentPairs.length === numGroups
+          ? currentPairs.map(p => p.map(pid => escapeHtml(draftPlayerName(pid))).join(' & ')).join(', ')
+          : 'not set yet';
+        const key = `pairs:${sid}`;
+        const isOpen = draftOpenSquadSections.has(key);
+        html += `<details style="margin-bottom:10px;padding-bottom:8px;border-bottom:1px solid var(--border);" ${isOpen ? 'open' : ''} ontoggle="toggleDraftSquadSection('${key}', this)">
+          <summary style="cursor:pointer;font-size:13px;font-weight:600;">${escapeHtml(squad.name)}
+            <span class="card-sub" style="font-weight:normal;">- ${pairsSummary}</span>
+          </summary>
+          <div style="margin-top:6px;">`;
         for (let g = 0; g < numGroups; g++) {
           const current = currentPairs[g] || [];
           html += `<div style="display:flex;gap:4px;align-items:center;margin:2px 0;font-size:12px;flex-wrap:wrap;">
@@ -8214,7 +8224,8 @@ let userPool = null;
         }
         html += `<button type="button" class="secondary" onclick="saveSquadPairs('${t.tournament_id}','${sid}',${numGroups},${slotsPerPair})">Save ${escapeHtml(squad.name)}'s pairs</button>
           <div id="pairset-status-${sid}" class="result"></div>
-        </div>`;
+          </div>
+        </details>`;
       });
 
       html += `<button type="button" onclick="generateCrossSquadGroups('${t.tournament_id}','${t.status}')">Generate groups (random, one pair per squad in each)</button>
@@ -8331,6 +8342,17 @@ let userPool = null;
             <span>&rarr;</span>
             <select id="squad-sub-new">${freeAgentOptions || '<option value="">- no eligible replacement players -</option>'}</select>
             <button type="button" class="secondary" onclick="substituteSquadPlayer('${t.tournament_id}')">Substitute</button>
+          </div>
+          <label style="display:inline-block;margin-top:6px;font-size:12px;">
+            <input type="checkbox" id="squad-sub-new-toggle" onchange="toggleSquadSubNewPlayerFields(this.checked)"> This person isn't registered yet - add them now
+          </label>
+          <div id="squad-sub-new-register-fields" style="display:none;margin-top:4px;gap:6px;flex-wrap:wrap;align-items:center;">
+            <input type="text" id="squad-sub-new-name" placeholder="New player's name" style="width:160px;">
+            <select id="squad-sub-new-skill">
+              <option value="beginner">Beginner</option>
+              <option value="intermediate" selected>Intermediate</option>
+              <option value="advanced">Advanced</option>
+            </select>
           </div>`;
       }
       html += '<div id="squad-roster-edit-status" class="result"></div></div>';
@@ -8368,19 +8390,59 @@ let userPool = null;
       renderTournament(data);
     }
 
+    function toggleSquadSubNewPlayerFields(useNew) {
+      const fieldsEl = document.getElementById('squad-sub-new-register-fields');
+      const selectEl = document.getElementById('squad-sub-new');
+      if (fieldsEl) fieldsEl.style.display = useNew ? 'flex' : 'none';
+      if (selectEl) selectEl.disabled = useNew;
+    }
+
+    /** Owner report (2026-08-22, live event): "i can add an existing player
+     * as a substitute but not a new person like it can be done in other
+     * formats" - mirrors the legacy substitution flow's own
+     * #sub_new_player_toggle pattern (see the submit-substitution-btn
+     * listener above): register the brand-new player via the plain
+     * POST /register (no group_id needed - substitute_squad_player's own
+     * validation only requires the replacement not already be on any
+     * squad, not that they're a group member), then substitute with the
+     * freshly-issued player_id exactly as if they'd been picked from the
+     * free-agent dropdown. */
     async function substituteSquadPlayer(tournamentId) {
       const playerSel = document.getElementById('squad-sub-player');
       const newSel = document.getElementById('squad-sub-new');
       const statusEl = document.getElementById('squad-roster-edit-status');
+      const useNewToggle = document.getElementById('squad-sub-new-toggle');
+      const isNewPlayer = !!(useNewToggle && useNewToggle.checked);
       if (!playerSel || !playerSel.value) { if (statusEl) statusEl.textContent = 'Pick a player to substitute out.'; return; }
-      if (!newSel || !newSel.value) { if (statusEl) statusEl.textContent = 'Pick a replacement player.'; return; }
       const squadId = playerSel.selectedOptions[0].dataset.squad;
-      const ok = await nwConfirm(`Substitute ${draftPlayerName(playerSel.value)} out for ${draftPlayerName(newSel.value)}? Any not-yet-played match they were already picked for will need a new lineup pick.`);
+
+      let newPlayerId, newPlayerLabel;
+      if (isNewPlayer) {
+        const nameEl = document.getElementById('squad-sub-new-name');
+        const skillEl = document.getElementById('squad-sub-new-skill');
+        const newName = nameEl ? nameEl.value.trim() : '';
+        if (!newName) { if (statusEl) statusEl.textContent = "Enter the new player's name."; return; }
+        if (statusEl) statusEl.textContent = 'Registering new player...';
+        const { res: regRes, data: regData, error: regError } = await authedFetch(`${API_BASE_URL}/register`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: newName, skill_level: skillEl ? skillEl.value : 'intermediate' })
+        });
+        if (!regRes.ok) { if (statusEl) statusEl.textContent = `Error registering: ${regError}`; nwAlert(regError || (regData && regData.error) || 'Could not register that player'); return; }
+        newPlayerId = regData.player_id;
+        newPlayerLabel = newName;
+        await loadPlayers();
+      } else {
+        if (!newSel || !newSel.value) { if (statusEl) statusEl.textContent = 'Pick a replacement player, or check the box to add a new one.'; return; }
+        newPlayerId = newSel.value;
+        newPlayerLabel = draftPlayerName(newPlayerId);
+      }
+
+      const ok = await nwConfirm(`Substitute ${draftPlayerName(playerSel.value)} out for ${newPlayerLabel}? Any not-yet-played match they were already picked for will need a new lineup pick.`);
       if (!ok) return;
       if (statusEl) statusEl.textContent = 'Substituting...';
       const { res, data, error } = await authedFetch(`${API_BASE_URL}/tournament-draft/${tournamentId}/substitute-squad-player`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ squad_id: squadId, old_player_id: playerSel.value, new_player_id: newSel.value })
+        body: JSON.stringify({ squad_id: squadId, old_player_id: playerSel.value, new_player_id: newPlayerId })
       });
       if (!res.ok) { if (statusEl) statusEl.textContent = `Error: ${error}`; nwAlert(error || (data && data.error) || 'Could not substitute that player'); return; }
       renderTournament(data);
@@ -8423,6 +8485,19 @@ let userPool = null;
       if (detailsEl.open) draftOpenGroups.add(name); else draftOpenGroups.delete(name);
     }
 
+    // Owner request (2026-08-22, live event): "make other sections also
+    // collapsible, like the pairing sections under each squad." Same
+    // persists-across-re-renders Set pattern as draftOpenGroups above, but
+    // a SEPARATE Set/key namespace - a squad_id could otherwise collide
+    // with a group name ("A"), and the squads review panel and the pairing
+    // panel each need their own independent open/closed state per squad
+    // (keys are prefixed 'review:'/'pairs:' below), not one shared with
+    // named groups.
+    let draftOpenSquadSections = new Set();
+    function toggleDraftSquadSection(key, detailsEl) {
+      if (detailsEl.open) draftOpenSquadSections.add(key); else draftOpenSquadSections.delete(key);
+    }
+
     function renderDraftScheduleView(t) {
       let html = '';
       if (t.status === 'completed' && t.champion_squad_id) {
@@ -8455,7 +8530,7 @@ let userPool = null;
         Object.keys(groups).sort().forEach(name => {
           const memberList = groups[name].map(sid => escapeHtml(draftSquadName(t, sid))).join(', ');
           let body = '';
-          if (t.group_standings[name]) body += renderSquadStandingsTable(t.group_standings[name]);
+          if (t.group_standings[name]) body += renderSquadStandingsTable(t.group_standings[name], t.group_stage_projection && t.group_stage_projection[name]);
           const groupTies = (t.group_stage.ties || []).filter(tie => tie.group === name);
           if (groupTies.length) body += renderTieSection(`Group ${name} matches`, groupTies, t, 'group');
           const isOpen = draftOpenGroups.has(name);
@@ -8479,7 +8554,7 @@ let userPool = null;
       } else if (t.projected_knockout) {
         html += renderProjectedKnockout(t);
       }
-      if (t.player_tournament_stats && t.player_tournament_stats.length) html += renderPlayerTournamentStatsTable(t.player_tournament_stats);
+      if (t.player_tournament_stats && t.player_tournament_stats.length) html += renderPlayerTournamentStatsTable(t.player_tournament_stats, t);
       // Organizer repair action: only while still in the group stage AND
       // nothing's been played yet (server re-checks both) - lets a
       // misconfiguration (e.g. num_groups that leaves a group with only 1
@@ -8487,6 +8562,17 @@ let userPool = null;
       // leader/pool/auction process, since squads stay locked and untouched.
       if (t.status === 'group_stage') { html += renderSetSquadPairsPanel(t); html += renderRegenerateScheduleGroupPanel(t); }
       if (t.status !== 'completed') html += renderSquadRosterEditPanel(t, false); // substitution only - moving between squads no longer makes sense once ties exist
+      // Owner request (2026-08-22): "need a way to share the current state
+      // as well ... shareable to insta or somewhere" - unlike the legacy
+      // downloadTournamentImage() this is available at ANY schedule status
+      // (group stage in progress, knockout in progress, or completed), not
+      // just once the tournament is over, since a live event wants to
+      // share progress as it happens.
+      if (hasAnyTies || (t.knockout && t.knockout.rounds)) {
+        html += `<div class="card" style="margin-top:10px;text-align:center;">
+          <button type="button" onclick="downloadDraftShareImage()">Download share image</button>
+        </div>`;
+      }
       return html;
     }
 
@@ -8566,28 +8652,211 @@ let userPool = null;
       renderTournament(data);
     }
 
-    function renderSquadStandingsTable(standings) {
+    /** `projection` is optional - one entry from t.group_stage_projection
+     * (see compute_group_stage_projection), passed only for a real named
+     * group's own standings table. Owner report (2026-08-22, live event):
+     * the Table view never showed who's projected to advance at all - only
+     * the Bracket view's groups panel did - so this adds a "Status" column
+     * here too, using the exact same advancing_ids/contested_ids/
+     * pending_ties the bracket panel already renders. Undefined/omitted for
+     * the plain combined standings table (single round-robin, or a legacy
+     * tournament), which shows no Status column - unchanged from before. */
+    function renderSquadStandingsTable(standings, projection) {
       let html = '<div class="card" style="margin-top:10px;"><h4 style="font-size:14px;margin:0 0 6px;">Squad standings</h4>';
       html += '<table style="width:100%;font-size:13px;border-collapse:collapse;"><thead><tr>' +
-        '<th style="text-align:left;">Squad</th><th>Ties won</th><th>Ties lost</th><th>Point diff</th></tr></thead><tbody>';
+        `<th style="text-align:left;">Squad</th><th>Ties won</th><th>Ties lost</th><th>Point diff</th>${projection ? '<th>Status</th>' : ''}</tr></thead><tbody>`;
       standings.forEach(s => {
+        let statusCell = '';
+        if (projection) {
+          const advancing = (projection.advancing_ids || []).includes(s.squad_id);
+          const contested = (projection.contested_ids || []).includes(s.squad_id);
+          const label = advancing ? '&rarr; Knockout' : (contested ? 'Contesting last spot' : '');
+          const style = advancing ? 'color:var(--court);font-weight:600;' : (contested ? 'font-style:italic;color:var(--text-secondary);' : 'color:var(--text-secondary);');
+          statusCell = `<td style="text-align:center;font-size:12px;${style}">${label}</td>`;
+        }
         html += `<tr><td>${escapeHtml(s.name)}</td><td style="text-align:center;">${s.ties_won}</td>` +
-          `<td style="text-align:center;">${s.ties_lost}</td><td style="text-align:center;">${s.point_diff > 0 ? '+' : ''}${s.point_diff}</td></tr>`;
+          `<td style="text-align:center;">${s.ties_lost}</td><td style="text-align:center;">${s.point_diff > 0 ? '+' : ''}${s.point_diff}</td>${statusCell}</tr>`;
       });
-      html += '</tbody></table></div>';
+      html += '</tbody></table>';
+      if (projection && projection.pending_ties > 0) {
+        html += `<p class="card-sub" style="margin:6px 0 0;">${projection.pending_ties} match${projection.pending_ties === 1 ? '' : 'es'} still pending in this group - projected from current standings, can still shift for anyone not yet locked in.</p>`;
+      }
+      html += '</div>';
       return html;
     }
 
-    function renderPlayerTournamentStatsTable(stats) {
-      let html = '<div class="card" style="margin-top:10px;"><h4 style="font-size:14px;margin:0 0 6px;">Player leaderboard (this tournament only, not Elo)</h4>';
-      html += '<table style="width:100%;font-size:13px;border-collapse:collapse;"><thead><tr>' +
-        '<th style="text-align:left;">Player</th><th>Played</th><th>W</th><th>L</th><th>Point diff</th></tr></thead><tbody>';
-      stats.forEach(s => {
-        html += `<tr><td>${escapeHtml(s.name)}</td><td style="text-align:center;">${s.matches_played}</td>` +
-          `<td style="text-align:center;">${s.wins}</td><td style="text-align:center;">${s.losses}</td>` +
-          `<td style="text-align:center;">${s.point_diff > 0 ? '+' : ''}${s.point_diff}</td></tr>`;
+    /** Owner request (2026-08-22): "rather can we have a teams banner witht
+     *  the pairs like how banners are their for each match... each player's
+     *  profile and banner image being used" - so this is no longer a plain
+     *  table. Each squad gets its own card, its own banner background (the
+     *  same teamBanner() a match card uses), and its members shown as
+     *  photo avatars via the same vsPlayerVisual/vsAvatarHtml helpers a
+     *  match banner uses - just grouped by squad and with per-player
+     *  Played/W/L/diff stacked under the name instead of a VS opponent. */
+    function renderPlayerTournamentStatsTable(stats, t) {
+      const squads = (t && t.squads) || {};
+      const statsByPid = {};
+      stats.forEach(s => { statsByPid[s.player_id] = s; });
+
+      // Map every player back to their squad - used only to label each
+      // pair's row and to know which pairs belong to a placement squad
+      // (see below), NOT to group rows into squad sections. Owner
+      // correction (2026-08-22, after seeing squads rendered as separate
+      // boxed sections): "i don't need the squads grouped. rather it
+      // should be mixed as each pair performed differently ... 16 rows as
+      // 16 pairs competed where 4 of each squad" - this is a single flat,
+      // performance-ranked list of pairs across the WHOLE tournament, each
+      // row just carrying its own squad name as a label.
+      const squadOf = {};
+      Object.keys(squads).forEach(sid => {
+        (squads[sid].members || []).forEach(pid => { squadOf[pid] = sid; });
       });
-      html += '</tbody></table></div>';
+
+      // ---- derive each squad's real playing pairs from match history ----
+      // Owner clarification (2026-08-22): "we have the partners already
+      // set that's why we had the group matches ... you can see the ones
+      // with the same points are the partners." Doubles partners aren't a
+      // separately-stored field, but every match a pair plays together
+      // credits BOTH members the identical result (see
+      // compute_player_tournament_scores), so tallying which two squad
+      // members have actually appeared together as a match side
+      // (m.player_a/b.members) and taking each player's most-frequent
+      // co-player reliably reconstructs the real pairs. Falls back to a
+      // solo "pair of one" for anyone with no played match yet, or for a
+      // singles tournament where a match side never carries 2 members.
+      const allMatches = [];
+      ((t.group_stage && t.group_stage.ties) || []).forEach(tie => allMatches.push(...(tie.matches || [])));
+      ((t.knockout && t.knockout.rounds) || []).forEach(rnd => rnd.forEach(tie => allMatches.push(...(tie.matches || []))));
+      if (t.knockout && t.knockout.third_place_match) allMatches.push(...(t.knockout.third_place_match.matches || []));
+
+      const pairTally = {}; // "p1|p2" (sorted) -> times played together
+      const tallyPair = (side) => {
+        if (side && Array.isArray(side.members) && side.members.length === 2) {
+          const key = side.members.slice().sort().join('|');
+          pairTally[key] = (pairTally[key] || 0) + 1;
+        }
+      };
+      allMatches.forEach(m => { tallyPair(m.player_a); tallyPair(m.player_b); });
+
+      const bestPartner = {}; // pid -> {partner, count}
+      Object.keys(pairTally).forEach(key => {
+        const [a, b] = key.split('|');
+        const c = pairTally[key];
+        if (!bestPartner[a] || bestPartner[a].count < c) bestPartner[a] = { partner: b, count: c };
+        if (!bestPartner[b] || bestPartner[b].count < c) bestPartner[b] = { partner: a, count: c };
+      });
+      const used = new Set();
+      const allGroups = [];
+      stats.forEach(s => {
+        const pid = s.player_id;
+        if (used.has(pid)) return;
+        const bp = bestPartner[pid];
+        if (bp && bestPartner[bp.partner] && bestPartner[bp.partner].partner === pid && !used.has(bp.partner) && statsByPid[bp.partner]) {
+          allGroups.push([pid, bp.partner]); used.add(pid); used.add(bp.partner);
+        } else {
+          allGroups.push([pid]); used.add(pid);
+        }
+      });
+
+      // ---- champion/runner-up/third-place, and which specific pair played
+      // the deciding match (that specific row gets its own stronger
+      // highlight; every OTHER pair from that same placement squad still
+      // gets a thinner tier-colored edge, since "the entire squad" also
+      // placed, per the owner's earlier clarification) ----
+      const squadSideField = (tie, sid) => (tie.squad_a === sid ? 'player_a' : (tie.squad_b === sid ? 'player_b' : null));
+      const decidingPairKey = (tie, sid) => {
+        const field = squadSideField(tie, sid);
+        if (!field) return null;
+        const played = (tie.matches || []).filter(m => m.played);
+        for (let i = played.length - 1; i >= 0; i--) {
+          const side = played[i][field];
+          if (side && Array.isArray(side.members)) return side.members.slice().sort().join('|');
+          if (side && side.player_id) return side.player_id;
+        }
+        return null;
+      };
+      const placements = {}; // sid -> {tier: 'gold'|'silver'|'bronze', pairKey}
+      if (t.status === 'completed' && t.knockout && t.knockout.rounds && t.knockout.rounds.length) {
+        const finalTie = t.knockout.rounds[t.knockout.rounds.length - 1][0];
+        if (finalTie && !finalTie.bye && finalTie.decided && finalTie.winner_squad_id) {
+          const champSid = finalTie.winner_squad_id;
+          const runnerSid = champSid === finalTie.squad_a ? finalTie.squad_b : finalTie.squad_a;
+          placements[champSid] = { tier: 'gold', pairKey: decidingPairKey(finalTie, champSid) };
+          if (runnerSid) placements[runnerSid] = { tier: 'silver', pairKey: decidingPairKey(finalTie, runnerSid) };
+        }
+        const tp = t.knockout.third_place_match;
+        if (tp && !tp.bye && tp.decided && tp.winner_squad_id) {
+          placements[tp.winner_squad_id] = { tier: 'bronze', pairKey: decidingPairKey(tp, tp.winner_squad_id) };
+        }
+      }
+      const TIER_COLOR = { gold: '#F5C542', silver: '#C7CCD1', bronze: '#CD7F32' };
+      const TIER_EMOJI = { gold: '🥇', silver: '🥈', bronze: '🥉' };
+
+      // ---- one row per pair, ranked by performance across the whole
+      // tournament (wins, then point diff, then matches played) - NOT
+      // grouped or sorted by squad ----
+      const rows = allGroups.map(group => {
+        const memberStats = group.map(pid => statsByPid[pid]).filter(Boolean);
+        if (!memberStats.length) return null;
+        const sid = squadOf[group[0]] || null;
+        const pairKey = group.slice().sort().join('|');
+        const placement = sid ? placements[sid] : null;
+        return { group, memberStats, sid, squadName: sid ? draftSquadName(t, sid) : '', placement, isDecidingPair: !!(placement && placement.pairKey === pairKey) };
+      }).filter(Boolean);
+      rows.sort((r1, r2) => {
+        const s1 = r1.memberStats[0], s2 = r2.memberStats[0];
+        if (s2.wins !== s1.wins) return s2.wins - s1.wins;
+        if (s2.point_diff !== s1.point_diff) return s2.point_diff - s1.point_diff;
+        if (s2.matches_played !== s1.matches_played) return s2.matches_played - s1.matches_played;
+        return r1.memberStats.map(s => s.name).join(' ').localeCompare(r2.memberStats.map(s => s.name).join(' '));
+      });
+
+      // Owner report (2026-08-22): the previous version's two avatars used
+      // a negative margin to overlap - "the profile pic you used is good
+      // but it is getting overlapped." Plain adjacent circles with a small
+      // gap here, no overlap.
+      const rowHtml = (row) => {
+        const { memberStats, squadName, placement, isDecidingPair } = row;
+        const visuals = memberStats.map(s => {
+          const v = vsPlayerVisual(s.player_id, t.card_snapshot);
+          return s.name ? { ...v, name: s.name } : v;
+        });
+        const s0 = memberStats[0];
+        const banner = teamBanner(visuals);
+        const avatarsHtml = visuals.map(v => {
+          const bg = v.avatarUrl ? `background-image:url('${v.avatarUrl}');` : '';
+          return `<div style="width:30px;height:30px;flex:0 0 auto;border-radius:50%;border:2px solid rgba(255,255,255,.85);
+            background-size:cover;background-position:center;box-shadow:0 1px 5px rgba(0,0,0,.5);
+            display:flex;align-items:center;justify-content:center;font-size:13px;${bg}">${v.avatarUrl ? '' : escapeHtml(v.avatarEmoji)}</div>`;
+        }).join('');
+        const namesText = visuals.map(v => escapeHtml(v.name)).join(' &amp; ');
+        const tierColor = placement ? TIER_COLOR[placement.tier] : null;
+        // The exact pair that played the deciding match gets a full glow
+        // ring; every other pair from that same placed squad still gets a
+        // thinner tier-colored edge, so the squad's placement reads even
+        // on rows that weren't the ones on court for the final.
+        const ringStyle = isDecidingPair
+          ? `box-shadow:0 0 0 2px ${tierColor},0 0 10px ${tierColor}99;`
+          : (placement ? `box-shadow:inset 3px 0 0 0 ${tierColor};` : '');
+        const medal = isDecidingPair ? `${TIER_EMOJI[placement.tier]} ` : '';
+        return `<div style="position:relative;border-radius:8px;overflow:hidden;margin-top:5px;${ringStyle}">
+          <div style="position:absolute;inset:0;background:${banner};"></div>
+          <div style="position:absolute;inset:0;background:rgba(0,0,0,.48);"></div>
+          <div style="position:relative;display:flex;align-items:center;gap:8px;padding:6px 10px;">
+            <div style="display:flex;gap:4px;flex:0 0 auto;">${avatarsHtml}</div>
+            <div style="min-width:0;flex:1;color:#fff;font-size:12.5px;font-weight:600;text-shadow:0 1px 3px rgba(0,0,0,.9);
+              white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${medal}${namesText}</div>
+            <div style="text-align:right;flex:0 0 auto;">
+              ${squadName ? `<div style="font-size:10px;color:#c9d4ce;text-shadow:0 1px 3px rgba(0,0,0,.9);white-space:nowrap;">${escapeHtml(squadName)}</div>` : ''}
+              <div style="font-size:11.5px;color:#fff;text-shadow:0 1px 3px rgba(0,0,0,.9);white-space:nowrap;">${s0.matches_played}P &middot; ${s0.wins}-${s0.losses} &middot; ${s0.point_diff > 0 ? '+' : ''}${s0.point_diff}</div>
+            </div>
+          </div>
+        </div>`;
+      };
+
+      let html = '<div class="card" style="margin-top:10px;"><h4 style="font-size:14px;margin:0 0 6px;">Player leaderboard (this tournament only, not Elo)</h4>';
+      html += rows.map(rowHtml).join('');
+      html += '</div>';
       return html;
     }
 
@@ -9844,6 +10113,205 @@ let userPool = null;
       ctx.arcTo(x, y + h, x, y, r);
       ctx.arcTo(x, y, x + w, y, r);
       ctx.closePath();
+    }
+
+    /** Sibling of downloadTournamentImage() for manual-draft tournaments -
+     *  works at ANY schedule status (group stage in progress, knockout in
+     *  progress, or completed), not just 'completed', and draws squad
+     *  standings + the current/projected knockout matchup rather than the
+     *  legacy final/semifinal match cards (owner request, 2026-08-22: "need
+     *  a way to share these current state ... shareable to insta"). */
+    async function downloadDraftShareImage() {
+      const t = currentTournamentData;
+      if (!t || t.format !== 'manual_draft' || !(t.group_stage || (t.knockout && t.knockout.rounds))) {
+        nwAlert('Nothing to share yet - the schedule has not been generated.');
+        return;
+      }
+
+      const loadImg = (src) => new Promise((res) => {
+        if (!src) { res(null); return; }
+        const img = new Image();
+        img.crossOrigin = 'anonymous';
+        img.onload = () => res(img);
+        img.onerror = () => res(null);
+        img.src = src;
+      });
+
+      // ---- gather standings blocks (real named groups, else flat) ----
+      const groups = t.group_stage && t.group_stage.groups;
+      const standingsBlocks = [];
+      if (groups) {
+        Object.keys(groups).sort().forEach(name => {
+          const standings = (t.group_standings && t.group_standings[name]) || [];
+          const proj = t.group_stage_projection && t.group_stage_projection[name];
+          const advancing = new Set(proj ? proj.advancing_ids : []);
+          const contested = new Set(proj ? proj.contested_ids : []);
+          if (standings.length) {
+            standingsBlocks.push({
+              title: `Group ${name}`,
+              rows: standings.map(s => ({
+                name: s.name, ties_won: s.ties_won, ties_lost: s.ties_lost, point_diff: s.point_diff,
+                status: advancing.has(s.squad_id) ? 'adv' : contested.has(s.squad_id) ? 'contest' : ''
+              }))
+            });
+          }
+        });
+      } else if (t.squad_standings && t.squad_standings.length) {
+        standingsBlocks.push({
+          title: 'Standings',
+          rows: t.squad_standings.map(s => ({ name: s.name, ties_won: s.ties_won, ties_lost: s.ties_lost, point_diff: s.point_diff, status: '' }))
+        });
+      }
+
+      // ---- current/projected knockout matchup banner (at most one - the
+      // most recently relevant tie: an in-progress or just-decided final if
+      // the real bracket exists, else the flat-case projected pairing) ----
+      let bannerTie = null, bannerTitle = '', bannerProjected = false;
+      if (t.knockout && t.knockout.rounds && t.knockout.rounds.length) {
+        const lastRound = t.knockout.rounds[t.knockout.rounds.length - 1];
+        const pick = lastRound.find(m => !m.bye);
+        if (pick) { bannerTie = pick; bannerTitle = lastRound.length === 1 ? 'Final' : `Knockout - round ${t.knockout.rounds.length}`; }
+      } else if (t.projected_knockout && t.projected_knockout.rounds && t.projected_knockout.rounds.length && t.projected_knockout.rounds[0].length) {
+        bannerTie = t.projected_knockout.rounds[0][0];
+        bannerTitle = 'Projected matchup';
+        bannerProjected = true;
+      }
+
+      const sideAvatars = (squadId) => {
+        const sq = (t.squads || {})[squadId];
+        return ((sq && sq.members) || []).slice(0, 4).map(pid => vsPlayerVisual(pid, t.card_snapshot));
+      };
+
+      const imgCache = {};
+      if (bannerTie) {
+        const all = [...sideAvatars(bannerTie.squad_a), ...sideAvatars(bannerTie.squad_b)];
+        await Promise.all(all.map(async v => {
+          if (v.avatarUrl && !(v.avatarUrl in imgCache)) imgCache[v.avatarUrl] = await loadImg(v.avatarUrl);
+        }));
+      }
+
+      // ---- layout ----
+      const W = 900, pad = 40, rowH = 32, blockGap = 22, cardH = 190;
+      let H = pad * 2 + 74;
+      standingsBlocks.forEach(b => { H += 30 + b.rows.length * rowH + blockGap; });
+      if (bannerTie) H += 30 + cardH + blockGap;
+      if (t.status === 'completed' && t.champion_squad_id) H += 40;
+
+      const canvas = document.createElement('canvas');
+      canvas.width = W; canvas.height = Math.max(H, 320);
+      const ctx = canvas.getContext('2d');
+
+      ctx.fillStyle = '#0F1B15';
+      ctx.fillRect(0, 0, W, canvas.height);
+      ctx.fillStyle = '#fff';
+      ctx.font = "800 32px 'Rajdhani', system-ui, sans-serif";
+      ctx.textBaseline = 'top';
+      ctx.fillText(t.name, pad, pad);
+      ctx.font = "600 15px system-ui, sans-serif";
+      ctx.fillStyle = '#9fb3a8';
+      const statusLabel = t.status === 'completed' ? 'Completed'
+        : t.status === 'knockout' ? 'Knockout stage - in progress'
+        : 'Group stage - in progress';
+      ctx.fillText(statusLabel, pad, pad + 38);
+
+      let y = pad + 74;
+      standingsBlocks.forEach(b => {
+        ctx.font = "700 17px 'Rajdhani', sans-serif"; ctx.fillStyle = '#fff'; ctx.textAlign = 'left';
+        ctx.fillText(b.title, pad, y);
+        y += 28;
+        b.rows.forEach(r => {
+          const gold = r.status === 'adv';
+          ctx.font = "600 14px system-ui"; ctx.fillStyle = gold ? '#F5C542' : '#fff'; ctx.textAlign = 'left';
+          ctx.fillText(r.name, pad + 4, y);
+          ctx.textAlign = 'right';
+          ctx.fillText(`${r.ties_won}-${r.ties_lost}  diff ${r.point_diff > 0 ? '+' : ''}${r.point_diff}`, W - pad - 4, y);
+          if (r.status) {
+            ctx.font = "600 11px system-ui"; ctx.fillStyle = gold ? '#F5C542' : '#9fb3a8';
+            ctx.fillText(r.status === 'adv' ? '→ knockout' : 'contesting last spot', W - pad - 4, y + 15);
+          }
+          ctx.textAlign = 'left';
+          y += rowH;
+        });
+        y += blockGap;
+      });
+
+      if (bannerTie) {
+        const aVis = sideAvatars(bannerTie.squad_a), bVis = sideAvatars(bannerTie.squad_b);
+        const nameA = draftSquadName(t, bannerTie.squad_a), nameB = draftSquadName(t, bannerTie.squad_b);
+        const winA = bannerTie.decided && bannerTie.winner_squad_id === bannerTie.squad_a;
+        const winB = bannerTie.decided && bannerTie.winner_squad_id === bannerTie.squad_b;
+        const x = pad, w = W - pad * 2;
+
+        ctx.save();
+        roundRect(ctx, x, y, w, cardH, 14);
+        if (bannerProjected) { ctx.setLineDash([8, 6]); ctx.strokeStyle = 'rgba(255,255,255,.55)'; ctx.lineWidth = 2; ctx.stroke(); ctx.setLineDash([]); }
+        ctx.clip();
+        const gB = ctx.createLinearGradient(x, y, x + w, y + cardH);
+        gB.addColorStop(0, '#3a1114'); gB.addColorStop(1, '#12251d');
+        ctx.fillStyle = gB; ctx.fillRect(x, y, w, cardH);
+        ctx.save();
+        ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + w * 0.52, y);
+        ctx.lineTo(x + w * 0.42, y + cardH); ctx.lineTo(x, y + cardH); ctx.closePath(); ctx.clip();
+        const gA = ctx.createLinearGradient(x, y, x + w, y + cardH);
+        gA.addColorStop(0, '#06231c'); gA.addColorStop(1, '#12251d');
+        ctx.fillStyle = gA; ctx.fillRect(x, y, w, cardH);
+        ctx.restore();
+        ctx.restore();
+
+        const drawSide = (side, sx, sy, isWinner) => {
+          side.forEach((v, i) => {
+            const cx = sx + i * 56 + 24, cy = sy, r = 22;
+            ctx.save();
+            ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2);
+            ctx.lineWidth = 3; ctx.strokeStyle = isWinner ? '#F5C542' : 'rgba(255,255,255,.9)'; ctx.stroke();
+            ctx.clip();
+            const img = imgCache[v.avatarUrl];
+            if (img) { ctx.drawImage(img, cx - r, cy - r, r * 2, r * 2); }
+            else {
+              ctx.fillStyle = '#1c2a22'; ctx.fillRect(cx - r, cy - r, r * 2, r * 2);
+              ctx.fillStyle = '#fff'; ctx.font = '18px system-ui'; ctx.textAlign = 'center';
+              ctx.fillText(v.avatarEmoji || '', cx, cy - 9); ctx.textAlign = 'left';
+            }
+            ctx.restore();
+          });
+        };
+        drawSide(aVis, x + 24, y + 34, winA);
+        drawSide(bVis, x + w - 24 - bVis.length * 56, y + cardH - 56, winB);
+
+        ctx.font = "700 15px 'Rajdhani', sans-serif";
+        ctx.textAlign = 'left'; ctx.fillStyle = winA ? '#F5C542' : '#fff';
+        ctx.fillText(nameA, x + 24, y + cardH / 2 - 30);
+        ctx.textAlign = 'right'; ctx.fillStyle = winB ? '#F5C542' : '#fff';
+        ctx.fillText(nameB, x + w - 24, y + cardH / 2 + 16);
+
+        ctx.textAlign = 'center';
+        if (bannerProjected) {
+          ctx.font = "700 12px 'Rajdhani', sans-serif"; ctx.fillStyle = '#9fb3a8';
+          ctx.fillText('PROJECTED', x + w / 2, y + cardH / 2 - 8);
+        } else {
+          ctx.font = "800 26px 'Rajdhani', sans-serif"; ctx.fillStyle = '#fff';
+          ctx.fillText(`${bannerTie.wins_a} - ${bannerTie.wins_b}`, x + w / 2, y + cardH / 2 - 14);
+        }
+        ctx.font = "600 12px system-ui"; ctx.fillStyle = '#9fb3a8';
+        ctx.fillText(bannerTitle, x + w / 2, y + cardH / 2 + 10);
+        ctx.textAlign = 'left';
+        y += cardH + blockGap;
+      }
+
+      if (t.status === 'completed' && t.champion_squad_id) {
+        ctx.font = "800 22px 'Rajdhani', sans-serif"; ctx.fillStyle = '#F5C542'; ctx.textAlign = 'center';
+        ctx.fillText(`🏆 Champion: ${draftSquadName(t, t.champion_squad_id)}`, W / 2, y);
+        ctx.textAlign = 'left';
+      }
+
+      canvas.toBlob((blob) => {
+        if (!blob) { nwAlert('Could not generate the image.'); return; }
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url; a.download = `${t.name.replace(/[^a-z0-9]+/gi, '_')}_status.png`;
+        a.click();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+      }, 'image/png');
     }
 
     function copyTournamentRecap() {
