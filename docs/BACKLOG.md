@@ -15,7 +15,10 @@
   complete. Configurable best-of-3 + real visual bracket added 2026-08-22 (v1.58.0, see Done); a
   projected-knockout preview while group ties are still pending added 2026-08-22 (v1.59.0, see Done);
   the same projection extended into the bracket view, plus a per-group advancing/contested panel for
-  real named groups, added 2026-08-22 (v1.60.0, see Done).**
+  real named groups, added 2026-08-22 (v1.60.0, see Done); the same group-stage projection surfaced in
+  Table view, inline new-player registration during squad substitution, the player leaderboard
+  redesigned into squad-grouped photo banner cards, more sections made collapsible, and a downloadable
+  share image of the tournament's CURRENT (in-progress) state, added 2026-08-22 (v1.61.0, see Done).**
   Full design: organizer names leaders, splits every player into ranked pools (drag/tap board -
   **done**), leaders draft squads via a live organizer-paced point-budget auction (**done**), then a
   squad-vs-squad group stage (round robin, N individual matches per tie) and knockout (final/semi/3rd-
@@ -337,6 +340,73 @@
 ---
 
 ## Done
+
+- ✅ 2026-08-22 (v1.61.0) — **Manual-mode tournaments: group-stage projection in Table view, inline
+  new-player registration for squad substitution, squad-banner leaderboard redesign, more collapsible
+  sections, and a "share current state" image export.** Five owner requests in one message, right after
+  confirming v1.60.0's bracket-view fix was just a stale-cache issue, not a real bug:
+  (1) "the table view does not show the semi finals, only in bracket it shows predicted" — v1.60.0's
+  `group_stage_projection` was only wired into the Bracket view's new panel, never into Table view's
+  existing per-group standings tables. `renderSquadStandingsTable(standings, projection)` now takes an
+  optional `projection` argument (the matching entry from `t.group_stage_projection`), adding a "Status"
+  column (gold "→ Knockout" for advancing squads, italic muted "Contesting last spot" for the boundary
+  tie) plus a pending-ties note below the table — same data v1.60.0 already computes, just surfaced in
+  the view that was missing it.
+  (2) "i can add an existing player as a substitute but not a new person like it can be done in other
+  formats" — ported the legacy tournament flow's own "register a new player inline" pattern
+  (`#sub_new_player_toggle` → `POST /register` → use the returned `player_id`) to manual-draft squad
+  substitution: new `#squad-sub-new-toggle` checkbox reveals `#squad-sub-new-register-fields`
+  (name + skill level), disables the existing free-agent `<select>` while checked, and
+  `substituteSquadPlayer()` now branches to call the plain `POST /register` endpoint first when adding a
+  new player (no backend change needed — `substitute_squad_player` only requires the replacement not
+  already be on any squad, not that they're a group member, so the same unauthenticated-by-group-id
+  `/register` route the legacy flow already uses is sufficient here too).
+  (3) "the leaderboard that shows the people and points, rather can we have a teams banner witht the
+  pairs ... each player's profile and banner image being used" — `renderPlayerTournamentStatsTable`
+  rewritten to take a second `t` argument and group `player_tournament_stats` by squad (via a
+  player_id→squad_id map built from `t.squads`), rendering one banner card per squad (squad name over a
+  `teamBanner()`-picked background, reusing the exact same `vsPlayerVisual`/`vsAvatarHtml` helpers the
+  match banner cards already use) with each member's photo avatar plus their Played/W/L/point-diff stats
+  underneath — the stats entry's own server-computed `name` wins over the live-roster name for the label
+  (a sub-match participant isn't guaranteed to already be in the loaded player list). Any stat entries
+  that don't map to a squad member fall back to the old plain table underneath, so nothing silently
+  disappears. Tightened for compactness before first deploy (owner: "i hope the leaderboard is showing
+  the banner style but does not too much of height, it should feel compact") - swapped the initial
+  design (each player's photo + name + stats stacked vertically, reusing the 52px `.vsc-av` match-card
+  avatar) for a smaller 34px avatar with name and one terse stat line ("2P · 1-1 · +1") side-by-side in a
+  single compact row per player, and trimmed the card's padding/margins/header size throughout.
+  (4) "can you make other sections also collapsible, like the pairing sections under each squad" — added
+  a second tracked-open-state `Set` (`draftOpenSquadSections`, deliberately separate from the existing
+  `draftOpenGroups` since a squad_id and a group name could collide, e.g. both "A") + `toggleDraftSquadSection`;
+  converted `renderDraftSquadsReview`'s and `renderSetSquadPairsPanel`'s per-squad blocks from plain
+  `<div>`s to collapsible `<details>` (keys `review:${sid}` / `pairs:${sid}`), the pairing one's summary
+  line also previewing the squad's currently-set pairs (or "not set yet") so you don't have to expand it
+  just to check.
+  (5) "need a way to share these current state as well ... shareable to insta" — new
+  `downloadDraftShareImage()`, a manual-draft sibling of the existing (legacy-only, completed-only)
+  `downloadTournamentImage()`: works at ANY schedule status (group stage in progress, knockout in
+  progress, or completed) since a live event wants to share progress as it happens, not just the final
+  result. Canvas-rendered: tournament name/status header, one standings block per real named group (or a
+  single flat block) with the same advancing/contesting gold-highlight as the Table view, then the
+  current-or-most-recent knockout tie as a photo banner card (dashed border + "PROJECTED" label for the
+  flat case's still-projected pairing, solid + score for a real in-progress or decided tie), then a
+  champion line once completed. Exported via `canvas.toBlob(...,'image/png')` + a client-side download
+  link, following the same crossOrigin-image-loading/`roundRect`/avatar-circle patterns
+  `downloadTournamentImage()` already established. New "Download share image" button in
+  `renderDraftScheduleView`, shown whenever a schedule exists (not gated to `completed`).
+  New `/tmp/test_draft_round5_ui.js` (Playwright, 14 checks: Table view shows the advancing marker +
+  pending-ties note, leaderboard renders squad-name card headers + a photo/avatar block per player +
+  keeps the "not Elo" disclaimer, the new-player substitution toggle shows/hides its fields and disables
+  the free-agent dropdown and calls `POST /register` exactly once, the share-image button is present and
+  `downloadDraftShareImage()` completes and triggers a download without throwing, and it alerts-and-
+  returns gracefully for a tournament with no schedule yet instead of throwing). Two pre-existing
+  Playwright tests updated for the intentional collapsible-panel/name-source changes rather than left
+  broken: `test_cross_squad_ui.js` (the pairing panel's "Currently set" text became a compact summary-
+  line preview; its selects now need their `<details>` opened first) and `test_draft_schedule_ui.js` (no
+  assertion change needed — was a real bug this round caught: the redesigned leaderboard cards were
+  showing the live-roster name instead of falling back to the stats entry's own name for a player not
+  yet in the loaded roster; fixed in `renderPlayerTournamentStatsTable`). Full existing backend (29
+  files) and Playwright (15 files, including the new one) suites re-verified passing throughout.
 
 - ✅ 2026-08-22 (v1.60.0) — **Manual-mode tournaments: bracket-view group panel + projected
   pairing in the SVG itself, for real named groups.** Immediate owner follow-up on v1.59.0: "will the
