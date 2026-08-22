@@ -374,34 +374,39 @@
   no version bump needed either time): (a) compactness pass (owner: "i hope the leaderboard is showing
   the banner style but does not too much of height, it should feel compact") - swapped stacked
   photo+name+stats per player for a smaller 34px avatar with name and one terse stat line side-by-side.
-  (b) real DOUBLES-PAIR grouping + placement medals (owner, after seeing (a) render every squad member as
-  its own row: "i did mean to club all the team members like this... a compressed banner in which each
-  pair['s] names and profile pic is displayed with their squad name in the middle and then later when the
-  finals and third place matches complete a gold silver and bronze rims around their slot"). Clarified via
-  AskUserQuestion that manual-draft doubles partners aren't a separately-stored field (`pick_tie_player`
-  lets a leader nominate a different 2-person combo for every match - see backend investigation), but the
-  owner pointed out the real tell: "you can see the ones with the same points are the partners" - since
-  `compute_player_tournament_scores` credits BOTH members of a played doubles match the identical result,
-  two players who've always played together end up with identical Played/W/L/diff numbers. New
-  reconstruction in `renderPlayerTournamentStatsTable`: scans every played match in `group_stage.ties` +
-  `knockout.rounds` + `knockout.third_place_match` for 2-person `player_a`/`player_b.members` sides,
-  tallies co-occurrence per squad, and pairs each player with their most-frequent mutual partner (falls
-  back to a solo "pair of one" for anyone with no played match yet, or for a singles tournament where a
-  match side never carries 2 members). Each squad card now renders one compact row per PAIR (two
-  overlapping 28px avatars + "Name & Name" + one shared stat line) instead of one row per player, with the
-  squad name centered above like a banner headline. Placement rims: once `status === 'completed'`, the
-  champion/runner-up/third-place squads (from the final tie's `winner_squad_id` + the losing side, and
-  `knockout.third_place_match.winner_squad_id`) get a gold/silver/bronze inset ring around the WHOLE squad
-  card (`box-shadow:inset 0 0 0 2px <tier color>`) plus a medal label ("🥇 Champion" etc) - and per the
-  owner's second clarification ("no the entire squad but [also] the pair from the squad who won the
-  finals and so on"), the SPECIFIC pair that actually played the deciding match (found by walking that
-  tie's `matches` backwards for the last played one on that squad's side) gets its own separate highlight
-  ring on just its row, distinct from the squad-wide ring. New `/tmp/test_leaderboard_pairs_ui.js`
-  (Playwright, 9 checks: a 4-member squad's two real pairs - established by both members always appearing
-  together in `player_a`/`player_b.members` across 3 played matches - render as 2 grouped rows not 4 solo
-  ones, same for a 2-member squad, the champion/runner-up/third-place squad cards get the correct gold/
-  silver/bronze inset ring and medal label, and exactly one pair-row - the actual final-winning pair - gets
-  the additional non-inset highlight, not the whole champion squad uniformly).
+  (b) real DOUBLES-PAIR grouping + placement medals, revised TWICE more after the owner saw (a) render
+  every squad member as its own row grouped into per-squad boxes:
+  (b1) first pass grouped pairs INSIDE per-squad boxes, one box per squad, squad name centered as a
+  banner headline. Clarified via AskUserQuestion that manual-draft doubles partners aren't a
+  separately-stored field (`pick_tie_player` lets a leader nominate a different 2-person combo for every
+  match - see backend investigation), but the owner pointed out the real tell: "you can see the ones with
+  the same points are the partners" - since `compute_player_tournament_scores` credits BOTH members of a
+  played doubles match the identical result, two players who've always played together end up with
+  identical Played/W/L/diff numbers - this became (and remains) the pairing-reconstruction mechanism.
+  (b2) owner then rejected the per-squad grouping entirely on seeing a real 16-pair tournament screenshot:
+  "i don't need the squads grouped. rather it should be mixed as each pair performed differently ... so
+  there would be 16 rows as 16 pairs competed where 4 of each squad" - plus "the profile pic ... is
+  getting overlapped" (the two avatars used a negative margin to overlap, reading as squished/merged in
+  the actual screenshot). Rebuilt as a single FLAT, PERFORMANCE-RANKED list (no squad containers, no squad
+  header divs at all) sorted by (wins desc, point_diff desc, matches_played desc) across the WHOLE
+  tournament, mixing all squads' pairs together by how they actually performed. Pair reconstruction
+  unchanged (scans `group_stage.ties` + `knockout.rounds` + `knockout.third_place_match` for 2-person
+  `player_a`/`player_b.members` sides, pairs each player with their most-frequent mutual partner, falls
+  back to solo for singles tournaments or anyone with no played match yet) but no longer scoped per-squad -
+  built once, ranked, one row per pair regardless of which squad it belongs to. Each row: two adjacent
+  (non-overlapping, small gap - the fix for the overlap report) 30px avatars, "Name & Name", the squad
+  name + stats stacked in a small right-aligned column (satisfies "with their team name either in the
+  beginning or [at] the other end"). Placement rings adapted for the flat layout since there's no more
+  squad container to ring: the SPECIFIC pair that played the deciding match gets a full glow ring + a
+  medal emoji ("🥇 Champion", "🥈 Runner-up", "🥉 Third place" pairs), while every OTHER pair belonging to
+  that same placed squad gets a thinner tier-colored edge only - so "the entire squad" placing still reads
+  across all of that squad's rows, while the pair actually on court for the deciding match stands out
+  further, matching the owner's two-part clarification from the prior round. New
+  `/tmp/test_leaderboard_pairs_ui.js` (Playwright, 11 checks, rewritten for the flat design: pairs still
+  correctly grouped from match history, NO standalone squad-header elements exist inside the leaderboard
+  card, row order interleaves squads by rank instead of clustering by squad, no more negative-margin
+  avatar overlap, exactly one strong ring per placement tier plus the correct count of thin edges on a
+  same-squad non-deciding pair, medal emoji present, squad names still shown as row labels).
   (4) "can you make other sections also collapsible, like the pairing sections under each squad" — added
   a second tracked-open-state `Set` (`draftOpenSquadSections`, deliberately separate from the existing
   `draftOpenGroups` since a squad_id and a group name could collide, e.g. both "A") + `toggleDraftSquadSection`;

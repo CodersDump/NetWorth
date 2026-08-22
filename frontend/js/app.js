@@ -8698,19 +8698,18 @@ let userPool = null;
       const statsByPid = {};
       stats.forEach(s => { statsByPid[s.player_id] = s; });
 
-      // Map every player back to their squad - squad membership is the
-      // organizing axis now, not a flat player list.
+      // Map every player back to their squad - used only to label each
+      // pair's row and to know which pairs belong to a placement squad
+      // (see below), NOT to group rows into squad sections. Owner
+      // correction (2026-08-22, after seeing squads rendered as separate
+      // boxed sections): "i don't need the squads grouped. rather it
+      // should be mixed as each pair performed differently ... 16 rows as
+      // 16 pairs competed where 4 of each squad" - this is a single flat,
+      // performance-ranked list of pairs across the WHOLE tournament, each
+      // row just carrying its own squad name as a label.
       const squadOf = {};
       Object.keys(squads).forEach(sid => {
         (squads[sid].members || []).forEach(pid => { squadOf[pid] = sid; });
-      });
-
-      const bySquad = {};
-      const noSquad = [];
-      stats.forEach(s => {
-        const sid = squadOf[s.player_id];
-        if (sid) { (bySquad[sid] = bySquad[sid] || []).push(s); }
-        else noSquad.push(s);
       });
 
       // ---- derive each squad's real playing pairs from match history ----
@@ -8746,24 +8745,24 @@ let userPool = null;
         if (!bestPartner[a] || bestPartner[a].count < c) bestPartner[a] = { partner: b, count: c };
         if (!bestPartner[b] || bestPartner[b].count < c) bestPartner[b] = { partner: a, count: c };
       });
-      const deriveGroups = (members) => {
-        const used = new Set();
-        const groups = [];
-        members.forEach(pid => {
-          if (used.has(pid)) return;
-          const bp = bestPartner[pid];
-          if (bp && bestPartner[bp.partner] && bestPartner[bp.partner].partner === pid && !used.has(bp.partner)) {
-            groups.push([pid, bp.partner]); used.add(pid); used.add(bp.partner);
-          } else {
-            groups.push([pid]); used.add(pid);
-          }
-        });
-        return groups;
-      };
+      const used = new Set();
+      const allGroups = [];
+      stats.forEach(s => {
+        const pid = s.player_id;
+        if (used.has(pid)) return;
+        const bp = bestPartner[pid];
+        if (bp && bestPartner[bp.partner] && bestPartner[bp.partner].partner === pid && !used.has(bp.partner) && statsByPid[bp.partner]) {
+          allGroups.push([pid, bp.partner]); used.add(pid); used.add(bp.partner);
+        } else {
+          allGroups.push([pid]); used.add(pid);
+        }
+      });
 
       // ---- champion/runner-up/third-place, and which specific pair played
-      // the deciding match ("the entire squad but the pair from the squad
-      // who won the finals" gets a highlight of its own within the card) ----
+      // the deciding match (that specific row gets its own stronger
+      // highlight; every OTHER pair from that same placement squad still
+      // gets a thinner tier-colored edge, since "the entire squad" also
+      // placed, per the owner's earlier clarification) ----
       const squadSideField = (tie, sid) => (tie.squad_a === sid ? 'player_a' : (tie.squad_b === sid ? 'player_b' : null));
       const decidingPairKey = (tie, sid) => {
         const field = squadSideField(tie, sid);
@@ -8791,75 +8790,72 @@ let userPool = null;
         }
       }
       const TIER_COLOR = { gold: '#F5C542', silver: '#C7CCD1', bronze: '#CD7F32' };
-      const TIER_LABEL = { gold: '🥇 Champion', silver: '🥈 Runner-up', bronze: '🥉 Third place' };
+      const TIER_EMOJI = { gold: '🥇', silver: '🥈', bronze: '🥉' };
 
-      const pairRow = (group, isHighlighted, tierColor) => {
+      // ---- one row per pair, ranked by performance across the whole
+      // tournament (wins, then point diff, then matches played) - NOT
+      // grouped or sorted by squad ----
+      const rows = allGroups.map(group => {
         const memberStats = group.map(pid => statsByPid[pid]).filter(Boolean);
-        if (!memberStats.length) return '';
+        if (!memberStats.length) return null;
+        const sid = squadOf[group[0]] || null;
+        const pairKey = group.slice().sort().join('|');
+        const placement = sid ? placements[sid] : null;
+        return { group, memberStats, sid, squadName: sid ? draftSquadName(t, sid) : '', placement, isDecidingPair: !!(placement && placement.pairKey === pairKey) };
+      }).filter(Boolean);
+      rows.sort((r1, r2) => {
+        const s1 = r1.memberStats[0], s2 = r2.memberStats[0];
+        if (s2.wins !== s1.wins) return s2.wins - s1.wins;
+        if (s2.point_diff !== s1.point_diff) return s2.point_diff - s1.point_diff;
+        if (s2.matches_played !== s1.matches_played) return s2.matches_played - s1.matches_played;
+        return r1.memberStats.map(s => s.name).join(' ').localeCompare(r2.memberStats.map(s => s.name).join(' '));
+      });
+
+      // Owner report (2026-08-22): the previous version's two avatars used
+      // a negative margin to overlap - "the profile pic you used is good
+      // but it is getting overlapped." Plain adjacent circles with a small
+      // gap here, no overlap.
+      const rowHtml = (row) => {
+        const { memberStats, squadName, placement, isDecidingPair } = row;
         const visuals = memberStats.map(s => {
           const v = vsPlayerVisual(s.player_id, t.card_snapshot);
           return s.name ? { ...v, name: s.name } : v;
         });
         const s0 = memberStats[0];
-        const avatarsHtml = visuals.map((v, i) => {
+        const banner = teamBanner(visuals);
+        const avatarsHtml = visuals.map(v => {
           const bg = v.avatarUrl ? `background-image:url('${v.avatarUrl}');` : '';
-          return `<div style="width:28px;height:28px;flex:0 0 auto;border-radius:50%;border:2px solid rgba(255,255,255,.85);
+          return `<div style="width:30px;height:30px;flex:0 0 auto;border-radius:50%;border:2px solid rgba(255,255,255,.85);
             background-size:cover;background-position:center;box-shadow:0 1px 5px rgba(0,0,0,.5);
-            display:flex;align-items:center;justify-content:center;font-size:13px;${i > 0 ? 'margin-left:-9px;' : ''}${bg}">${v.avatarUrl ? '' : escapeHtml(v.avatarEmoji)}</div>`;
+            display:flex;align-items:center;justify-content:center;font-size:13px;${bg}">${v.avatarUrl ? '' : escapeHtml(v.avatarEmoji)}</div>`;
         }).join('');
         const namesText = visuals.map(v => escapeHtml(v.name)).join(' &amp; ');
-        const highlightStyle = isHighlighted
-          ? `box-shadow:0 0 0 2px ${tierColor},0 0 8px ${tierColor}99;background:rgba(255,255,255,.08);`
-          : '';
-        return `<div style="display:flex;align-items:center;gap:6px;padding:2px 5px;border-radius:8px;${highlightStyle}">
-          <div style="display:flex;">${avatarsHtml}</div>
-          <div style="min-width:0;flex:1;color:#fff;font-size:11.5px;font-weight:600;text-shadow:0 1px 3px rgba(0,0,0,.9);
-            white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${namesText}</div>
-          <div style="color:#dfe8e3;font-size:10.5px;text-shadow:0 1px 3px rgba(0,0,0,.9);white-space:nowrap;">${s0.matches_played}P &middot; ${s0.wins}-${s0.losses} &middot; ${s0.point_diff > 0 ? '+' : ''}${s0.point_diff}</div>
-        </div>`;
-      };
-
-      const squadCard = (sid) => {
-        const sq = squads[sid];
-        const members = (sq.members || []).filter(pid => statsByPid[pid]);
-        if (!members.length) return '';
-        const groups = deriveGroups(members);
-        const placement = placements[sid];
         const tierColor = placement ? TIER_COLOR[placement.tier] : null;
-        const cardRing = placement ? `box-shadow:inset 0 0 0 2px ${tierColor},0 0 14px ${tierColor}99;` : '';
-        const banner = teamBanner(members.map(pid => vsPlayerVisual(pid, t.card_snapshot)));
-        const medalLabel = placement
-          ? `<div style="color:${tierColor};font-size:10.5px;font-weight:700;letter-spacing:.3px;text-shadow:0 1px 3px rgba(0,0,0,.9);margin-top:1px;">${TIER_LABEL[placement.tier]}</div>`
-          : '';
-        return `<div style="position:relative;border-radius:var(--radius);overflow:hidden;margin-top:6px;${cardRing}">
+        // The exact pair that played the deciding match gets a full glow
+        // ring; every other pair from that same placed squad still gets a
+        // thinner tier-colored edge, so the squad's placement reads even
+        // on rows that weren't the ones on court for the final.
+        const ringStyle = isDecidingPair
+          ? `box-shadow:0 0 0 2px ${tierColor},0 0 10px ${tierColor}99;`
+          : (placement ? `box-shadow:inset 3px 0 0 0 ${tierColor};` : '');
+        const medal = isDecidingPair ? `${TIER_EMOJI[placement.tier]} ` : '';
+        return `<div style="position:relative;border-radius:8px;overflow:hidden;margin-top:5px;${ringStyle}">
           <div style="position:absolute;inset:0;background:${banner};"></div>
-          <div style="position:absolute;inset:0;background:linear-gradient(180deg,rgba(0,0,0,.3),rgba(0,0,0,.68));"></div>
-          <div style="position:relative;padding:8px 9px;">
-            <div style="text-align:center;margin-bottom:6px;">
-              <div style="color:#fff;font-weight:800;font-size:13px;letter-spacing:.3px;text-shadow:0 1px 5px rgba(0,0,0,.9);">${escapeHtml(sq.name)}</div>
-              ${medalLabel}
-            </div>
-            <div style="display:flex;flex-direction:column;gap:4px;">
-              ${groups.map(g => pairRow(g, !!(placement && placement.pairKey && g.slice().sort().join('|') === placement.pairKey), tierColor)).join('')}
+          <div style="position:absolute;inset:0;background:rgba(0,0,0,.48);"></div>
+          <div style="position:relative;display:flex;align-items:center;gap:8px;padding:6px 10px;">
+            <div style="display:flex;gap:4px;flex:0 0 auto;">${avatarsHtml}</div>
+            <div style="min-width:0;flex:1;color:#fff;font-size:12.5px;font-weight:600;text-shadow:0 1px 3px rgba(0,0,0,.9);
+              white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${medal}${namesText}</div>
+            <div style="text-align:right;flex:0 0 auto;">
+              ${squadName ? `<div style="font-size:10px;color:#c9d4ce;text-shadow:0 1px 3px rgba(0,0,0,.9);white-space:nowrap;">${escapeHtml(squadName)}</div>` : ''}
+              <div style="font-size:11.5px;color:#fff;text-shadow:0 1px 3px rgba(0,0,0,.9);white-space:nowrap;">${s0.matches_played}P &middot; ${s0.wins}-${s0.losses} &middot; ${s0.point_diff > 0 ? '+' : ''}${s0.point_diff}</div>
             </div>
           </div>
         </div>`;
       };
 
       let html = '<div class="card" style="margin-top:10px;"><h4 style="font-size:14px;margin:0 0 6px;">Player leaderboard (this tournament only, not Elo)</h4>';
-      Object.keys(bySquad).sort((a, b) => (draftSquadName(t, a) || '').localeCompare(draftSquadName(t, b) || '')).forEach(sid => {
-        html += squadCard(sid);
-      });
-      if (noSquad.length) {
-        html += '<table style="width:100%;font-size:13px;border-collapse:collapse;margin-top:8px;"><thead><tr>' +
-          '<th style="text-align:left;">Player</th><th>Played</th><th>W</th><th>L</th><th>Point diff</th></tr></thead><tbody>';
-        noSquad.forEach(s => {
-          html += `<tr><td>${escapeHtml(s.name)}</td><td style="text-align:center;">${s.matches_played}</td>` +
-            `<td style="text-align:center;">${s.wins}</td><td style="text-align:center;">${s.losses}</td>` +
-            `<td style="text-align:center;">${s.point_diff > 0 ? '+' : ''}${s.point_diff}</td></tr>`;
-        });
-        html += '</tbody></table>';
-      }
+      html += rows.map(rowHtml).join('');
       html += '</div>';
       return html;
     }
