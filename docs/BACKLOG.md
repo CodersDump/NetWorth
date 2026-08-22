@@ -11,7 +11,8 @@
 
 ## Now / high priority
 
-- `[feat] L` **Manual-mode tournaments (leaders + pool draft/auction) — Phases A-D all done, feature complete.**
+- `[feat] L` **Manual-mode tournaments (leaders + pool draft/auction) — Phases A-D all done, feature
+  complete. Configurable best-of-3 + real visual bracket added 2026-08-22 (v1.58.0, see Done).**
   Full design: organizer names leaders, splits every player into ranked pools (drag/tap board -
   **done**), leaders draft squads via a live organizer-paced point-budget auction (**done**), then a
   squad-vs-squad group stage (round robin, N individual matches per tie) and knockout (final/semi/3rd-
@@ -333,6 +334,74 @@
 ---
 
 ## Done
+
+- ✅ 2026-08-22 (v1.58.0) — **Manual-mode tournaments: configurable best-of-3, a real visual
+  bracket, and a smoother multi-game entry flow.** Owner follow-up on v1.57.0 ("the tournament format
+  is not supporting this bracket as well" / "make the chnage where you said each semifinal section will
+  have 3 matches and how you can make it smooth as well"). Two previously-unsupported asks, both scoped
+  down first via clarifying questions (best-of-3 configurable **per tournament**, not forced on
+  everyone; the group stage stays best-of-1 for the current live event, only the knockout needs
+  best-of-3 right now; build a real SVG bracket, not just lean on the flat tie list).
+  (1) *Configurable best-of-3*: new `manual_draft.group_best_of` / `manual_draft.knockout_best_of`
+  fields (both default `1`, must be `1` or `3`), validated and stored by
+  `create_manual_draft_tournament`. `_score_tie_match` now picks `best_of` per-stage off its existing
+  `stage_label` parameter (`'group'` vs `'knockout'`/`'third_place'`) instead of reading a flat
+  `item.get('best_of', 1)` field that manual-draft items never actually had (silently always `1`
+  before). `_submit_game`'s `needed_wins = (best_of // 2) + 1` engine needed **no changes** - it already
+  generically supported best-of-N, shared with legacy tournaments. New "Games per group match" / "Games
+  per knockout match" selectors on the creation form, wired into `submitManualDraftCreation`.
+  (2) *Visual bracket*: `renderTournament` early-returned to `renderManualDraftTournament` before ever
+  calling the legacy `renderBracketView`, and `renderManualDraftTournament` unconditionally hid
+  `#bracket-svg` - so a manual-draft tournament had no bracket at all, just the flat tie list, even
+  though the shared "View: Table/Bracket" dropdown was visibly sitting there doing nothing. New
+  `renderDraftBracketView(t)` adapts the legacy SVG renderer for tie-shaped rounds (`squad_a`/`squad_b`
+  instead of `player_a`/`player_b`, `draftSquadName(t, squadId)` for names, `wins_a`/`wins_b` instead of
+  a per-game point total, `winner_squad_id`/`decided` instead of `winner_id`/`played`) - coordinate math,
+  TBD-placeholder-round filling, and the third-place box are unchanged copies, since a tie carries the
+  exact same `rounds`/`third_place_match` shape a legacy knockout does. The View toggle is now hidden
+  and forced back to table mode during pools/auction/squad-review (nothing bracket-shaped exists yet),
+  and shown + wired to `renderDraftBracketView` once a schedule exists (`group_stage`/`knockout`/
+  `completed`). (3) *Smoother multi-game entry (real bug fix)*: `renderTieMatchRow`'s "lineup still
+  pickable" path - the one actually used for ordinary squads-mode ties, as opposed to the cross-squad/
+  already-decided "banner card" path - rendered a bare, contextless "Submit" button with no game number
+  or running score whenever a match was mid-way through a best-of-3 series (`m.played` stays `false`
+  until the decisive game, so a 1-0 match after game 1 looked identical to a fresh, unplayed one). Now
+  shows the same "Games so far: ... (1-0) | Game 2:" progress line the banner-card path already had,
+  in both plain-input and live-scoring modes. New `/tmp/test_best_of_config.py` (9 checks: field
+  storage/validation, stage isolation - group stays best-of-1 even when knockout is best-of-3 on the
+  same tournament, a 2-0 sweep deciding after 2 games not 3, a 2-1 result correctly needing all 3, the
+  aggregate score fed to Elo/match-log being the sum across every game played not just the last one).
+  New `/tmp/test_draft_bracket_best_of_ui.js` (Playwright: best-of selectors present and submitted,
+  View toggle hidden pre-schedule and shown once a knockout exists, switching to bracket mode hides the
+  table and shows both squad names on the SVG and back again, the games-so-far progress line and a live
+  "Game 2" input both present for a mid-series best-of-3 match). Full existing backend (27 files) and
+  Playwright (11 files, including the new one) suites re-verified passing throughout.
+
+- ✅ 2026-08-22 (ops, no version tag) — **Aman→Guddu misattribution repair, on real production data
+  (Rally Royale 22-23 Aug).** Standalone one-time repair scripts, not part of the deployed app zip (see
+  `scripts/`, following the existing `add_third_place_match.py`/`repair_ratings_after.py` convention -
+  read/write DynamoDB directly, run locally by the owner with AWS creds). `dump_tournament_for_review.py`
+  (read-only diagnostic) confirmed the exact blast radius: one squad ("Smashers", leader Mirgank), one
+  rep ("Aman & Mirgank"), and 3 already-played matches scored *after* the v1.57.0 substitution fix -
+  proving the pre-fix bug's bad data had already leaked into real match history.
+  `fix_misattributed_squad_player.py` relabels the squad/rep/match entities and repairs Elo, built around
+  a baseline-vs-fixed **replay-diffing** technique (run the exact same full chronological replay twice,
+  once unmodified and once with the fix applied, then diff the two) so genuine pre-existing Elo drift
+  unrelated to this substitution - proven for real via the owner's own suggested no-op test (same
+  `old_player_id`/`new_player_id`) - never gets silently "corrected" alongside it; writes are expressed
+  as deltas on top of currently-stored ratings, never a raw replay overwrite. Caught and fixed two real
+  bugs before any data was touched, both surfaced by the owner reading dry-run output carefully: (a) a
+  double-independent-scan bug that made the dry-run preview inconsistent with what `--apply` would
+  actually do; (b) a name-rebuild bug (`why is mirgank showing up like this?`) where a co-member's name
+  in a multi-member entity fell back to their raw `player_id` because the rebuild only had the two
+  substituted players' names cached - fixed by threading a live `players_table` lookup through
+  `rebuild_entity` instead. `fix_entity_names.py` repairs the live data already corrupted by that second
+  bug; its own dry-run output caught a third bug before it was applied - it was about to rename entire
+  squads (destroying custom names like "Smashers") by treating squads the same as reps/match entities,
+  which the real `substitute_squad_player`/`_rebuild_entity_after_substitution` backend code never does
+  (a squad's `name` is a custom organizer-chosen display name, not auto-derived from members) - fixed by
+  excluding squads from the script entirely. Owner ran the corrected scripts against production data and
+  confirmed both fixed ("goiit fized now").
 
 - ✅ 2026-08-22 (v1.57.0) — **Manual-mode tournaments: flexible game targets, winner-highlight fix,
   cross-squad substitution repair, collapsible groups.** Four owner reports from the same live event.

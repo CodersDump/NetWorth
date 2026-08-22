@@ -7405,6 +7405,8 @@ let userPool = null;
         picks_per_pool: document.getElementById('draft_picks_per_pool').value,
         group_matches_per_tie: document.getElementById('draft_group_matches_per_tie').value,
         knockout_matches_per_tie: document.getElementById('draft_knockout_matches_per_tie').value,
+        group_best_of: document.getElementById('draft_group_best_of').value,
+        knockout_best_of: document.getElementById('draft_knockout_best_of').value,
         num_groups: document.getElementById('draft_num_groups').value,
         advance_per_group: document.getElementById('draft_advance_per_group').value,
         match_type: document.getElementById('tournament_match_type').value,
@@ -7446,9 +7448,23 @@ let userPool = null;
 
     function renderManualDraftTournament(t) {
       currentTournamentData = t;
-      const svg = document.getElementById('bracket-svg');
-      if (svg) svg.style.display = 'none';
       const el = document.getElementById('tournament-detail');
+      const viewModeSelect = document.getElementById('tournament_view_mode');
+      // A visual bracket only makes sense once there's a schedule to draw -
+      // pools/auction/squad-review screens aren't table-vs-bracket data at
+      // all, so the shared View toggle is hidden and forced back to table
+      // for those (owner report: the toggle used to sit there unwired for
+      // every manual-draft status, bracket permanently empty even once a
+      // real knockout existed - see renderDraftBracketView below for the
+      // tie-aware adaptation that now backs it).
+      const hasSchedule = t.status === 'group_stage' || t.status === 'knockout' || t.status === 'completed';
+      if (viewModeSelect) viewModeSelect.closest('div').style.display = hasSchedule ? '' : 'none';
+      if (!hasSchedule) {
+        viewModeSelect.value = 'table';
+        const svg = document.getElementById('bracket-svg');
+        if (svg) svg.style.display = 'none';
+        el.style.display = '';
+      }
       let html = `<h3 style="font-size:16px;">${escapeHtml(t.name)} - manual draft (${t.status})</h3>`;
 
       // Pool assignments and auction budgets/bids are only ever visible to
@@ -7492,6 +7508,10 @@ let userPool = null;
       }
 
       el.innerHTML = html;
+      if (hasSchedule) {
+        renderDraftBracketView(t);
+        applyTournamentViewMode();
+      }
       if (t.status === 'auction' && !draftHidden) startDraftPolling(t.tournament_id);
       // Live score polling: keep it running through 'completed' too (not
       // just group_stage/knockout) so the final score/champion banner
@@ -8664,12 +8684,24 @@ let userPool = null;
         const totalB = (m.games || []).reduce((s, g) => s + g.score_b, 0);
         scoreCell = `<strong>${totalA} - ${totalB}</strong>`;
       } else if (m.player_a && m.player_b) {
+        // Best-of-3 (owner request, 2026-08-22): a match here isn't
+        // necessarily fresh just because m.played is still false - one or
+        // two games may already be in the books (games_won_a/b > 0) with
+        // more still needed. Mirrors the progress line the banner-card path
+        // above already shows (Games so far: ... | Game N:), which this
+        // "lineup still pickable" path was missing entirely before - it
+        // used to render a bare, contextless "Submit" button no matter how
+        // far into a best-of-3 series the match already was.
+        const gamesText = formatGames(m.games);
+        const nextGameNum = (m.games ? m.games.length : 0) + 1;
+        const progress = gamesText ? `Games so far: ${gamesText} (${m.games_won_a}-${m.games_won_b}) | ` : '';
         if (liveMode) {
-          scoreCell = renderLiveScoreControls(matchKey, target, `finishDraftTieLiveGame('${matchKey}','${t.tournament_id}','${tie.tie_id}',${idx},'${stageKind}')`, m.player_a.name, m.player_b.name);
+          scoreCell = `${progress}Game ${nextGameNum}: ${renderLiveScoreControls(matchKey, target, `finishDraftTieLiveGame('${matchKey}','${t.tournament_id}','${tie.tie_id}',${idx},'${stageKind}')`, m.player_a.name, m.player_b.name)}`;
         } else {
-          scoreCell = `<input type="number" id="tie-score-a-${tie.tie_id}-${idx}" placeholder="A" style="width:50px;"> - ` +
+          scoreCell = `${progress}Game ${nextGameNum}: ` +
+            `<input type="number" id="tie-score-a-${tie.tie_id}-${idx}" placeholder="A" style="width:50px;"> - ` +
             `<input type="number" id="tie-score-b-${tie.tie_id}-${idx}" placeholder="B" style="width:50px;"> ` +
-            `<button type="button" class="secondary" onclick="submitDraftTieScore('${t.tournament_id}','${tie.tie_id}',${idx},'${stageKind}')">Submit</button>`;
+            `<button type="button" class="secondary" onclick="submitDraftTieScore('${t.tournament_id}','${tie.tie_id}',${idx},'${stageKind}')">Submit game ${nextGameNum}</button>`;
         }
       } else {
         scoreCell = '<span class="card-sub">waiting on lineup</span>';
@@ -9225,6 +9257,121 @@ let userPool = null;
         content += `<text x="${x + boxWidth - 8}" y="${y + 20}" font-size="13" text-anchor="end" fill="var(--text-secondary)">${tp.played ? totals.a : ''}</text>`;
         content += `<text x="${x + 8}" y="${y + boxHeight - 8}" font-size="13" font-weight="${bWon ? 'bold' : 'normal'}" fill="${bWon ? 'var(--court)' : 'var(--text)'}">${truncateBracketName(tp.player_b ? tp.player_b.name : 'TBD')}</text>`;
         content += `<text x="${x + boxWidth - 8}" y="${y + boxHeight - 8}" font-size="13" text-anchor="end" fill="var(--text-secondary)">${tp.played ? totals.b : ''}</text>`;
+      }
+
+      svg.setAttribute('viewBox', `0 0 ${totalWidth} ${totalHeight}`);
+      svg.innerHTML = content;
+    }
+
+    /** Manual-draft sibling of renderBracketView, adapted for tie-shaped
+     * knockout rounds instead of plain matches: squad_a/squad_b instead of
+     * player_a/player_b, draftSquadName(t, squadId) instead of an entity's
+     * own .name (a squad's id is just a string, not an object with .name),
+     * wins_a/wins_b (ties won within the tie) instead of a per-game point
+     * total, winner_squad_id instead of winner_id, decided instead of
+     * played. Coordinate math, TBD-placeholder-round filling, and the
+     * third-place box are copied as-is from renderBracketView since ties
+     * carry the exact same rounds/third_place_match shape a legacy
+     * knockout does. */
+    function renderDraftBracketView(t) {
+      const svg = document.getElementById('bracket-svg');
+      if (!t.knockout || !t.knockout.rounds || !t.knockout.rounds.length) {
+        svg.innerHTML = '<text x="10" y="20" font-size="13" fill="var(--text-secondary)">No knockout bracket for this tournament yet.</text>';
+        svg.setAttribute('viewBox', '0 0 400 40');
+        return;
+      }
+
+      const dataRounds = t.knockout.rounds;
+      const colWidth = 240;
+      const boxWidth = 200;
+      const boxHeight = 56;
+      const baseSpacing = 90;
+
+      const totalRounds = Math.round(Math.log2(dataRounds[0].length)) + 1;
+
+      const rounds = [];
+      for (let r = 0; r < totalRounds; r++) {
+        if (dataRounds[r]) {
+          rounds[r] = dataRounds[r];
+        } else {
+          const prevCount = rounds[r - 1] ? rounds[r - 1].length : dataRounds[0].length;
+          const count = Math.max(1, Math.ceil(prevCount / 2));
+          rounds[r] = Array.from({ length: count }, () => ({
+            squad_a: null, squad_b: null, matches: [], wins_a: 0, wins_b: 0, decided: false, winner_squad_id: null
+          }));
+        }
+      }
+
+      const positions = [];
+      positions[0] = rounds[0].map((_, i) => i * baseSpacing + baseSpacing / 2);
+      for (let r = 1; r < rounds.length; r++) {
+        positions[r] = rounds[r].map((_, i) => {
+          const y1 = positions[r - 1][i * 2];
+          const y2 = positions[r - 1][i * 2 + 1];
+          if (y1 !== undefined && y2 !== undefined) return (y1 + y2) / 2;
+          return y1 !== undefined ? y1 : baseSpacing / 2;
+        });
+      }
+
+      const finalBoxTop = positions[rounds.length - 1][0] - boxHeight / 2 + 24;
+      const finalBoxBottom = finalBoxTop + boxHeight;
+      const hasThirdPlace = item_has_third_place(t) && t.knockout.third_place_match;
+      const thirdPlaceGap = 40;
+      const totalHeight = Math.max(
+        Math.max(...positions[0]) + baseSpacing / 2 + 30,
+        hasThirdPlace ? finalBoxBottom + thirdPlaceGap + boxHeight + 20 : 0
+      );
+      const totalWidth = rounds.length * colWidth + boxWidth + 40;
+
+      let content = '';
+
+      for (let r = 1; r < rounds.length; r++) {
+        for (let i = 0; i < rounds[r].length; i++) {
+          const x1 = 20 + (r - 1) * colWidth + boxWidth;
+          const x2 = 20 + r * colWidth;
+          const xMid = x1 + (x2 - x1) / 2;
+          const yThis = positions[r][i];
+          const yFeed1 = positions[r - 1][i * 2];
+          const yFeed2 = positions[r - 1][i * 2 + 1];
+          if (yFeed1 !== undefined) content += `<path d="M${x1},${yFeed1} H${xMid} V${yThis} H${x2}" fill="none" stroke="var(--border)" stroke-width="2"/>`;
+          if (yFeed2 !== undefined) content += `<path d="M${x1},${yFeed2} H${xMid} V${yThis} H${x2}" fill="none" stroke="var(--border)" stroke-width="2"/>`;
+        }
+      }
+
+      rounds.forEach((round, r) => {
+        const x = 20 + r * colWidth;
+        const label = r === totalRounds - 1 ? 'Final' : (r === totalRounds - 2 ? 'Semifinal' : `Round ${r + 1}`);
+        content += `<text x="${x}" y="16" font-size="12" fill="var(--text-secondary)">${label}</text>`;
+        round.forEach((tie, i) => {
+          const y = positions[r][i] - boxHeight / 2 + 24;
+          const nameA = truncateBracketName(tie.squad_a ? draftSquadName(t, tie.squad_a) : 'TBD');
+          const nameB = tie.bye ? 'BYE' : truncateBracketName(tie.squad_b ? draftSquadName(t, tie.squad_b) : 'TBD');
+          const aWon = tie.decided && tie.squad_a && tie.winner_squad_id === tie.squad_a;
+          const bWon = tie.decided && tie.squad_b && tie.winner_squad_id === tie.squad_b;
+          const isPlaceholder = !tie.squad_a && !tie.squad_b;
+
+          content += `<rect x="${x}" y="${y}" width="${boxWidth}" height="${boxHeight}" fill="var(--surface)" stroke="var(--border)" rx="6" ${isPlaceholder ? 'stroke-dasharray="4 3"' : ''}/>`;
+          content += `<line x1="${x}" y1="${y + boxHeight / 2}" x2="${x + boxWidth}" y2="${y + boxHeight / 2}" stroke="var(--border)"/>`;
+          content += `<text x="${x + 8}" y="${y + 20}" font-size="13" font-weight="${aWon ? 'bold' : 'normal'}" fill="${aWon ? 'var(--court)' : 'var(--text-secondary)'}">${nameA}</text>`;
+          content += `<text x="${x + boxWidth - 8}" y="${y + 20}" font-size="13" text-anchor="end" fill="var(--text-secondary)">${tie.matches && tie.matches.length && !tie.bye ? tie.wins_a : ''}</text>`;
+          content += `<text x="${x + 8}" y="${y + boxHeight - 8}" font-size="13" font-weight="${bWon ? 'bold' : 'normal'}" fill="${bWon ? 'var(--court)' : 'var(--text-secondary)'}">${nameB}</text>`;
+          content += `<text x="${x + boxWidth - 8}" y="${y + boxHeight - 8}" font-size="13" text-anchor="end" fill="var(--text-secondary)">${tie.matches && tie.matches.length && !tie.bye ? tie.wins_b : ''}</text>`;
+        });
+      });
+
+      if (hasThirdPlace) {
+        const tp = t.knockout.third_place_match;
+        const x = 20 + (rounds.length - 1) * colWidth;
+        const y = finalBoxBottom + thirdPlaceGap;
+        const aWon = tp.decided && tp.squad_a && tp.winner_squad_id === tp.squad_a;
+        const bWon = tp.decided && tp.squad_b && tp.winner_squad_id === tp.squad_b;
+        content += `<text x="${x}" y="${y - 8}" font-size="12" fill="var(--text-secondary)">3rd place</text>`;
+        content += `<rect x="${x}" y="${y}" width="${boxWidth}" height="${boxHeight}" fill="var(--surface)" stroke="var(--border)" rx="6"/>`;
+        content += `<line x1="${x}" y1="${y + boxHeight / 2}" x2="${x + boxWidth}" y2="${y + boxHeight / 2}" stroke="var(--border)"/>`;
+        content += `<text x="${x + 8}" y="${y + 20}" font-size="13" font-weight="${aWon ? 'bold' : 'normal'}" fill="${aWon ? 'var(--court)' : 'var(--text)'}">${truncateBracketName(tp.squad_a ? draftSquadName(t, tp.squad_a) : 'TBD')}</text>`;
+        content += `<text x="${x + boxWidth - 8}" y="${y + 20}" font-size="13" text-anchor="end" fill="var(--text-secondary)">${tp.decided || (tp.matches || []).some(m => m.played) ? tp.wins_a : ''}</text>`;
+        content += `<text x="${x + 8}" y="${y + boxHeight - 8}" font-size="13" font-weight="${bWon ? 'bold' : 'normal'}" fill="${bWon ? 'var(--court)' : 'var(--text)'}">${truncateBracketName(tp.squad_b ? draftSquadName(t, tp.squad_b) : 'TBD')}</text>`;
+        content += `<text x="${x + boxWidth - 8}" y="${y + boxHeight - 8}" font-size="13" text-anchor="end" fill="var(--text-secondary)">${tp.decided || (tp.matches || []).some(m => m.played) ? tp.wins_b : ''}</text>`;
       }
 
       svg.setAttribute('viewBox', `0 0 ${totalWidth} ${totalHeight}`);
