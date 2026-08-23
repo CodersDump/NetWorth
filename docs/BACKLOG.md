@@ -27,7 +27,9 @@
   unbeatable majority (e.g. 2-0 in a best-of-3), instead of demanding every match slot be filled, with a
   "Best of N (first to K)" label added to each tie card, added 2026-08-23 (v1.64.0, see Done); the final
   and third-place match can now each have their OWN "matches per tie" setting, separate from the base
-  semifinal/knockout setting, added 2026-08-23 (v1.65.0, see Done).**
+  semifinal/knockout setting (v1.65.0), bundled with a fix for champion/runner-up/third-place leaderboard
+  highlighting being completely dead on cross_squad tournaments (v1.66.0, see Done) — shipped together
+  2026-08-23.**
   Full design: organizer names leaders, splits every player into ranked pools (drag/tap board -
   **done**), leaders draft squads via a live organizer-paced point-budget auction (**done**), then a
   squad-vs-squad group stage (round robin, N individual matches per tie) and knockout (final/semi/3rd-
@@ -349,6 +351,41 @@
 ---
 
 ## Done
+
+- ✅ 2026-08-23 (v1.66.0) — **Manual-mode tournaments: fixed champion/runner-up/third-place highlighting
+  being completely dead on the player leaderboard for cross_squad tournaments.** Owner report, on the SAME
+  live tournament right after cancelling the third-place tie's moot slots: "i cannot see this it
+  reflecting proiperly. the leaderboard is misleading tranay and shourav won the 1 matchs but in their row
+  it shows up as 6 matches but it should be 7 ... and tanhay and sourav should be showing 4-3 and in third
+  position, but nothing is getting higlighted."
+  Investigated against the owner's real live `dump.json`: the matches-played/win-loss NUMBERS were actually
+  already correct - Tanay & Saurav Ashok's own pair lost their OWN semifinal 0-2 to a *different* pair from
+  their *same* parent squad (Nitish & Sandeep, the other rep that squad fielded in the other group - this
+  is the same "C and D make tanay's teams pitch against each other" scenario confirmed correct at the very
+  start of this whole thread), so their pair went into the third-place match already 2-3, and the 21-19
+  third-place win correctly brought them to 3-3 across 6 matches - matching what was on screen exactly.
+  The REAL bug was the "nothing is getting higlighted" half: `computeLeaderboardRows`'s champion/runner-up/
+  third-place placement lookup was keyed by plain squad id (`squadOf[pid]`, built from `t.squads`, whose
+  member list spans a squad's WHOLE roster across every rep), but `finalTie.winner_squad_id`/`squad_a`/
+  `squad_b` and `third_place_match.winner_squad_id` are REP ids (`"{squad_id}::repN"`) in cross_squad
+  mode, not plain squad ids - so the lookup silently matched nothing, for ANY row, on ANY cross_squad
+  tournament that ever reached `completed`. Worse, since a squad's own reps all share one plain squad id,
+  even fixing the id mismatch naively would have collided two of a squad's own placements together -
+  exactly this tournament's shape, where Team Tanay's rep0 (Nitish & Sandeep) finished runner-up (silver)
+  while rep1 (Tanay & Saurav Ashok, a completely different pair) finished third (bronze) at the same time.
+  Fixed by building a reverse `pairKey -> repId` map from `t.reps` and preferring an exact rep match over
+  the plain-squad-id fallback when looking a row's placement up, so each rep now gets its own independent
+  placement entry with no collision. For a normal (non-cross_squad) tournament `t.reps` is empty/absent,
+  so every row falls through to the squad-id lookup exactly as before - byte-identical behavior, no
+  regression. Shared by both the HTML leaderboard and the downloadable leaderboard share image, since both
+  already ran through the same `computeLeaderboardRows` helper.
+  New `/tmp/test_cross_squad_leaderboard_placement_ui.js` (11 checks): a fixture reproducing the exact live
+  shape (one parent squad fielding two independent reps, one runner-up + one third-place) confirms the
+  champion gets gold, the runner-up gets silver, the third-place pair gets bronze, the two same-squad
+  placements no longer collide, and an uninvolved pair gets none. Full existing suite re-run clean (32
+  backend files, 18 UI files including the new one).
+  Bundled into this same release with v1.65.0's per-stage matches-per-tie work below, since the owner
+  hadn't deployed v1.65.0 yet when this was found - ship both together as v1.66.0.
 
 - ✅ 2026-08-23 (v1.65.0) — **Manual-mode tournaments: separate "matches per tie" settings for the final
   and third-place match, distinct from the semifinal/base knockout setting.** Owner follow-up right after
