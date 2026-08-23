@@ -20,7 +20,10 @@
   redesigned into a flat, performance-ranked pair leaderboard with placement medals, more sections made
   collapsible, and a downloadable share image of the tournament's CURRENT (in-progress) state, added
   2026-08-22 (v1.61.0, see Done); the leaderboard also got its OWN separate downloadable image, drawn
-  with each pair's real picked banner as its row background, added 2026-08-22 (v1.62.0, see Done).**
+  with each pair's real picked banner as its row background, added 2026-08-22 (v1.62.0, see Done);
+  organizer-only cancel/forfeit actions for a tie match that can't be played, plus a fix so the real-
+  named-groups knockout draw pairs adjacent groups deterministically instead of randomly, added
+  2026-08-23 (v1.63.0, see Done).**
   Full design: organizer names leaders, splits every player into ranked pools (drag/tap board -
   **done**), leaders draft squads via a live organizer-paced point-budget auction (**done**), then a
   squad-vs-squad group stage (round robin, N individual matches per tie) and knockout (final/semi/3rd-
@@ -342,6 +345,58 @@
 ---
 
 ## Done
+
+- ✅ 2026-08-23 (v1.63.0) — **Manual-mode tournaments: cancel/forfeit for a tie match that can't be
+  played, and a fix for the real-named-groups knockout draw being randomly paired.** Live-event owner
+  report: "the two group stage matches were pending due to which i couldn't enter the semis... the group
+  stages wouldn't happen due to players availability now. what should i do?" followed by "just let me
+  cancel these two matches or somehow draw them out if not cancelled... need to check if post the logic
+  of cancelling match happened if everything works fine. Also keep an option for forfeit when either of
+  the team doesn't show up."
+  Two new organizer-only actions on any not-yet-played tie match, group stage or knockout/third-place:
+  **cancel** (`cancel-group-tie-match` / `cancel-knockout-tie-match`) — the match can never be played
+  (players unavailable on both sides) and should count toward neither side, but must stop blocking
+  advancement; **forfeit** (`forfeit-group-tie-match` / `forfeit-knockout-tie-match`, body
+  `{tie_id, match_index, forfeited_by: 'a'|'b'}`) — one side didn't show up, so the other side is awarded
+  the match win outright. Neither touches Elo (no real result happened) and neither requires a lineup to
+  have been nominated first — forfeit deliberately doesn't, since the whole point is covering the side
+  that never got to nominate anyone because they never showed up.
+  `_update_tie_progress` now tracks a match's win by *side* (`forfeited_by`) rather than only by
+  resolving `winner_id` against `player_a`/`player_b`, and excludes a `cancelled` match from both the win
+  tally and the point-diff tally entirely, as if it never existed. If EVERY match in a tie ends up
+  cancelled, the tie itself now resolves `decided: True, winner_squad_id: None, cancelled: True` instead
+  of falling into the pre-existing genuine-score-deadlock branch (which would otherwise leave it stuck
+  pending forever, since 0-0 looks identical to a real deadlock). `compute_player_tournament_scores`
+  excludes cancelled matches too, so they don't inflate anyone's tournament-scoped leaderboard with a
+  phantom 0-0 "played" match. Cancel/forfeit are organizer-only (`_authorize_tournament_organizer`) —
+  stricter than normal scoring, which a tie's own squad leader can also submit.
+  Separately, and directly relevant to the same live event: `_advance_squads_to_knockout_from_groups`
+  (real-named-groups mode) used to shuffle group qualifiers into the knockout draw with
+  `random.shuffle` — the owner's actual live bracket was "the group A qualifies went against group B
+  qualifies and similarly c with D" (always adjacent groups in name order), which the random draw had no
+  guarantee of reproducing. Changed to a deterministic pairing: qualifiers are now collected in
+  `sorted(groups.keys())` order and paired consecutively (A-B, C-D, ...), so the app's auto-generated
+  semifinal draw always matches what a real live event actually plays. The existing same-group-avoidance
+  swap (for `advance_per_group > 1`) is unchanged, just no longer needed to fix up shuffle-induced
+  same-group adjacency in the common `advance_per_group=1` case.
+  Frontend: `renderTieMatchRow` gets a small "Cancel match" / "`<Squad A>` forfeits" / "`<Squad B>`
+  forfeits" control row wherever a match isn't yet played (works whether or not a lineup has been picked
+  yet, matching forfeit's no-nomination-required design) - shown to everyone since there's no reliable
+  client-side "am I the organizer" flag (same convention as the lineup pickers), with the backend
+  enforcing the real check. An already-resolved match shows "Match cancelled – no result" or "Forfeited
+  by `<name>`" instead of a score. Fixed a latent bug the cancelled-match case would otherwise have hit:
+  the banner-card winner-highlight ternary used to fall through to "side B won" whenever `winner_id` was
+  `null` (i.e. for any cancelled match), rather than showing no winner at all.
+  New `/tmp/test_tie_cancel_forfeit.py` (16 checks, backend): cancel/forfeit authorization (organizer-
+  only, stricter than a tie's own leader), Elo untouched by either action, cancelling before any
+  nomination, a mixed tie (one slot cancelled, one played normally) deciding purely on the played slot,
+  a fully-cancelled tie resolving with no winner, `compute_player_tournament_scores` excluding cancelled
+  matches, and — repeated across 3 runs to prove it's no longer random — the real-named-groups knockout
+  draw deterministically pairing Group A-vs-B and Group C-vs-D once the last pending group match is
+  cancelled. New `/tmp/test_tie_cancel_forfeit_ui.js` (11 checks, Playwright): cancel/forfeit controls
+  render with the right squad-name labels before any lineup is picked, clicking them posts the right
+  body to the right route, and already-resolved matches show the cancelled/forfeited badges with no
+  leftover admin controls.
 
 - ✅ 2026-08-22 (v1.62.0) — **Manual-mode tournaments: a SEPARATE downloadable image for the pair
   leaderboard, distinct from the group/standings share image.** Owner, once both the v1.61.0 standings

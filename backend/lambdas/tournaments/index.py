@@ -573,6 +573,14 @@ def handle_draft_route(event):
         return record_group_tie_score(tournament_id, event, claims)
     if len(parts) == 2 and parts[1] == 'knockout-tie-score' and method == 'POST':
         return record_knockout_tie_score(tournament_id, event, claims)
+    if len(parts) == 2 and parts[1] == 'cancel-group-tie-match' and method == 'POST':
+        return cancel_group_tie_match(tournament_id, event, claims)
+    if len(parts) == 2 and parts[1] == 'forfeit-group-tie-match' and method == 'POST':
+        return forfeit_group_tie_match(tournament_id, event, claims)
+    if len(parts) == 2 and parts[1] == 'cancel-knockout-tie-match' and method == 'POST':
+        return cancel_knockout_tie_match(tournament_id, event, claims)
+    if len(parts) == 2 and parts[1] == 'forfeit-knockout-tie-match' and method == 'POST':
+        return forfeit_knockout_tie_match(tournament_id, event, claims)
 
     return _response(404, {'error': 'not found'})
 
@@ -1369,16 +1377,51 @@ def _update_tie_progress(tie):
     match-wins first, aggregate point differential (cricket-NRR style) as
     the tiebreak. A genuine deadlock on both is left `decided: False` for
     the organizer to resolve manually - same philosophy as an unsold
-    auction player in Phase B, never guessed at silently."""
+    auction player in Phase B, never guessed at silently.
+
+    A match can also be resolved without being actually played (owner
+    report, 2026-08-23, live event: 2 group matches could never happen -
+    players unavailable on both sides - and separately, a no-show should
+    let the other side win outright):
+    - `forfeited_by` ('a' or 'b') marks a match one side didn't show up
+      for; the OTHER side is credited a match win, matched by side rather
+      than by resolving player_id (a forfeiting side may never have
+      nominated a lineup at all - see _forfeit_tie_match).
+    - `cancelled` marks a match that simply can't be played and shouldn't
+      decide anything - it's excluded from both the win tally and the
+      point-diff tally entirely (as if it never existed), same as a bye
+      contributes nothing. If EVERY match in a tie ends up cancelled, the
+      tie itself is resolved with no winner (`decided: True,
+      winner_squad_id: None, cancelled: True`) rather than left pending
+      forever, which is what would otherwise happen since 0-0 falls
+      straight into the genuine-deadlock branch below."""
     matches = tie['matches']
-    wins_a = sum(1 for m in matches if m['played'] and m['winner_id'] == (m['player_a'] or {}).get('player_id'))
-    wins_b = sum(1 for m in matches if m['played'] and m['winner_id'] == (m['player_b'] or {}).get('player_id'))
+
+    def side_a_won(m):
+        if not m['played']:
+            return False
+        if m.get('forfeited_by'):
+            return m['forfeited_by'] == 'b'
+        return not m.get('cancelled') and m['winner_id'] == (m['player_a'] or {}).get('player_id')
+
+    def side_b_won(m):
+        if not m['played']:
+            return False
+        if m.get('forfeited_by'):
+            return m['forfeited_by'] == 'a'
+        return not m.get('cancelled') and m['winner_id'] == (m['player_b'] or {}).get('player_id')
+
+    wins_a = sum(1 for m in matches if side_a_won(m))
+    wins_b = sum(1 for m in matches if side_b_won(m))
     diff_a = sum(sum(g['score_a'] for g in m['games']) - sum(g['score_b'] for g in m['games'])
-                 for m in matches if m['played'])
+                 for m in matches if m['played'] and not m.get('cancelled'))
     tie['wins_a'], tie['wins_b'] = wins_a, wins_b
     tie['point_diff_a'], tie['point_diff_b'] = diff_a, -diff_a
 
     if not all(m['played'] for m in matches):
+        return
+    if matches and all(m.get('cancelled') for m in matches):
+        tie['decided'], tie['winner_squad_id'], tie['cancelled'] = True, None, True
         return
     if wins_a > wins_b:
         tie['decided'], tie['winner_squad_id'] = True, tie['squad_a']
@@ -1434,6 +1477,53 @@ def _score_tie_match(item, tie, match_index, score_a, score_b, override, point_l
                             item['group_id'], item['tournament_id'], stage_label,
                             winner_override=winner, games=match['games'], point_log=point_log)
         _update_tie_progress(tie)
+
+
+def _cancel_tie_match(tie, match_index):
+    """Marks one match as administratively cancelled - can't be played
+    (owner report, 2026-08-23: players unavailable on both sides, a live
+    group match could never happen) and shouldn't decide anything. No
+    Elo change, no score - see _update_tie_progress for how a cancelled
+    match is excluded from the tie's win/point-diff tally."""
+    matches = tie['matches']
+    if match_index < 0 or match_index >= len(matches):
+        raise ValueError('invalid match_index')
+    match = matches[match_index]
+    if match['played']:
+        raise ValueError('this match is already decided')
+    match['played'] = True
+    match['cancelled'] = True
+    match['games'] = []
+    match['games_won_a'] = 0
+    match['games_won_b'] = 0
+    match['winner_id'] = None
+    _update_tie_progress(tie)
+
+
+def _forfeit_tie_match(tie, match_index, forfeited_by):
+    """Marks one match as forfeited by one side (owner report, 2026-08-23:
+    "keep an option for forfeit when either of the team doesn't show up")
+    - the OTHER side is credited the match win. Deliberately doesn't
+    require either side to have nominated a lineup first (unlike a normal
+    score submission) - the whole point is to cover the case where the
+    absent side never nominated anyone. No Elo change: a no-show isn't a
+    real result, so nobody's rating moves for it."""
+    matches = tie['matches']
+    if match_index < 0 or match_index >= len(matches):
+        raise ValueError('invalid match_index')
+    if forfeited_by not in ('a', 'b'):
+        raise ValueError('forfeited_by must be "a" or "b"')
+    match = matches[match_index]
+    if match['played']:
+        raise ValueError('this match is already decided')
+    match['played'] = True
+    match['forfeited_by'] = forfeited_by
+    match['games'] = []
+    match['games_won_a'] = 0
+    match['games_won_b'] = 0
+    winner_entity = match.get('player_b') if forfeited_by == 'a' else match.get('player_a')
+    match['winner_id'] = winner_entity['player_id'] if winner_entity else None
+    _update_tie_progress(tie)
 
 
 def _find_tie(item, tie_id):
@@ -1675,7 +1765,13 @@ def compute_player_tournament_scores(item):
         return stats[pid]
 
     def apply_match(m):
-        if not m['played'] or not m.get('player_a') or not m.get('player_b'):
+        # A cancelled match (owner request, 2026-08-23: players unavailable
+        # on both sides, can't be replayed) never happened - excluded here
+        # the same way it's excluded from the tie's own win/point-diff
+        # tally (_update_tie_progress), so it doesn't inflate anyone's
+        # matches_played with a phantom 0-0. A forfeited match DID resolve
+        # a real winner/loser and still counts normally below.
+        if not m['played'] or m.get('cancelled') or not m.get('player_a') or not m.get('player_b'):
             return
         a, b = m['player_a'], m['player_b']
         total_a = sum(g['score_a'] for g in m['games'])
@@ -2435,19 +2531,28 @@ def _inject_group_tiebreakers_if_needed(item):
 def _advance_squads_to_knockout_from_groups(item):
     """Real-separate-groups sibling of the legacy groups_then_knockout
     format's advance_to_knockout: top advance_per_group squads from each
-    group qualify, shuffled into the knockout bracket with a best-effort
-    swap to avoid two squads from the SAME group meeting in round one
-    (same de-clustering approach as the legacy path, adapted from
-    entities to squad_ids)."""
+    group qualify.
+
+    Used to shuffle qualifiers into the bracket randomly, with a
+    best-effort swap to avoid two squads from the SAME group meeting in
+    round one. Changed to a deterministic pairing (owner report,
+    2026-08-23, live event: "the group A qualifies went against group B
+    qualifies and similarly c with D") - a real live bracket is always
+    adjacent groups in name order (A-B, C-D, ...), never a random draw, so
+    the app's auto-generated knockout draw had no guarantee of matching
+    what organizers already played out live. Sorts groups by name and
+    pairs them consecutively instead of shuffling. The same-group-
+    avoidance swap below still matters when advance_per_group > 1 (two
+    qualifiers from one group can land adjacent in that case) - it's just
+    never triggered by group order alone anymore."""
     groups = item['group_stage']['groups']
     advance_n = int(item.get('manual_draft', {}).get('advance_per_group', 2))
     qualifiers = []
-    for name, members in groups.items():
-        standings = compute_squad_standings(item, squad_ids=members)
+    for name in sorted(groups.keys()):
+        standings = compute_squad_standings(item, squad_ids=groups[name])
         for s in standings[:advance_n]:
             qualifiers.append({'squad_id': s['squad_id'], 'group': name})
 
-    random.shuffle(qualifiers)
     for i in range(0, len(qualifiers) - 1, 2):
         if qualifiers[i]['group'] == qualifiers[i + 1]['group']:
             for j in range(i + 2, len(qualifiers)):
@@ -2493,6 +2598,17 @@ def record_group_tie_score(tournament_id, event, claims):
     except ValueError as e:
         return _response(400, {'error': str(e)})
 
+    _after_group_tie_resolved(item)
+    tournaments_table.put_item(Item=item)
+    return _response(200, _hide_pool_auction_from_non_organizer(item, claims))
+
+
+def _after_group_tie_resolved(item):
+    """Shared by every route that can make a group tie `decided` (score,
+    cancel, forfeit): once every group tie is resolved one way or another,
+    either injects a boundary tiebreaker or advances to knockout - exactly
+    the block record_group_tie_score always ran inline, now reused by the
+    cancel/forfeit routes below too."""
     if all(t.get('decided') for t in item['group_stage']['ties']):
         if item['group_stage'].get('groups'):
             if not _inject_group_tiebreakers_if_needed(item):
@@ -2500,6 +2616,74 @@ def record_group_tie_score(tournament_id, event, claims):
         else:
             _generate_knockout_from_group_stage(item)
 
+
+def cancel_group_tie_match(tournament_id, event, claims):
+    """Organizer-only: administratively cancels one group match that can
+    never be played (owner report, 2026-08-23: players unavailable on both
+    sides for 2 group matches at a live event, with no replacement
+    possible) - counts toward neither side, but stops blocking
+    advancement. See _cancel_tie_match/_update_tie_progress."""
+    item, err = _draft_get_tournament(tournament_id)
+    if err:
+        return err
+    if item.get('status') != 'group_stage':
+        return _response(400, {'error': 'tournament is not in group stage'})
+
+    body = json.loads(event.get('body') or '{}')
+    tie_id = body.get('tie_id')
+    match_index = body.get('match_index')
+    if not tie_id or match_index is None:
+        return _response(400, {'error': 'tie_id and match_index are required'})
+
+    tie = next((t for t in item.get('group_stage', {}).get('ties', []) if t['tie_id'] == tie_id), None)
+    if not tie:
+        return _response(404, {'error': 'tie not found'})
+
+    denied = _authorize_tournament_organizer(item, claims)
+    if denied:
+        return denied
+
+    try:
+        _cancel_tie_match(tie, int(match_index))
+    except ValueError as e:
+        return _response(400, {'error': str(e)})
+
+    _after_group_tie_resolved(item)
+    tournaments_table.put_item(Item=item)
+    return _response(200, _hide_pool_auction_from_non_organizer(item, claims))
+
+
+def forfeit_group_tie_match(tournament_id, event, claims):
+    """Organizer-only sibling of cancel_group_tie_match: one side didn't
+    show up, so the other side is awarded the match win outright (owner
+    request, 2026-08-23). Body: {tie_id, match_index, forfeited_by: 'a'|'b'}."""
+    item, err = _draft_get_tournament(tournament_id)
+    if err:
+        return err
+    if item.get('status') != 'group_stage':
+        return _response(400, {'error': 'tournament is not in group stage'})
+
+    body = json.loads(event.get('body') or '{}')
+    tie_id = body.get('tie_id')
+    match_index = body.get('match_index')
+    forfeited_by = body.get('forfeited_by')
+    if not tie_id or match_index is None or not forfeited_by:
+        return _response(400, {'error': 'tie_id, match_index and forfeited_by are required'})
+
+    tie = next((t for t in item.get('group_stage', {}).get('ties', []) if t['tie_id'] == tie_id), None)
+    if not tie:
+        return _response(404, {'error': 'tie not found'})
+
+    denied = _authorize_tournament_organizer(item, claims)
+    if denied:
+        return denied
+
+    try:
+        _forfeit_tie_match(tie, int(match_index), forfeited_by)
+    except ValueError as e:
+        return _response(400, {'error': str(e)})
+
+    _after_group_tie_resolved(item)
     tournaments_table.put_item(Item=item)
     return _response(200, _hide_pool_auction_from_non_organizer(item, claims))
 
@@ -2570,6 +2754,79 @@ def record_knockout_tie_score(tournament_id, event, claims):
     try:
         _score_tie_match(item, tie, int(match_index), int(score_a), int(score_b), override, point_log,
                           'third_place' if is_third_place else 'knockout')
+    except ValueError as e:
+        return _response(400, {'error': str(e)})
+
+    if not is_third_place and tie.get('decided'):
+        _advance_knockout_ties_if_round_complete(item)
+
+    tournaments_table.put_item(Item=item)
+    return _response(200, _hide_pool_auction_from_non_organizer(item, claims))
+
+
+def cancel_knockout_tie_match(tournament_id, event, claims):
+    """Organizer-only knockout/third-place sibling of cancel_group_tie_match
+    (owner request, 2026-08-23) - see _cancel_tie_match/_update_tie_progress."""
+    item, err = _draft_get_tournament(tournament_id)
+    if err:
+        return err
+    if item.get('status') not in ('knockout', 'completed'):
+        return _response(400, {'error': 'tournament is not in knockout stage'})
+
+    body = json.loads(event.get('body') or '{}')
+    tie_id = body.get('tie_id')
+    match_index = body.get('match_index')
+    if not tie_id or match_index is None:
+        return _response(400, {'error': 'tie_id and match_index are required'})
+
+    tie = _find_tie(item, tie_id)
+    if not tie:
+        return _response(404, {'error': 'tie not found'})
+    is_third_place = (item.get('knockout') or {}).get('third_place_match') is tie
+
+    denied = _authorize_tournament_organizer(item, claims)
+    if denied:
+        return denied
+
+    try:
+        _cancel_tie_match(tie, int(match_index))
+    except ValueError as e:
+        return _response(400, {'error': str(e)})
+
+    if not is_third_place and tie.get('decided'):
+        _advance_knockout_ties_if_round_complete(item)
+
+    tournaments_table.put_item(Item=item)
+    return _response(200, _hide_pool_auction_from_non_organizer(item, claims))
+
+
+def forfeit_knockout_tie_match(tournament_id, event, claims):
+    """Organizer-only knockout/third-place sibling of forfeit_group_tie_match
+    (owner request, 2026-08-23). Body: {tie_id, match_index, forfeited_by: 'a'|'b'}."""
+    item, err = _draft_get_tournament(tournament_id)
+    if err:
+        return err
+    if item.get('status') not in ('knockout', 'completed'):
+        return _response(400, {'error': 'tournament is not in knockout stage'})
+
+    body = json.loads(event.get('body') or '{}')
+    tie_id = body.get('tie_id')
+    match_index = body.get('match_index')
+    forfeited_by = body.get('forfeited_by')
+    if not tie_id or match_index is None or not forfeited_by:
+        return _response(400, {'error': 'tie_id, match_index and forfeited_by are required'})
+
+    tie = _find_tie(item, tie_id)
+    if not tie:
+        return _response(404, {'error': 'tie not found'})
+    is_third_place = (item.get('knockout') or {}).get('third_place_match') is tie
+
+    denied = _authorize_tournament_organizer(item, claims)
+    if denied:
+        return denied
+
+    try:
+        _forfeit_tie_match(tie, int(match_index), forfeited_by)
     except ValueError as e:
         return _response(400, {'error': str(e)})
 
