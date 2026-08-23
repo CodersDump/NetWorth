@@ -8916,6 +8916,13 @@ let userPool = null;
       const liveMode = !!(liveModeToggle && liveModeToggle.checked);
       const target = parseInt(t.points_to_win, 10) || 21;
       const matchKey = `tie_${t.tournament_id}_${tie.tie_id}_${idx}`;
+      // Falls back to the squad/rep name when nobody's been nominated yet
+      // (owner request, 2026-08-23: a forfeit can apply even before a
+      // lineup is picked, since the whole point is a side that never
+      // showed up to nominate anyone) - used only for the cancel/forfeit
+      // admin controls' button labels below.
+      const sideAName = (m.player_a && m.player_a.name) || draftSquadName(t, tie.squad_a);
+      const sideBName = (m.player_b && m.player_b.name) || draftSquadName(t, tie.squad_b);
 
       // Once both sides are known and there's no lineup left to pick for
       // this particular match (cross-squad reps are fixed from the moment
@@ -8948,10 +8955,18 @@ let userPool = null;
           // directly instead of recomputing it, matching how the legacy
           // group/knockout view already does this (games_won_a >
           // games_won_b, never a point-sum comparison).
-          winner: m.played ? (m.winner_id === m.player_a.player_id ? 'a' : 'b') : null,
+          // A cancelled match has no winner at all (owner request,
+          // 2026-08-23) - m.winner_id is null, which the old ternary below
+          // would've silently rendered as "side B won".
+          winner: m.played ? (m.cancelled ? null : (m.winner_id === m.player_a.player_id ? 'a' : 'b')) : null,
         });
         let controls = '';
-        if (m.played) {
+        if (m.cancelled) {
+          controls = `<div class="fixture-controls" style="opacity:.75;">Match cancelled &ndash; no result</div>`;
+        } else if (m.forfeited_by) {
+          const forfeitName = m.forfeited_by === 'a' ? m.player_a.name : m.player_b.name;
+          controls = `<div class="fixture-controls" style="opacity:.75;">Forfeited by ${escapeHtml(forfeitName)}</div>`;
+        } else if (m.played) {
           if (m.games && m.games.length > 1) {
             controls = `<div class="fixture-controls" style="opacity:.75;">${gamesText}</div>`;
           }
@@ -8967,6 +8982,7 @@ let userPool = null;
               <input type="number" id="tie-score-b-${tie.tie_id}-${idx}" placeholder="B" style="width:50px;">
               <button type="button" class="secondary" onclick="submitDraftTieScore('${t.tournament_id}','${tie.tie_id}',${idx},'${stageKind}')">Submit game ${nextGameNum}</button></div>`;
           }
+          controls += draftTieMatchAdminControlsHtml(t.tournament_id, tie.tie_id, idx, stageKind, m.player_a.name, m.player_b.name);
         }
         return `<div class="fixture" style="margin:6px 0;"><span class="card-sub" style="display:block;margin-bottom:2px;">Match #${idx + 1}</span>${card}${controls}</div>`;
       }
@@ -9009,7 +9025,11 @@ let userPool = null;
             : draftPlayerPickerHtml(t.tournament_id, tie.tie_id, idx, squadBMembers, m.player_b, matchType, tie.squad_b));
       }
       let scoreCell;
-      if (m.played) {
+      if (m.cancelled) {
+        scoreCell = '<span class="card-sub">Cancelled &ndash; no result</span>';
+      } else if (m.forfeited_by) {
+        scoreCell = `<span class="card-sub">Forfeited by ${escapeHtml(m.forfeited_by === 'a' ? sideAName : sideBName)}</span>`;
+      } else if (m.played) {
         const totalA = (m.games || []).reduce((s, g) => s + g.score_a, 0);
         const totalB = (m.games || []).reduce((s, g) => s + g.score_b, 0);
         scoreCell = `<strong>${totalA} - ${totalB}</strong>`;
@@ -9033,8 +9053,13 @@ let userPool = null;
             `<input type="number" id="tie-score-b-${tie.tie_id}-${idx}" placeholder="B" style="width:50px;"> ` +
             `<button type="button" class="secondary" onclick="submitDraftTieScore('${t.tournament_id}','${tie.tie_id}',${idx},'${stageKind}')">Submit game ${nextGameNum}</button>`;
         }
+        scoreCell += draftTieMatchAdminControlsHtml(t.tournament_id, tie.tie_id, idx, stageKind, sideAName, sideBName);
       } else {
-        scoreCell = '<span class="card-sub">waiting on lineup</span>';
+        // No lineup picked yet - cancel/forfeit still apply (owner request,
+        // 2026-08-23): a forfeit in particular covers exactly the case
+        // where the absent side never got to nominate anyone.
+        scoreCell = '<span class="card-sub">waiting on lineup</span>' +
+          draftTieMatchAdminControlsHtml(t.tournament_id, tie.tie_id, idx, stageKind, sideAName, sideBName);
       }
       return `<div style="display:flex;gap:8px;align-items:center;font-size:13px;padding:3px 0;flex-wrap:wrap;">
         <span style="min-width:20px;color:var(--text-secondary);">#${idx + 1}</span>
@@ -9043,6 +9068,45 @@ let userPool = null;
         <span style="flex:1;min-width:100px;">${bCell}</span>
         <span>${scoreCell}</span>
       </div>`;
+    }
+
+    /** Cancel/forfeit controls for one not-yet-played tie match (owner
+     *  request, 2026-08-23: "keep an option for forfeit when either of the
+     *  team doesn't show up" plus a way to close out a match that can
+     *  never be played at all, e.g. players unavailable on both sides).
+     *  Organizer-only server-side (see _authorize_tournament_organizer in
+     *  the backend) - shown to everyone here since there's no reliable
+     *  client-side "am I the organizer" flag, same convention as the
+     *  lineup pickers above; a non-organizer who tries just gets the
+     *  resulting 403 back as an alert. */
+    function draftTieMatchAdminControlsHtml(tournamentId, tieId, idx, stageKind, sideAName, sideBName) {
+      return `<div style="display:flex;gap:4px;flex-wrap:wrap;align-items:center;margin-top:4px;">
+        <button type="button" class="secondary" style="font-size:11px;padding:2px 6px;" onclick="cancelDraftTieMatch('${tournamentId}','${tieId}',${idx},'${stageKind}')">Cancel match</button>
+        <button type="button" class="secondary" style="font-size:11px;padding:2px 6px;" onclick="forfeitDraftTieMatch('${tournamentId}','${tieId}',${idx},'${stageKind}','a')">${escapeHtml(sideAName)} forfeits</button>
+        <button type="button" class="secondary" style="font-size:11px;padding:2px 6px;" onclick="forfeitDraftTieMatch('${tournamentId}','${tieId}',${idx},'${stageKind}','b')">${escapeHtml(sideBName)} forfeits</button>
+      </div>`;
+    }
+
+    async function cancelDraftTieMatch(tournamentId, tieId, matchIndex, stageKind) {
+      if (!await nwConfirm('Cancel this match? It counts for neither side (no score, no rating change) but stops it blocking the tournament from advancing. This cannot be undone.')) return;
+      const routeSuffix = stageKind === 'knockout' ? 'cancel-knockout-tie-match' : 'cancel-group-tie-match';
+      const { res, data, error } = await authedFetch(`${API_BASE_URL}/tournament-draft/${tournamentId}/${routeSuffix}`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tie_id: tieId, match_index: matchIndex })
+      });
+      if (!res.ok) { nwAlert(error || (data && data.error) || 'Could not cancel that match'); return; }
+      renderTournament(data);
+    }
+
+    async function forfeitDraftTieMatch(tournamentId, tieId, matchIndex, stageKind, forfeitedBy) {
+      if (!await nwConfirm('Record this match as a forfeit? The other side is awarded the win (no score, no rating change). This cannot be undone.')) return;
+      const routeSuffix = stageKind === 'knockout' ? 'forfeit-knockout-tie-match' : 'forfeit-group-tie-match';
+      const { res, data, error } = await authedFetch(`${API_BASE_URL}/tournament-draft/${tournamentId}/${routeSuffix}`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tie_id: tieId, match_index: matchIndex, forfeited_by: forfeitedBy })
+      });
+      if (!res.ok) { nwAlert(error || (data && data.error) || 'Could not record that forfeit'); return; }
+      renderTournament(data);
     }
 
     function draftPlayerPickerHtml(tournamentId, tieId, matchIndex, members, currentEntity, matchType, squadIdForOrganizer) {
