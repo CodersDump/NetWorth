@@ -7411,6 +7411,13 @@ let userPool = null;
         advance_per_group: document.getElementById('draft_advance_per_group').value,
         match_type: document.getElementById('tournament_match_type').value,
       };
+      // Optional per-stage overrides - left blank means "same as Knockout
+      // matches per tie" (the backend applies that fallback itself when the
+      // key is omitted from the payload entirely).
+      const finalMPT = document.getElementById('draft_final_matches_per_tie').value;
+      if (finalMPT) payload.final_matches_per_tie = finalMPT;
+      const thirdPlaceMPT = document.getElementById('draft_third_place_matches_per_tie').value;
+      if (thirdPlaceMPT) payload.third_place_matches_per_tie = thirdPlaceMPT;
       resultEl.textContent = 'Creating...';
       try {
         const { res, data, error } = await authedFetch(`${API_BASE_URL}/tournament-draft`, {
@@ -8900,8 +8907,13 @@ let userPool = null;
       // "Best of N (first to K)" visibility (owner request, 2026-08-23:
       // "at least see how many matches are to be done in each of these") -
       // matches_per_tie is fixed per-tournament at creation
-      // (draft_group_matches_per_tie/draft_knockout_matches_per_tie on the
-      // create form), but wasn't shown anywhere on the tie itself.
+      // (draft_group_matches_per_tie/draft_knockout_matches_per_tie, plus
+      // the optional draft_final_matches_per_tie/
+      // draft_third_place_matches_per_tie overrides, on the create form),
+      // but wasn't shown anywhere on the tie itself. Reading it straight
+      // off tie.matches.length here means this label is automatically
+      // correct for whichever per-stage count actually built this
+      // particular tie, with no extra plumbing needed.
       const matchCount = (tie.matches || []).length;
       const neededWins = Math.floor(matchCount / 2) + 1;
       const bestOfLabel = matchCount > 1 ? `Best of ${matchCount} (first to ${neededWins}) &middot; ` : '';
