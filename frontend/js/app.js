@@ -8897,10 +8897,18 @@ let userPool = null;
       const myPid = myPlayerId();
       const iLeadA = myPid === tie.squad_a;
       const iLeadB = myPid === tie.squad_b;
+      // "Best of N (first to K)" visibility (owner request, 2026-08-23:
+      // "at least see how many matches are to be done in each of these") -
+      // matches_per_tie is fixed per-tournament at creation
+      // (draft_group_matches_per_tie/draft_knockout_matches_per_tie on the
+      // create form), but wasn't shown anywhere on the tie itself.
+      const matchCount = (tie.matches || []).length;
+      const neededWins = Math.floor(matchCount / 2) + 1;
+      const bestOfLabel = matchCount > 1 ? `Best of ${matchCount} (first to ${neededWins}) &middot; ` : '';
       let html = `<div style="padding:8px 0;border-bottom:1px solid var(--border);">
         <div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;font-size:13px;margin-bottom:6px;">
           <strong>${escapeHtml(nameA)} ${tie.wins_a} - ${tie.wins_b} ${escapeHtml(nameB)}</strong>
-          <span class="card-sub">${tie.tiebreaker ? 'Tiebreaker &ndash; ' : ''}${tie.decided ? 'Decided' : 'In progress'}${(tie.point_diff_a || 0) !== 0 ? ` (diff ${tie.point_diff_a > 0 ? '+' : ''}${tie.point_diff_a})` : ''}</span>
+          <span class="card-sub">${bestOfLabel}${tie.tiebreaker ? 'Tiebreaker &ndash; ' : ''}${tie.decided ? 'Decided' : 'In progress'}${(tie.point_diff_a || 0) !== 0 ? ` (diff ${tie.point_diff_a > 0 ? '+' : ''}${tie.point_diff_a})` : ''}</span>
         </div>`;
       (tie.matches || []).forEach((m, idx) => { html += renderTieMatchRow(tie, m, idx, t, stageKind, iLeadA, iLeadB); });
       html += '</div>';
@@ -8908,6 +8916,20 @@ let userPool = null;
     }
 
     function renderTieMatchRow(tie, m, idx, t, stageKind, iLeadA, iLeadB) {
+      // The tie already clinched a majority before this slot was needed
+      // (owner report, 2026-08-23: a best-of-3 tie that finished 2-0 still
+      // showed an open, playable Match #3 - "it should not be [showing]")
+      // - _update_tie_progress now decides a tie the moment one side can no
+      // longer be caught, so any later match in `matches` just never gets
+      // played. Render it as a plain "not needed" line instead of active
+      // score-entry/cancel/forfeit controls, which would be confusing (and
+      // pointless to click) on an already-decided tie.
+      if (tie.decided && !m.played) {
+        return `<div style="display:flex;gap:8px;align-items:center;font-size:13px;padding:3px 0;color:var(--text-secondary);">
+          <span style="min-width:20px;">#${idx + 1}</span>
+          <span>Not needed &ndash; tie already decided</span>
+        </div>`;
+      }
       const squadAMembers = ((t.squads || {})[tie.squad_a] || {}).members || [];
       const squadBMembers = ((t.squads || {})[tie.squad_b] || {}).members || [];
       const matchType = (t.manual_draft || {}).match_type || 'singles';

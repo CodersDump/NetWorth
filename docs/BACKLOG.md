@@ -23,7 +23,9 @@
   with each pair's real picked banner as its row background, added 2026-08-22 (v1.62.0, see Done);
   organizer-only cancel/forfeit actions for a tie match that can't be played, plus a fix so the real-
   named-groups knockout draw pairs adjacent groups deterministically instead of randomly, added
-  2026-08-23 (v1.63.0, see Done).**
+  2026-08-23 (v1.63.0, see Done); a best-of-N tie now decides itself early once one side clinches an
+  unbeatable majority (e.g. 2-0 in a best-of-3), instead of demanding every match slot be filled, with a
+  "Best of N (first to K)" label added to each tie card, added 2026-08-23 (v1.64.0, see Done).**
   Full design: organizer names leaders, splits every player into ranked pools (drag/tap board -
   **done**), leaders draft squads via a live organizer-paced point-budget auction (**done**), then a
   squad-vs-squad group stage (round robin, N individual matches per tie) and knockout (final/semi/3rd-
@@ -345,6 +347,38 @@
 ---
 
 ## Done
+
+- ✅ 2026-08-23 (v1.64.0) — **Manual-mode tournaments: a best-of-N tie now decides itself the instant one
+  side clinches an unbeatable majority, instead of demanding every match slot be filled.** Owner report,
+  right after v1.63.0's cancel feature shipped, from the SAME live tournament: a knockout tie configured
+  `knockout_matches_per_tie=3` (best of 3) finished 2-0 (Nitish & Sandeep Singh Rathore beat Tanay &
+  Saurav Ashok twice) — "i thing the tanay saurav and nitish sandeep match only had 2 since both the
+  matches were won by nitish sandeep. so i have entered the 2 matches but i can see the third match
+  still shows up. it should not be." Also asked for a way to "see how many matches are to be done in
+  each of these" (best-of-N ties had no visibility into their own configured length).
+  `_update_tie_progress` now computes `needed_wins = len(matches)//2 + 1` and decides the tie the moment
+  either side reaches it — standard best-of-N majority math (2 of 3 can't be caught by a third match),
+  so a real 2-0 sweep completes immediately and the third slot is simply never needed, exactly matching
+  how a real best-of-3 series is actually played (nobody plays game 3 after 2-0). A tie that ends up
+  evenly split with no early majority (e.g. 1-1 in a best-of-2) still needs every slot resolved and
+  still falls back to the existing point-diff tiebreak, unchanged. Once a tie is decided this way,
+  `_score_tie_match`/`_cancel_tie_match`/`_forfeit_tie_match` all now reject any further action on its
+  remaining match slot(s) (400 "this tie is already decided") — both because it can't change the
+  outcome, and because letting a moot match's score still add to `point_diff_a`/`point_diff_b` would
+  leak into that squad's standings tiebreaker even though the match had no bearing on this tie.
+  Frontend: `renderTieMatchRow` renders an already-moot, not-yet-played slot as a plain "Not needed –
+  tie already decided" line instead of live score-entry/cancel/forfeit controls (fixes the exact "it
+  should not be [showing]" complaint); `renderTieCard`'s header now shows a "Best of N (first to K)"
+  label (e.g. "Best of 3 (first to 2)") computed straight from `tie.matches.length`, giving the
+  visibility into configured match count the owner also asked for.
+  New `/tmp/test_tie_early_decision.py` (9 checks): a 2-0 sweep in a best-of-3 decides immediately with
+  the third slot left untouched, that moot slot then rejects scoring/cancelling/forfeiting, its
+  point-diff never leaks in, a best-of-2 needs both slots and correctly falls back to the point-diff
+  tiebreak on an even split, and — reproducing the exact live scenario end to end — a knockout semifinal
+  configured best-of-3 completes the whole tournament (2 real teams) on a 2-0 sweep. `/tmp/test_tie_cancel_forfeit_ui.js`
+  extended (4 more checks, 15 total): the "Best of 3 (first to 2)" label renders, the moot third slot
+  shows "Not needed" with no Cancel/forfeit buttons on it specifically, and the two real, played matches
+  still show their actual scores untouched.
 
 - ✅ 2026-08-23 (v1.63.0) — **Manual-mode tournaments: cancel/forfeit for a tie match that can't be
   played, and a fix for the real-named-groups knockout draw being randomly paired.** Live-event owner
