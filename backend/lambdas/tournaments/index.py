@@ -631,6 +631,14 @@ def create_manual_draft_tournament(event, claims):
         picks_per_pool = int(body.get('picks_per_pool', 2))
         group_matches_per_tie = int(body.get('group_matches_per_tie', 2))
         knockout_matches_per_tie = int(body.get('knockout_matches_per_tie', 1))
+        # Per-stage overrides (owner request, 2026-08-23: "next time onwards
+        # will it ask me how many sets for each semis or finals or third
+        # place matches?" - a real live event ran semis+final at one format
+        # (best-of-3 to 11) but third place as a single match to 21).
+        # Both default to knockout_matches_per_tie so an organizer who
+        # doesn't touch these fields gets byte-identical behavior to before.
+        final_matches_per_tie = int(body.get('final_matches_per_tie', knockout_matches_per_tie))
+        third_place_matches_per_tie = int(body.get('third_place_matches_per_tie', knockout_matches_per_tie))
         num_groups = int(body.get('num_groups', 1))
         advance_per_group = int(body.get('advance_per_group', 1))
         # Games per individual match, per stage (owner request, 2026-08-22:
@@ -646,7 +654,8 @@ def create_manual_draft_tournament(event, claims):
         knockout_best_of = int(body.get('knockout_best_of', 1))
     except (TypeError, ValueError):
         return _response(400, {'error': 'budget_per_leader, num_pools, picks_per_pool, group_matches_per_tie, '
-                                         'knockout_matches_per_tie, num_groups, advance_per_group, group_best_of, '
+                                         'knockout_matches_per_tie, final_matches_per_tie, '
+                                         'third_place_matches_per_tie, num_groups, advance_per_group, group_best_of, '
                                          'knockout_best_of must be numbers'})
 
     match_type = body.get('match_type', 'singles')
@@ -669,6 +678,8 @@ def create_manual_draft_tournament(event, claims):
     if budget_per_leader < 1:
         return _response(400, {'error': 'budget_per_leader must be positive'})
     if group_matches_per_tie < 1 or knockout_matches_per_tie < 1:
+        return _response(400, {'error': 'matches_per_tie values must be at least 1'})
+    if final_matches_per_tie < 1 or third_place_matches_per_tie < 1:
         return _response(400, {'error': 'matches_per_tie values must be at least 1'})
     if num_groups < 1:
         return _response(400, {'error': 'num_groups must be at least 1'})
@@ -695,6 +706,8 @@ def create_manual_draft_tournament(event, claims):
             'picks_per_pool': picks_per_pool,
             'group_matches_per_tie': group_matches_per_tie,
             'knockout_matches_per_tie': knockout_matches_per_tie,
+            'final_matches_per_tie': final_matches_per_tie,
+            'third_place_matches_per_tie': third_place_matches_per_tie,
             'match_type': match_type,
             'num_groups': num_groups,
             'advance_per_group': advance_per_group,
@@ -1682,9 +1695,12 @@ def compute_projected_knockout(item):
 
     standings = compute_squad_standings(item)
     seeded_squad_ids = [s['squad_id'] for s in standings]
-    matches_per_tie = int(item.get('manual_draft', {}).get('knockout_matches_per_tie', 1))
+    md = item.get('manual_draft', {})
+    matches_per_tie = int(md.get('knockout_matches_per_tie', 1))
+    final_matches_per_tie = int(md.get('final_matches_per_tie', matches_per_tie))
+    first_round_matches_per_tie = final_matches_per_tie if len(seeded_squad_ids) <= 2 else matches_per_tie
     return {
-        'rounds': [build_knockout_tie_round(seeded_squad_ids, matches_per_tie)],
+        'rounds': [build_knockout_tie_round(seeded_squad_ids, first_round_matches_per_tie)],
         'pending_group_ties': len(pending_ties),
     }
 
@@ -2509,8 +2525,19 @@ def pick_tie_player(tournament_id, event, claims):
 def _generate_knockout_from_group_stage(item):
     standings = compute_squad_standings(item)
     seeded_squad_ids = [s['squad_id'] for s in standings]
-    matches_per_tie = int(item['manual_draft']['knockout_matches_per_tie'])
-    item['knockout'] = {'matches_per_tie': matches_per_tie, 'rounds': [build_knockout_tie_round(seeded_squad_ids, matches_per_tie)]}
+    md = item.get('manual_draft', {})
+    matches_per_tie = int(md['knockout_matches_per_tie'])
+    final_matches_per_tie = int(md.get('final_matches_per_tie', matches_per_tie))
+    third_place_matches_per_tie = int(md.get('third_place_matches_per_tie', matches_per_tie))
+    # If this first round is already down to one tie (e.g. only 2 squads
+    # total), it IS the final - build it with the final's own match count.
+    first_round_matches_per_tie = final_matches_per_tie if len(seeded_squad_ids) <= 2 else matches_per_tie
+    item['knockout'] = {
+        'matches_per_tie': matches_per_tie,
+        'final_matches_per_tie': final_matches_per_tie,
+        'third_place_matches_per_tie': third_place_matches_per_tie,
+        'rounds': [build_knockout_tie_round(seeded_squad_ids, first_round_matches_per_tie)],
+    }
     item['status'] = 'knockout'
 
 
@@ -2591,10 +2618,22 @@ def _advance_squads_to_knockout_from_groups(item):
                     break
 
     seeded_squad_ids = [q['squad_id'] for q in qualifiers]
-    matches_per_tie = int(item['manual_draft']['knockout_matches_per_tie'])
-    first_round = build_knockout_tie_round(seeded_squad_ids, matches_per_tie)
+    md = item.get('manual_draft', {})
+    matches_per_tie = int(md['knockout_matches_per_tie'])
+    final_matches_per_tie = int(md.get('final_matches_per_tie', matches_per_tie))
+    third_place_matches_per_tie = int(md.get('third_place_matches_per_tie', matches_per_tie))
+    # If this first round is already down to one tie (e.g. only 2 groups,
+    # 1 qualifier each), it IS the final - build it with the final's own
+    # match count rather than the semifinal-tier default.
+    first_round_matches_per_tie = final_matches_per_tie if len(seeded_squad_ids) <= 2 else matches_per_tie
+    first_round = build_knockout_tie_round(seeded_squad_ids, first_round_matches_per_tie)
     _fill_cross_squad_match_players(item, first_round)  # no-op unless this is cross-squad group mode
-    item['knockout'] = {'matches_per_tie': matches_per_tie, 'rounds': [first_round]}
+    item['knockout'] = {
+        'matches_per_tie': matches_per_tie,
+        'final_matches_per_tie': final_matches_per_tie,
+        'third_place_matches_per_tie': third_place_matches_per_tie,
+        'rounds': [first_round],
+    }
     item['status'] = 'knockout'
 
 
@@ -2742,7 +2781,15 @@ def _advance_knockout_ties_if_round_complete(item):
 
     matches_per_tie = int(item['knockout'].get('matches_per_tie', 1))
     winners = [t['winner_squad_id'] for t in current_round]
-    next_round = build_knockout_tie_round(winners, matches_per_tie)
+    # The round we're about to build is the final exactly when it comes out
+    # to a single tie - use the final's own match count there instead of
+    # the semifinal-tier default (owner request, 2026-08-23: separate
+    # "how many sets" per semis/final/third place).
+    next_round_matches_per_tie = (
+        int(item['knockout'].get('final_matches_per_tie', matches_per_tie))
+        if len(winners) == 1 else matches_per_tie
+    )
+    next_round = build_knockout_tie_round(winners, next_round_matches_per_tie)
     _fill_cross_squad_match_players(item, next_round)  # no-op unless this is cross-squad group mode
     rounds.append(next_round)
 
@@ -2750,7 +2797,8 @@ def _advance_knockout_ties_if_round_complete(item):
         losers = []
         for t in current_round:
             losers.append(t['squad_b'] if t['winner_squad_id'] == t['squad_a'] else t['squad_a'])
-        third_place = build_tie(losers[0], losers[1], matches_per_tie)
+        third_place_matches_per_tie = int(item['knockout'].get('third_place_matches_per_tie', matches_per_tie))
+        third_place = build_tie(losers[0], losers[1], third_place_matches_per_tie)
         _fill_cross_squad_match_players(item, [third_place])  # no-op unless this is cross-squad group mode
         item['knockout']['third_place_match'] = third_place
 

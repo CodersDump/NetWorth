@@ -1327,8 +1327,22 @@
               </div>
               <div>
                 <label>Knockout matches per tie
-                  <span class="info-tip" tabindex="0">i<span class="info-tip-text">Same idea as "Group-stage matches per tie", but for the knockout rounds (semifinal, final, etc) once the group stage is over &mdash; how many individual games decide each squad-vs-squad matchup at that later stage.</span></span>
+                  <span class="info-tip" tabindex="0">i<span class="info-tip-text">Same idea as "Group-stage matches per tie", but for the knockout rounds (semifinal, final, etc) once the group stage is over &mdash; how many individual games decide each squad-vs-squad matchup at that later stage. This is the default used for the semifinal round (and any earlier knockout rounds); the final and third-place match can each be set differently below.</span></span>
                   <input type="number" id="draft_knockout_matches_per_tie" value="1" min="1">
+                </label>
+              </div>
+            </div>
+            <div class="row">
+              <div>
+                <label>Final matches per tie <span style="font-weight:normal;color:var(--text-secondary);">(optional)</span>
+                  <span class="info-tip" tabindex="0">i<span class="info-tip-text">How many individual games decide the FINAL specifically. Leave blank to use the same number as "Knockout matches per tie" above; set it only if the final is played to a different number of games (e.g. semis best-of-3, final best-of-5).</span></span>
+                  <input type="number" id="draft_final_matches_per_tie" placeholder="same as knockout" min="1">
+                </label>
+              </div>
+              <div>
+                <label>Third-place matches per tie <span style="font-weight:normal;color:var(--text-secondary);">(optional)</span>
+                  <span class="info-tip" tabindex="0">i<span class="info-tip-text">How many individual games decide the THIRD-PLACE match specifically. Real events often play this differently from the semis/final &mdash; e.g. a single decisive game instead of a best-of-3. Leave blank to use the same number as "Knockout matches per tie" above.</span></span>
+                  <input type="number" id="draft_third_place_matches_per_tie" placeholder="same as knockout" min="1">
                 </label>
               </div>
             </div>

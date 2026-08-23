@@ -25,7 +25,9 @@
   named-groups knockout draw pairs adjacent groups deterministically instead of randomly, added
   2026-08-23 (v1.63.0, see Done); a best-of-N tie now decides itself early once one side clinches an
   unbeatable majority (e.g. 2-0 in a best-of-3), instead of demanding every match slot be filled, with a
-  "Best of N (first to K)" label added to each tie card, added 2026-08-23 (v1.64.0, see Done).**
+  "Best of N (first to K)" label added to each tie card, added 2026-08-23 (v1.64.0, see Done); the final
+  and third-place match can now each have their OWN "matches per tie" setting, separate from the base
+  semifinal/knockout setting, added 2026-08-23 (v1.65.0, see Done).**
   Full design: organizer names leaders, splits every player into ranked pools (drag/tap board -
   **done**), leaders draft squads via a live organizer-paced point-budget auction (**done**), then a
   squad-vs-squad group stage (round robin, N individual matches per tie) and knockout (final/semi/3rd-
@@ -347,6 +349,41 @@
 ---
 
 ## Done
+
+- ✅ 2026-08-23 (v1.65.0) — **Manual-mode tournaments: separate "matches per tie" settings for the final
+  and third-place match, distinct from the semifinal/base knockout setting.** Owner follow-up right after
+  confirming the cancel-workaround for the third-place tie would work for now: "next time onwatds itr
+  will ask me how many sets for eacxh semis or finals or third place matches?" — direct callback to the
+  same live event where semis+final were played best-of-3 to 11 but third place was a single match to
+  21, which is exactly why the third-place tie needed the cancel-workaround at all: `knockout_matches_per_tie`
+  was one global number shared by the WHOLE knockout stage (semis, final, AND third place alike), so
+  there was no way to configure a tournament ahead of time to match that real format split.
+  `create_manual_draft_tournament` now accepts two new optional fields, `final_matches_per_tie` and
+  `third_place_matches_per_tie`, each defaulting to `knockout_matches_per_tie` when omitted — a
+  tournament that never touches these fields behaves byte-identically to before. Both are snapshotted
+  into `item['knockout']` (alongside the existing `matches_per_tie`) the moment the bracket is first
+  built, so a later change to the tournament's `manual_draft` config can't retroactively reshape an
+  in-progress bracket. `_advance_knockout_ties_if_round_complete` picks `final_matches_per_tie` for
+  whichever round comes out to exactly one tie (the final) and `third_place_matches_per_tie` for the
+  auto-created third-place match, falling back to the base `matches_per_tie` for every earlier knockout
+  round (semis, or quarters+semis on a bigger bracket); the very first knockout round built straight off
+  group-stage qualifiers also picks up `final_matches_per_tie` in the edge case where it's already down
+  to a single tie (only 2 total qualifiers, no separate semifinal round). Frontend: two new optional
+  create-form fields, "Final matches per tie" / "Third-place matches per tie", both left blank by default
+  (placeholder "same as knockout") and only included in the create payload when actually filled in, so
+  the backend's own default-to-`knockout_matches_per_tie` fallback is what applies for the common case;
+  `renderTieCard`'s existing "Best of N" label (added in v1.64.0) already reads straight off
+  `tie.matches.length`, so it automatically shows the right count per-stage with no extra plumbing.
+  New `/tmp/test_per_stage_matches_per_tie.py` (12 checks): explicit values are stored as given, omitted
+  overrides default to `knockout_matches_per_tie`, invalid values (<1) are rejected, a straight
+  2-qualifier final (no semis) is built with `final_matches_per_tie`, and — reproducing the real event's
+  exact 4-squad shape end to end — both semifinals build with the base `knockout_matches_per_tie` (3),
+  the final builds with `final_matches_per_tie` (3), the third-place match auto-creates with
+  `third_place_matches_per_tie` (1) and correctly pits the two semifinal losers against each other, and a
+  single 21-15 game fully decides that 1-slot third-place tie with no cancel-workaround needed. New
+  `/tmp/test_per_stage_create_form_ui.js` (11 checks): the two new create-form inputs exist and are
+  clearly marked optional, leaving them blank omits the fields from the create payload, filling them in
+  includes the values submitted.
 
 - ✅ 2026-08-23 (v1.64.0) — **Manual-mode tournaments: a best-of-N tie now decides itself the instant one
   side clinches an unbeatable majority, instead of demanding every match slot be filled.** Owner report,
