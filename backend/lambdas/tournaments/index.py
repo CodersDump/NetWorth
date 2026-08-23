@@ -1394,7 +1394,17 @@ def _update_tie_progress(tie):
       tie itself is resolved with no winner (`decided: True,
       winner_squad_id: None, cancelled: True`) rather than left pending
       forever, which is what would otherwise happen since 0-0 falls
-      straight into the genuine-deadlock branch below."""
+      straight into the genuine-deadlock branch below.
+
+    A tie also decides itself EARLY, the moment one side clinches an
+    unbeatable majority of its own matches_per_tie (owner report,
+    2026-08-23: a best-of-3 knockout tie that finished 2-0 still showed a
+    pointless, still-open Match #3 - "I can see the third match still
+    shows up. It should not be"). Standard best-of-N stopping rule:
+    winning more than half of the tie's total match slots can't be caught
+    by whatever's left, so there's no reason to wait for every slot to be
+    played/cancelled/forfeited - matches how any real best-of-3 series
+    actually works (stops at 2-0, never plays game 3)."""
     matches = tie['matches']
 
     def side_a_won(m):
@@ -1417,6 +1427,14 @@ def _update_tie_progress(tie):
                  for m in matches if m['played'] and not m.get('cancelled'))
     tie['wins_a'], tie['wins_b'] = wins_a, wins_b
     tie['point_diff_a'], tie['point_diff_b'] = diff_a, -diff_a
+
+    needed_wins = len(matches) // 2 + 1
+    if matches and wins_a >= needed_wins:
+        tie['decided'], tie['winner_squad_id'] = True, tie['squad_a']
+        return
+    if matches and wins_b >= needed_wins:
+        tie['decided'], tie['winner_squad_id'] = True, tie['squad_b']
+        return
 
     if not all(m['played'] for m in matches):
         return
@@ -1443,6 +1461,14 @@ def _score_tie_match(item, tie, match_index, score_a, score_b, override, point_l
     matches = tie['matches']
     if match_index < 0 or match_index >= len(matches):
         raise ValueError('invalid match_index')
+    # A tie can now decide itself early, before every match slot is played
+    # (see _update_tie_progress's majority check) - once that's happened,
+    # any remaining slot is moot and shouldn't be scoreable: it can't
+    # change who won the tie, and letting it add to point_diff_a/b would
+    # still leak into that squad's standings tiebreaker even though the
+    # match had no bearing on this tie's own outcome.
+    if tie.get('decided'):
+        raise ValueError('this tie is already decided - the remaining match is not needed')
     match = matches[match_index]
     if match['played']:
         raise ValueError('this match is already decided')
@@ -1488,6 +1514,8 @@ def _cancel_tie_match(tie, match_index):
     matches = tie['matches']
     if match_index < 0 or match_index >= len(matches):
         raise ValueError('invalid match_index')
+    if tie.get('decided'):
+        raise ValueError('this tie is already decided - the remaining match is not needed')
     match = matches[match_index]
     if match['played']:
         raise ValueError('this match is already decided')
@@ -1513,6 +1541,8 @@ def _forfeit_tie_match(tie, match_index, forfeited_by):
         raise ValueError('invalid match_index')
     if forfeited_by not in ('a', 'b'):
         raise ValueError('forfeited_by must be "a" or "b"')
+    if tie.get('decided'):
+        raise ValueError('this tie is already decided - the remaining match is not needed')
     match = matches[match_index]
     if match['played']:
         raise ValueError('this match is already decided')
