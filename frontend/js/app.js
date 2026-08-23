@@ -8854,7 +8854,28 @@ let userPool = null;
         const placement = placementId ? placements[placementId] : null;
         return { group, memberStats, sid, squadName: sid ? draftSquadName(t, sid) : '', placement, isDecidingPair: !!(placement && placement.pairKey === pairKey) };
       }).filter(Boolean);
+      // Owner report (2026-08-23, right after the highlight fix above
+      // shipped): "why is the 3 position team not moving up. this is like
+      // doing based on number of played matches or what?" - the sort was
+      // pure regular-season performance (wins/point-diff/matches), with no
+      // regard for how the knockout bracket actually finished. That let a
+      // pair with a better win tally but NO podium finish (e.g. a
+      // semifinal loser) outrank the actual bronze medalist, who can
+      // easily have fewer wins on paper (their run includes the semifinal
+      // loss that put them in the third-place match to begin with). Podium
+      // finish now takes priority over raw stats: the exact gold/silver/
+      // bronze DECIDING pair (isDecidingPair - not every squadmate who
+      // merely shares that squad's tier-colored edge, since a squad in
+      // cross_squad mode can field several unrelated pairs and only one of
+      // them actually earned the medal) is pinned to the top 3 rows in
+      // placement order; everyone else - including non-deciding pairs from
+      // a placed squad - still sorts by the existing performance rule
+      // below, unchanged.
+      const TIER_RANK = { gold: 0, silver: 1, bronze: 2 };
+      const podiumRank = (row) => (row.isDecidingPair && row.placement) ? TIER_RANK[row.placement.tier] : 3;
       rows.sort((r1, r2) => {
+        const p1 = podiumRank(r1), p2 = podiumRank(r2);
+        if (p1 !== p2) return p1 - p2;
         const s1 = r1.memberStats[0], s2 = r2.memberStats[0];
         if (s2.wins !== s1.wins) return s2.wins - s1.wins;
         if (s2.point_diff !== s1.point_diff) return s2.point_diff - s1.point_diff;

@@ -28,8 +28,9 @@
   "Best of N (first to K)" label added to each tie card, added 2026-08-23 (v1.64.0, see Done); the final
   and third-place match can now each have their OWN "matches per tie" setting, separate from the base
   semifinal/knockout setting (v1.65.0), bundled with a fix for champion/runner-up/third-place leaderboard
-  highlighting being completely dead on cross_squad tournaments (v1.66.0, see Done) — shipped together
-  2026-08-23.**
+  highlighting being completely dead on cross_squad tournaments (v1.66.0), and a same-day follow-up so the
+  leaderboard's row ORDER also respects podium finish instead of pure raw stats (v1.67.0, see Done) —
+  shipped together 2026-08-23.**
   Full design: organizer names leaders, splits every player into ranked pools (drag/tap board -
   **done**), leaders draft squads via a live organizer-paced point-budget auction (**done**), then a
   squad-vs-squad group stage (round robin, N individual matches per tie) and knockout (final/semi/3rd-
@@ -351,6 +352,31 @@
 ---
 
 ## Done
+
+- ✅ 2026-08-23 (v1.67.0) — **Manual-mode tournaments: podium finish now outranks raw performance stats on
+  the player leaderboard.** Owner follow-up, same live tournament, right after v1.66.0's highlight fix
+  landed and correctly lit up the medals: "why is the 3 position team not moving up. this is like doing
+  based on number of played matches or what? can't we fix this?" — the bronze medalist (Tanay & Saurav
+  Ashok) was now correctly highlighted, but still sat in 4th ROW POSITION, below a pair (Guddu & Mirgank)
+  who never reached the podium at all but had a better raw win/loss record.
+  `computeLeaderboardRows`'s sort was pure regular-season performance (wins, then point-diff, then matches
+  played) with no regard for how the knockout bracket actually finished — a real, common situation, since
+  the bronze medalist's own run typically INCLUDES a semifinal loss (that's what put them in the third-
+  place match to begin with), so their win tally can easily be lower than a squad that never even made the
+  final four. Fixed by pinning the exact podium-deciding pair (`isDecidingPair` — specifically the pair
+  that played the final/third-place match, not every squadmate who merely shares that squad's thinner
+  tier-colored edge, since a squad can field several unrelated pairs and only one of them actually earned
+  the medal) to the top 3 rows in gold/silver/bronze order; the existing wins/point-diff/matches-played
+  tiebreakers now only apply within a tier (gold-vs-gold is a non-issue, there's only ever one) and among
+  the rest of the field below the podium — unchanged from before for everyone off the podium.
+  `/tmp/test_cross_squad_leaderboard_placement_ui.js` extended (+5 checks, 16 total): a non-podium pair
+  with a strictly better win record than the bronze medalist is confirmed to rank BELOW bronze but still
+  ABOVE the worse-performing non-podium pairs (i.e. still correctly performance-ranked among its own
+  tier). The pre-existing `/tmp/test_leaderboard_pairs_ui.js` had its row-order assertion updated to match
+  the new INTENDED behavior (its old assertion encoded the pre-fix ordering, which this change deliberately
+  reverses for the podium pairs) — the runner-up (silver, worse raw stats) now correctly sorts ahead of
+  both the third-place pair (bronze) and a non-podium pair with better stats, exactly reproducing the
+  owner's live complaint in miniature. Full suite re-run clean (32 backend files, 18 UI files).
 
 - ✅ 2026-08-23 (v1.66.0) — **Manual-mode tournaments: fixed champion/runner-up/third-place highlighting
   being completely dead on the player leaderboard for cross_squad tournaments.** Owner report, on the SAME
