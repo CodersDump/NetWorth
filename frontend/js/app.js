@@ -8784,6 +8784,35 @@ let userPool = null;
       // highlight; every OTHER pair from that same placement squad still
       // gets a thinner tier-colored edge, since "the entire squad" also
       // placed, per the owner's earlier clarification) ----
+      //
+      // Bug fix (owner report, 2026-08-23: "nothing is getting higlighted"
+      // on a completed cross_squad tournament): finalTie.winner_squad_id/
+      // squad_a/squad_b and third_place_match.winner_squad_id are REP ids
+      // ("{squad_id}::repN") in cross_squad mode, not plain squad ids - but
+      // this function's per-row lookup only ever had a plain squad id
+      // available (squadOf[pid], built from t.squads, whose members list is
+      // the WHOLE squad across every rep). Keying `placements` by the raw
+      // champSid/runnerSid/winner_squad_id therefore silently never matched
+      // any row for a cross_squad tournament - the champion/runner-up/
+      // third-place highlight was entirely dead for that mode. Also, since
+      // ALL of a squad's reps share the same plain squad id, two of a
+      // squad's OWN reps finishing in different places (e.g. one pair is
+      // the runner-up, a DIFFERENT pair from the same squad takes third -
+      // exactly this tournament's shape) would collide on one squad-keyed
+      // dict entry even if it weren't rep-vs-plain-id-mismatched. Fixed by
+      // building a reverse pairKey->repId map from t.reps and preferring an
+      // exact rep match over the squad-id fallback when looking a row's
+      // placement up - each rep then gets its own independent placement
+      // entry. For a normal (non-cross_squad) tournament t.reps is
+      // empty/absent, so this reverse map is empty and every row falls
+      // through to the squad-id lookup exactly as before - unchanged.
+      const repIdForPairKey = {};
+      Object.keys(t.reps || {}).forEach(repId => {
+        const rep = t.reps[repId];
+        if (rep && Array.isArray(rep.members)) {
+          repIdForPairKey[rep.members.slice().sort().join('|')] = repId;
+        }
+      });
       const squadSideField = (tie, sid) => (tie.squad_a === sid ? 'player_a' : (tie.squad_b === sid ? 'player_b' : null));
       const decidingPairKey = (tie, sid) => {
         const field = squadSideField(tie, sid);
@@ -8819,7 +8848,10 @@ let userPool = null;
         if (!memberStats.length) return null;
         const sid = squadOf[group[0]] || null;
         const pairKey = group.slice().sort().join('|');
-        const placement = sid ? placements[sid] : null;
+        // Prefer an exact rep match (cross_squad mode) over the plain
+        // squad-id fallback - see the note above `placements` for why.
+        const placementId = repIdForPairKey[pairKey] || sid;
+        const placement = placementId ? placements[placementId] : null;
         return { group, memberStats, sid, squadName: sid ? draftSquadName(t, sid) : '', placement, isDecidingPair: !!(placement && placement.pairKey === pairKey) };
       }).filter(Boolean);
       rows.sort((r1, r2) => {
