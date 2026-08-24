@@ -201,6 +201,13 @@ Resources:
       UserPoolName: !Sub '${AppName}-users'
       AutoVerifiedAttributes: [email]
       UsernameAttributes: [email]
+      # ESSENTIALS (not the default LITE tier) is required for
+      # PasswordHistorySize below - owner report, 2026-08-24: "i was able to
+      # forget password and use my old password again. it should not allow
+      # that as well." Cost impact for a club-sized user base is
+      # effectively nil (Essentials is free for the first 10,000 MAU,
+      # $0.015/MAU after - see https://aws.amazon.com/cognito/pricing/).
+      UserPoolTier: ESSENTIALS
       Policies:
         PasswordPolicy:
           MinimumLength: 8
@@ -209,6 +216,11 @@ Resources:
           RequireNumbers: true
           RequireSymbols: false
           TemporaryPasswordValidityDays: 30
+          # Blocks reuse of any of the last 3 passwords - applies to every
+          # password-setting path Cognito has (forgot-password/
+          # ConfirmForgotPassword, ChangePassword, and the admin
+          # AdminSetUserPassword flow), not just one of them.
+          PasswordHistorySize: 3
       Schema:
         - Name: email
           AttributeDataType: String
