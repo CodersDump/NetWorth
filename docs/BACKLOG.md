@@ -30,7 +30,9 @@
   semifinal/knockout setting (v1.65.0), bundled with a fix for champion/runner-up/third-place leaderboard
   highlighting being completely dead on cross_squad tournaments (v1.66.0), and a same-day follow-up so the
   leaderboard's row ORDER also respects podium finish instead of pure raw stats (v1.67.0, see Done) —
-  shipped together 2026-08-23.**
+  shipped together 2026-08-23; and a fix so a manual-draft tournament match (group/knockout/third-place)
+  actually counts toward a player's lifetime `games_played`/XP/level/coins, matching what a regular
+  match has always done (v1.68.0, see Done) — 2026-08-24.**
   Full design: organizer names leaders, splits every player into ranked pools (drag/tap board -
   **done**), leaders draft squads via a live organizer-paced point-budget auction (**done**), then a
   squad-vs-squad group stage (round robin, N individual matches per tie) and knockout (final/semi/3rd-
@@ -352,6 +354,52 @@
 ---
 
 ## Done
+
+- ✅ 2026-08-24 (v1.68.0) — **Manual-mode tournaments: fixed lifetime `games_played`/XP/level/coins never
+  incrementing for tournament matches.** Owner report, real live tournament, `networthmatches.csv` export
+  attached: "see tanay nitish who played in this tournament atleast played knockout, should've had 5 or
+  more than 5 matches. they are getting displayed under season which i believe doe not have a minimum
+  requirement, but in player card i can see matches were getting registered for both of them, but still,
+  they are showing up as 3/5 matches played for the ranking? is it getting missed somehow?" The player
+  cards and the `matches` table itself were both correct (Tanay genuinely had 6 real matches logged,
+  Nitish 8) — the bug was in what the "View Rankings" screen reads: `loadRankings()` (app.js) filters on
+  the player's persisted `games_played` field directly, with a flat `MIN_GAMES = 5` floor (unrelated to
+  the season-badge system's own separate min-games logic).
+  Root cause: `update_elo_and_log` in `tournaments/index.py` — the ONE function that records every
+  manual-draft tournament match's Elo update, for every stage (group/knockout/third-place) — only ever
+  did `SET rating = :r` on each player. It never touched `games_played`, `previous_rating`, `xp`, `level`,
+  `coins`, or `coins_earned`, unlike the equivalent regular-match path in `matches/index.py`'s
+  `_play_and_log`, which updates all of those together in one `update_item` call. So a player who only
+  ever played tournament matches showed whatever `games_played` value an earlier full `recompute_all_ratings()`
+  run (in `matches/index.py`, which DOES replay the whole shared `matches` table correctly, tournament
+  matches included) happened to stamp — frozen forever after that point, no matter how many more
+  tournament matches they went on to play. Tanay's "3" lines up exactly with a recompute that ran after
+  his 3 group-stage matches but before his knockout + third-place matches existed.
+  Fix: ported the XP/level/coins constants and helpers (`XP_PLAYED`, `XP_WIN_BONUS`, `XP_LEVEL_COEFF`,
+  `COINS_PER_LEVEL`, `level_from_xp`, `xp_for_match`, `event_multiplier_for_date`) into
+  `tournaments/index.py` (KNOWN_ISSUES #6 duplication convention, kept byte-identical to `matches/index.py`
+  so a future shared recompute stays consistent regardless of which lambda logged a match), and extended
+  `update_elo_and_log`'s player-update loop to mirror `_play_and_log` exactly: `previous_rating` snapshot,
+  XP award (stage-aware — group/knockout/third_place all have their own XP tier, same table as regular
+  matches), level, coin balance, and `games_played = if_not_exists(games_played, :zero) + :one`. Elo
+  `rating` math itself is byte-identical to before — this only ADDS fields, never changes ranking numbers.
+  `/tmp/test_tournament_games_played.py` (new, 16 checks): drives `update_elo_and_log` directly across
+  group/knockout/third-place matches for one pair and confirms `games_played` climbs by 1 each time
+  instead of freezing, `previous_rating` is correctly re-snapshotted match-to-match, stage-specific XP
+  stacks correctly, a doubles tie bumps both teammates, and a fresh 1v1 match's Elo number is unchanged
+  from the pre-fix formula. Full backend suite re-run clean (33 files); leaderboard placement/sort UI
+  tests re-run clean (unaffected, backend-only change).
+  **Follow-up needed after deploy:** this bug has silently affected every manual-draft tournament ever
+  played, not just this one — every player who has played ONLY tournament matches (or whose tournament
+  matches came after their last recompute) is undercounted right now. Recommended: after this ships, run
+  a `recompute_all_ratings()` (the `matches/index.py` copy, via the admin `/recompute` route — it replays
+  the ENTIRE shared `matches` table including tournament-sourced rows) once, to backfill `games_played`/xp/
+  level/coins correctly for every already-recorded tournament match, not just ones going forward.
+  **Known related gap, not fixed here (kept out of scope for this change):** `recompute_all_ratings()` in
+  `tournaments/index.py` (used only when deleting a tournament, to safely unwind that tournament's Elo
+  deltas) still only recomputes `rating`/`ratings_after`, not `games_played`/xp/coins — so deleting a
+  tournament today won't correctly unwind those fields either. Flagged for a future pass rather than
+  bundled into this fix, to keep this change tightly scoped to the reported bug.
 
 - ✅ 2026-08-23 (v1.67.0) — **Manual-mode tournaments: podium finish now outranks raw performance stats on
   the player leaderboard.** Owner follow-up, same live tournament, right after v1.66.0's highlight fix

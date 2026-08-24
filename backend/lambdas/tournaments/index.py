@@ -62,6 +62,69 @@ COMEBACK_BONUS_THRESHOLD = 5   # minimum deficit overcome to count as a genuine 
 COMEBACK_BONUS_PER_POINT = 0.3
 COMEBACK_BONUS_CAP = 8
 
+# ---------- XP / levels / coins ----------
+# Duplicated from matches/index.py (KNOWN_ISSUES #6 - not shared, keep every
+# copy in sync). Every OTHER match-recording path in the app (regular
+# matches, via matches/index.py's _play_and_log) awards XP/level/coins/
+# games_played alongside the Elo update - update_elo_and_log here used to
+# only touch `rating`, which meant no manual-draft tournament match (group,
+# knockout, or third-place) ever counted toward a player's games_played
+# total or XP/level/coins (owner report, 2026-08-24: "tanay nitish who
+# played in this tournament ... should've had 5 or more than 5 matches ...
+# but still, they are showing up as 3/5 matches played for the ranking").
+XP_PLAYED = {None: 10, 'group': 15, 'knockout': 25, 'third_place': 15, 'final': 40}
+XP_WIN_BONUS = {None: 5, 'group': 8, 'knockout': 15, 'third_place': 8, 'final': 30}
+XP_MARGIN_PER_POINTS = 3
+XP_MARGIN_CAP = 7
+XP_LEVEL_COEFF = 5
+COINS_PER_LEVEL = 50
+_EVENTS_ROW_ID = '__events__'
+
+
+def level_from_xp(xp):
+    """Inverse of xp = 5*N^2, floored: the highest level fully paid for by
+    this much XP. Level starts at 1 (0 XP)."""
+    if xp <= 0:
+        return 1
+    import math
+    return max(1, int(math.isqrt(int(xp) // XP_LEVEL_COEFF)))
+
+
+def xp_for_match(stage, won, margin=0):
+    """Base XP a single player earns for one match (before any event
+    multiplier). Mirrors matches/index.py exactly so a shared recompute
+    reproduces the same totals regardless of which lambda logged the match."""
+    played = XP_PLAYED.get(stage, XP_PLAYED[None])
+    bonus = XP_WIN_BONUS.get(stage, XP_WIN_BONUS[None]) if won else 0
+    margin_bonus = 0
+    if won and margin > 0:
+        margin_bonus = min(XP_MARGIN_CAP, margin // XP_MARGIN_PER_POINTS)
+    return played + bonus + margin_bonus
+
+
+def _load_events():
+    item = matches_table.get_item(Key={'match_id': _EVENTS_ROW_ID}).get('Item') or {}
+    return item.get('events', [])
+
+
+def event_multiplier_for_date(date_str, events=None):
+    """The XP multiplier active on a given match date (default 1.0)."""
+    if events is None:
+        events = _load_events()
+    if not date_str:
+        return 1.0
+    day = date_str[:10]
+    best = 1.0
+    for ev in events:
+        start = ev.get('start_date', '')
+        end = ev.get('end_date', '')
+        if start <= day <= end:
+            try:
+                best = max(best, float(ev.get('xp_multiplier', 1.0)))
+            except (TypeError, ValueError):
+                pass
+    return best
+
 
 def compute_comeback_bonus(momentum):
     """Extra rating-point bonus for the winning side, on top of the
@@ -3521,9 +3584,27 @@ def update_elo_and_log(match_type, entity_a, entity_b, score_a, score_b, group_i
     for p in team_b_players:
         new_ratings[p['player_id']] = int(round(float(p.get('rating', 1000)) + delta_b))
 
+    # Event multiplier once for this match (it's "now"), not per player -
+    # mirrors matches/index.py's _play_and_log exactly.
+    _live_mult = event_multiplier_for_date(datetime.now(timezone.utc).isoformat())
     for pid, new_rating in new_ratings.items():
-        players_table.update_item(Key={'player_id': pid}, UpdateExpression='SET rating = :r',
-                                   ExpressionAttributeValues={':r': new_rating})
+        player_obj = next((p for p in team_a_players + team_b_players if p['player_id'] == pid), {})
+        prev = int(round(float(player_obj.get('rating', 1000))))
+        won = ((winner == 'A' and pid in team_a_ids) or (winner == 'B' and pid in team_b_ids))
+        gained = round(xp_for_match(stage, won, int(abs(score_a - score_b))) * _live_mult)
+        new_xp = int(player_obj.get('xp', 0) or 0) + gained
+        new_level = level_from_xp(new_xp + int(player_obj.get('quest_xp', 0) or 0))
+        earned = COINS_PER_LEVEL * (new_level - 1)
+        spent = int(player_obj.get('coins_spent', 0) or 0)
+        quest_coins = int(player_obj.get('quest_coins', 0) or 0)
+        balance = max(0, earned + quest_coins - spent)
+        players_table.update_item(
+            Key={'player_id': pid},
+            UpdateExpression='SET rating = :r, previous_rating = :pr, xp = :xp, #lvl = :lvl, coins = :c, coins_earned = :ce, games_played = if_not_exists(games_played, :zero) + :one',
+            ExpressionAttributeNames={'#lvl': 'level'},
+            ExpressionAttributeValues={':r': new_rating, ':pr': prev, ':xp': new_xp,
+                                       ':lvl': new_level, ':c': balance, ':ce': earned,
+                                       ':zero': 0, ':one': 1})
 
     log_item = {
         'match_id': str(uuid.uuid4()),
