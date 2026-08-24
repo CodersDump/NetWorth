@@ -121,6 +121,11 @@ replay — `recompute_all_ratings()` (present in both matches and tournaments la
 - **8 Lambdas** (all `python3.12`, handler `index.handler`): whoami, register-player, players,
   groups, finance, matches, tournaments, progress-scheduler.
 - **Cognito**: `UserPool` + `CognitoAuthorizer` (IdentitySource = `Authorization` header).
+  `UserPoolTier: ESSENTIALS` (added 2026-08-24, owner report: "i was able to forget password and use
+  my old password again" — the default `LITE` tier doesn't support `PasswordHistorySize`, the
+  CloudFormation-native property that blocks reuse of a user's last N passwords across every
+  password-setting path Cognito has, forgot-password included; set to `3` here) — negligible cost
+  for a club-sized user base (Essentials is free for the first 10,000 MAU).
 - **EventBridge rule** → `progress-scheduler` (weekly match-approval backfill + winner snapshots).
 - **S3 `WebsiteBucket`** doubles as the uploads bucket (`uploads/` prefix) → deploy must NEVER
   `s3 sync --delete` or it wipes user cosmetics (workflow uses explicit `cp`).

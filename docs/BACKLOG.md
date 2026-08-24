@@ -11,6 +11,14 @@
 
 ## Now / high priority
 
+- `[bug] S` **Signup form: no email-typo safeguard, unfriendly "already registered" error.** Owner
+  found this while chasing the "forgot password not sending the code" report (2026-08-24) - he'd typo'd
+  his own email at signup and only found out when no mail arrived. Proposed fix (not yet built, owner
+  redirected to the password-reuse issue before confirming scope - see v1.69.0 in Done): a confirm-email
+  retype field on the signup form (blocks submit client-side on mismatch), plus a friendlier message
+  when `userPool.signUp` returns "this email is already registered" instead of showing Cognito's raw
+  error text as-is.
+
 - `[feat] L` **Manual-mode tournaments (leaders + pool draft/auction) — Phases A-D all done, feature
   complete. Configurable best-of-3 + real visual bracket added 2026-08-22 (v1.58.0, see Done); a
   projected-knockout preview while group ties are still pending added 2026-08-22 (v1.59.0, see Done);
@@ -354,6 +362,35 @@
 ---
 
 ## Done
+
+- ✅ 2026-08-24 (v1.69.0) — **Account security: forgot-password let you reset to your OLD password.**
+  Owner report, testing the forgot-password flow himself right after the v1.68.0 investigation: "i was
+  able to forget password and use my old password again. it should not allow that as well." Cognito
+  doesn't block this by default - the `UserPool`'s `LITE` feature tier (the default, and what this pool
+  was on) doesn't support `PasswordHistorySize`, the CloudFormation-native setting that blocks reusing
+  any of a user's last N passwords across every password-setting path (forgot-password/
+  `ConfirmForgotPassword`, `ChangePassword`, and the admin `AdminSetUserPassword` flow alike - one
+  setting covers all of them, no per-flow logic needed). Fixed in `infrastructure/template.yaml`:
+  `UserPoolTier: ESSENTIALS` (required for `PasswordHistorySize` to take effect - confirmed via AWS's
+  Cognito pricing page, which lists "disallowing password reuse" as an Essentials-tier feature, not
+  available on Lite) + `Policies.PasswordPolicy.PasswordHistorySize: 3` (blocks reuse of the last 3
+  passwords). Essentials pricing is free for the first 10,000 MAU and $0.015/MAU after - a non-issue at
+  this app's scale. This is an infra-only change (no lambda/frontend code touched); confirmed the full
+  `template.yaml` still parses cleanly (200 resources) after the edit. Deploys through the exact same
+  `git tag vX.Y.Z` → `deploy.yml` pipeline as every other change (`deploy.yml` already runs
+  `aws cloudformation deploy` against `infrastructure/template.yaml` on every release).
+  **Separately investigated, not a bug:** the owner also asked why players get logged out after ~30
+  days - that's the Cognito refresh token's default validity (`UserPoolClient` doesn't override
+  `RefreshTokenValidity`), working as designed, not a defect; flagged as a possible future tweak if the
+  owner wants a longer session, not actioned here. Also investigated "forgot password not sending the
+  code" - initially suspected the `UserPool`'s email delivery (no SES/`EmailConfiguration` configured,
+  so it's on Cognito's default sender, which is capped at 50 emails/day account-wide and has poor
+  deliverability) but the owner's own test account received its email fine, and he traced the real
+  affected users to typo'd email addresses at signup instead - existing admin panels ("Unconfirmed
+  sign-ups" and "User → profile mapping" under Access Reviews & Approvals) already surface exactly
+  those accounts, no new code needed to find them. A signup-form fix (confirm-email retype field +
+  friendlier "already registered" messaging) was proposed but the owner redirected to this password-
+  reuse issue before confirming scope - still open, see "Now / high priority" if picked back up.
 
 - ✅ 2026-08-24 (v1.68.0) — **Manual-mode tournaments: fixed lifetime `games_played`/XP/level/coins never
   incrementing for tournament matches.** Owner report, real live tournament, `networthmatches.csv` export
