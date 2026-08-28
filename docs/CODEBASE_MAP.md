@@ -89,7 +89,7 @@ of `{proxy+}` at the same parent — that constraint drives most of the odd rout
 | POST `/create-tournament` | tournaments | COGNITO | Create tournament |
 | GET/DELETE `/tournaments` `/tournaments/{proxy+}` | tournaments | NONE | List/get/delete + score submission |
 | ANY `/tournament-draft` `/tournament-draft/{proxy+}` | tournaments | COGNITO | Manual-draft mode: leaders, pool board (Phase A); `remove-player` — organizer excuses a group member (e.g. themselves, if not playing) from the roster entirely, `pools_open` only, rejects removing a current leader; auction (`start-auction`/`open-lot`/`bid`/`close-lot`/`skip-lot`/`state`, Phase B); tie-based schedule (`generate-schedule`/`pick-tie-player`/`group-tie-score`/`knockout-tie-score`, Phase C) — `generate-schedule` builds either the original flat round-robin (`manual_draft.num_groups<=1`, the default, byte-identical to before) or real separate named groups (A, B, C...) with squads randomly split and a round-robin only within each group, top `manual_draft.advance_per_group` per group advancing to a combined knockout (boundary ties injected as an extra tie via `_inject_group_tiebreakers_if_needed`; qualifiers are paired into the knockout bracket DETERMINISTICALLY via `_advance_squads_to_knockout_from_groups` — sorted by group name and paired consecutively (A-B, C-D, ...), changed 2026-08-23 from a `random.shuffle` after a live event's real bracket didn't match the app's randomly-drawn one, with the pre-existing same-group-rematch-avoidance swap kept as a safety net for `advance_per_group > 1` — both mirror the legacy `groups_then_knockout` format's own `inject_tiebreakers_if_needed`/`advance_to_knockout`); both `generate-schedule` and `regenerate-schedule` share `_build_group_stage`, which now also rejects any `num_groups` that would leave a group with fewer than 2 squads (previously only `num_groups > squad count` was rejected, so e.g. 4 squads split into 4 groups silently produced 4 unplayable 1-squad groups); `regenerate-schedule` — organizer-only repair action, only while still `group_stage` and nothing in it has been played yet: optionally updates `manual_draft.num_groups`/`advance_per_group` from the request body, then reruns `_build_group_stage` to rebuild the whole schedule from the existing (untouched) squads, without redoing leaders/pools/auction; `pick-tie-player` nominates either one `player_id` (singles) or a `player_ids` pair (doubles, per `manual_draft.match_type`); a leader nominates for their own squad, and the organizer can now also nominate for either squad given `squad_id` to disambiguate — the frontend's tie-card picker now actually offers this to an organizer viewing a tie (previously it only ever rendered a picker for the tie's own two leaders, so the backend's organizer path had no UI to trigger it from); `rename-squad` — organizer or that squad's own leader renames it, `squads_locked` onward (cosmetic, never locked); `move-squad-player` — organizer rebalances a picked player to a different squad, `squads_locked` only (before a schedule exists); `substitute-squad-player` — organizer swaps a squad member for a new replacement, `squads_locked` through `knockout`, clears any not-yet-played lineup pick for the outgoing player, leaves played-match history untouched; `organizer-assign` — organizer directly awards a queued player to a chosen leader for a chosen amount, no open lot / leader bid required (for leaders without app access); `GET /tournament-draft/{id}` — privileged pool/auction detail (organizer always, a leader only while their phase is still live), the only route that ever returns real `pools`/`draft` data — the public `GET /tournaments/{id}` always redacts both for manual-draft tournaments; `set-squad-pairs` + `manual_draft.group_mode='cross_squad'` (owner request, 2026-08-21, same-day rush) — an alternate group-stage shape where each squad first fixes exactly `num_groups` pairs (or solo reps, for singles) via `set-squad-pairs` (organizer or that squad's own leader), then `_build_cross_squad_group_stage` sends exactly ONE of those fixed units from EVERY squad into EVERY group (stored as `item['reps']`, id shape `{squad_id}::rep{n}`, each carrying `parent_squad_id`) instead of splitting whole squads across groups; a cross-squad tie's matches are pre-filled with both reps at build time via the shared `_fill_cross_squad_match_players` helper (used for the group stage, the first knockout round, later knockout rounds, and the third-place match) since the rep is already fully fixed — no `pick-tie-player` lineup step; `_tie_side_leader_id` resolves a tie's squad_a/squad_b (a rep_id in this mode) back to the real leader id so scoring auth (`_authorize_tie_scorer`) and the champion banner (`champion_squad_id`) still work per-squad; `compute_squad_standings` now reads `item['squads']` merged with `item['reps']` (a no-op for every tournament without reps); new `compute_squad_standings_by_parent` rolls a squad's several reps back into one overall standings row (used for `get_tournament`'s `squad_standings` when `group_stage.cross_squad` is set — `group_standings`, the per-group breakdown, stays rep-level since that's who actually plays within a group); `regenerate-schedule` also accepts `group_mode` to switch an already-generated tournament between the two modes in place (clears stale `item['reps']` when switching back to `'squads'`); `generate-schedule` accepts the same `group_mode` override for a tournament's first-ever schedule generation, so the frontend's Pairing panel can drive both first-time generation and in-place repair through one "Generate groups" button/function; the frontend's Pairing panel labels pair slots "Pair N:" (not "Group N:") since which named group a pair lands in is decided randomly at generation time, never chosen by the user, and `renderDraftScheduleView` suppresses the per-group squad-name cards entirely (showing a plain "no matches yet" message instead) whenever a `group_stage.groups` exists with zero total ties, to avoid the misleading pre-generation/stale-schedule view; `create_manual_draft_tournament` also accepts `group_best_of`/`knockout_best_of` (each `1` or `3`, default `1` — byte-identical to every tournament created before this existed), stored in `manual_draft`; `_score_tie_match` picks `best_of` per-stage off its existing `stage_label` parameter (`'group'` vs `'knockout'`/`'third_place'`) rather than a flat field manual-draft items never actually had — `_submit_game`'s `needed_wins=(best_of//2)+1` engine needed no changes, already shared/generic with legacy tournaments — and the frontend's `renderDraftBracketView` (a tie-shaped sibling of the legacy `renderBracketView`, reusing `draftSquadName`/`truncateBracketName`/`item_has_third_place`) now backs the shared View:Table/Bracket toggle once a manual-draft tournament reaches `group_stage`/`knockout`/`completed` (toggle hidden + forced to table before that, since nothing bracket-shaped exists yet); `get_tournament` also attaches `projected_knockout` (via `compute_projected_knockout`) whenever `status=='group_stage'` and at least one group tie is still pending — a read-only preview of the knockout pairing seeded from the CURRENT (partial) standings via the same `build_knockout_tie_round` the real knockout uses, absent once every tie decides (the real `knockout` takes over) or when real separate named groups are in play (advance_per_group/tiebreak-injection eligibility isn't replicated for the projection); rendered by the frontend's `renderProjectedKnockout` as a plain, non-scoreable card in `renderDraftScheduleView`; `cancel-group-tie-match`/`cancel-knockout-tie-match` and `forfeit-group-tie-match`/`forfeit-knockout-tie-match` (owner request, 2026-08-23, live event: 2 group matches could never be played, players unavailable) — organizer-only (stricter than normal scoring, which a tie's own leader can also submit), act on any not-yet-played match: cancel resolves it with no winner and no Elo change (excluded entirely from the tie's win/point-diff tally in `_update_tie_progress`; if every match in a tie ends up cancelled the tie itself resolves `decided=True, winner_squad_id=None, cancelled=True` rather than falling into the pre-existing genuine-deadlock branch), forfeit (`{tie_id, match_index, forfeited_by: 'a'|'b'}`) awards the match win to the other side with no Elo change and does NOT require either side to have nominated a lineup first (covers exactly the case where the absent side never got to nominate anyone) — both share `_after_group_tie_resolved`/the same round-advance check `record_knockout_tie_score` already used, so cancelling/forfeiting the last pending tie in a group or knockout round advances the tournament exactly like a real score would; `_update_tie_progress` also now decides a tie EARLY, the moment one side clinches an unbeatable majority of `matches_per_tie` (`needed_wins = len(matches)//2 + 1`) — added 2026-08-23 after a live best-of-3 knockout tie finished 2-0 but still showed a pointless, still-scoreable Match #3; once a tie is `decided` this way, `_score_tie_match`/`_cancel_tie_match`/`_forfeit_tie_match` all reject any further action on its remaining match slot(s) (400, "this tie is already decided"), and the frontend's `renderTieMatchRow` renders that slot as a plain "Not needed" line instead of active controls, and `renderTieCard`'s header now shows a "Best of N (first to K)" label computed from `tie.matches.length`; `compute_player_tournament_scores` excludes cancelled matches so they don't inflate the tournament-scoped leaderboard; for real named groups instead, `get_tournament` attaches `group_stage_projection` (via `compute_group_stage_projection`) — per group, that group's own standings plus `advancing_ids`/`contested_ids` (the latter populated only on an exact tie at the `advance_per_group` cutoff, mirroring `_inject_group_tiebreakers_if_needed`'s own boundary check) and `pending_ties`; deliberately does NOT project a knockout PAIRING for this case (even though the real pairing is now deterministic, not random — see `_advance_squads_to_knockout_from_groups` above) since projecting it correctly would mean replicating `advance_per_group`/tiebreak-injection eligibility here too, which this intentionally doesn't do — rendered by the frontend's `renderDraftBracketGroupsPanel` into the new `#bracket-groups-panel` div (index.html, sits above `#bracket-svg`, toggled together with it by `applyTournamentViewMode`); separately, `renderDraftBracketView` also draws the flat round-robin case's `projected_knockout` directly into the SVG itself (one dashed preview box) instead of the plain "no bracket yet" text, since that case *is* a single deterministic pairing; `create_manual_draft_tournament` also accepts optional `final_matches_per_tie`/`third_place_matches_per_tie` (owner request, 2026-08-23: "next time onwards will it ask me how many sets for each semis or finals or third place matches?" — the real live event ran semis+final at one format (best-of-3 to 11) but third place as a single match to 21, and until this the whole knockout stage shared one global `knockout_matches_per_tie`) — both default to `knockout_matches_per_tie` when omitted (byte-identical to every tournament created before this existed), and both are snapshotted into `item['knockout']` (alongside the existing `matches_per_tie`) the moment the knockout bracket is first built, not re-read live from `manual_draft` later; `_advance_knockout_ties_if_round_complete` picks `final_matches_per_tie` for the round that comes out to exactly one tie (the final) and `third_place_matches_per_tie` for the auto-created third-place match, falling back to the base `matches_per_tie` (semifinal-tier) for every other round; the very first knockout round built straight off group-stage qualifiers also uses `final_matches_per_tie` in the edge case where it's already down to a single tie (e.g. only 2 total qualifiers, no separate semifinal round to speak of); the create form's "Final matches per tie"/"Third-place matches per tie" fields are left blank by default (placeholder "same as knockout") and are only included in the create payload when the organizer actually fills them in, so the backend's own default-to-`knockout_matches_per_tie` fallback is what actually applies for the common case; `computeLeaderboardRows` (frontend) had its champion/runner-up/third-place placement highlighting fixed for `group_mode='cross_squad'` tournaments (owner report, 2026-08-23, live tournament: "nothing is getting higlighted") — `finalTie.winner_squad_id`/`squad_a`/`squad_b` and `third_place_match.winner_squad_id` are REP ids (`"{squad_id}::repN"`) in cross_squad mode, but the placement lookup was keyed by plain squad id (`squadOf[pid]`, built from `t.squads`, which spans a squad's whole roster across every rep) — so the lookup silently matched nothing for any row on any cross_squad tournament; a reverse `pairKey -> repId` map built from `t.reps` is now preferred over the plain-squad-id fallback, which also fixes a second latent collision (two of a squad's own reps finishing in two different places, e.g. one runner-up + a different rep taking third, used to overwrite one shared squad-keyed placement entry) since each rep now gets its own independent entry; for a normal (non-cross_squad) tournament `t.reps` is empty so every row falls through to the plain squad-id lookup exactly as before, unchanged — shared by both the HTML leaderboard and the downloadable leaderboard share image, since both already run through this one helper; same-day follow-up (owner report: "why is the 3 position team not moving up ... this is like doing based on number of played matches or what?") — `computeLeaderboardRows`'s row SORT previously ignored placement entirely and ranked purely by regular performance (wins/point-diff/matches-played), so a non-podium pair with a better raw win tally could (and did) outrank the actual bronze medalist, whose run includes the semifinal loss that put them in the third-place match to begin with; fixed by pinning the exact podium-DECIDING pair (`isDecidingPair`, not every squadmate who merely shares that squad's thin tier-colored edge) to the top 3 rows in gold/silver/bronze order ahead of the existing performance tiebreakers, which now only apply within a tier and among the non-podium rest; `update_elo_and_log` (backend, called for every manual-draft group/knockout/third-place match) now also updates `previous_rating`/`xp`/`level`/`coins`/`coins_earned`/`games_played` on each player, not just `rating` (owner report, 2026-08-24, `networthmatches.csv` attached: players who'd genuinely played 5+ tournament matches were still shown as "3/5 games" — provisional, not yet ranked — on the View Rankings screen, which reads a player's persisted `games_played` directly) — mirrors `matches/index.py`'s `_play_and_log` exactly (XP/level/coin constants and helpers duplicated per KNOWN_ISSUES #6, since `matches/index.py`'s own `_play_and_log` is only ever invoked with `tournament_id=None` in practice and can't be reused cross-lambda); Elo `rating` math itself is unchanged, this only adds the missing fields. A `recompute_all_ratings()` run (the `matches/index.py` copy, via the admin `/recompute` route) is recommended once after deploy to backfill every already-recorded tournament match's `games_played`/xp/level/coins, not just future ones |
-| ANY `/finance/{proxy+}` | finance | **NONE (legacy open)** | View-key/confirmation-code gated finance ops. `_settlement_rows`'s group-wide (slot-less) expense bucket now divides by TOTAL slot-enrollments ("portions"), not distinct members (owner request, 2026-08-24: "can we switch it back to members in all the slots ... if a group has 2 slots and 3 members share both the groups then they should have 2 portions each" — reverses the narrower 2026-08-20 decision that deduped the expense side to distinct members while leaving only walk-ins slot-weighted; now both sides use the identical `total_slots` denominator) — `cost_per_head`/`residual_per_head` on that bucket are therefore PER-PORTION prices, not per-member ones; `distinct_member_count` is separately exposed alongside the now-portion-based `player_count` so the UI can show "24 portions (15 members)" instead of a bare number that reads like a headcount; new `expense_shares`/`expense_residual_shares` per-member dicts (mirroring the pre-existing `walkin_shares` exactly, including its precision — computed from the raw bucket totals divided directly by `total_slots` and multiplied by each member's own slot count, not from the already-rounded-to-cents per-portion price, to avoid compounding rounding error) are what `my_settlement` and `insights` actually charge/credit each member now, replacing their old flat `cost_per_head`/`residual_per_head` reads for this bucket. Frontend: the `/finance/summary` table's "Members"/"Per head"/"Residual / head" columns relabel for the group-wide row to make the portion-based pricing legible (was previously silently wrong-looking after the backend change alone); Insights' "Copy for WhatsApp" button (unchanged) is now joined by a new "Copy table as image" button (owner request, same day: mobile portrait squishes the on-screen table) — `copyInsightsTableAsImage` hand-draws the full on-screen 7-column table to a canvas (matching this file's existing `downloadTournamentImage`/`downloadDraftLeaderboardImage` pattern, no third-party DOM-to-canvas library) and copies the PNG straight to the clipboard via `navigator.clipboard.write`/`ClipboardItem`, falling back to a plain download (anchor appended to the DOM before `.click()`, matching `downloadCSV`'s more robust pattern rather than the three existing tournament image functions' bare unattached click) when clipboard image support isn't available. |
+| ANY `/finance/{proxy+}` | finance | **NONE (legacy open)** | View-key/confirmation-code gated finance ops. `_settlement_rows`'s group-wide (slot-less) expense bucket now divides by TOTAL slot-enrollments ("portions"), not distinct members (owner request, 2026-08-24: "can we switch it back to members in all the slots ... if a group has 2 slots and 3 members share both the groups then they should have 2 portions each" — reverses the narrower 2026-08-20 decision that deduped the expense side to distinct members while leaving only walk-ins slot-weighted; now both sides use the identical `total_slots` denominator) — `cost_per_head`/`residual_per_head` on that bucket are therefore PER-PORTION prices, not per-member ones; `distinct_member_count` is separately exposed alongside the now-portion-based `player_count` so the UI can show "24 portions (15 members)" instead of a bare number that reads like a headcount; new `expense_shares`/`expense_residual_shares` per-member dicts (mirroring the pre-existing `walkin_shares` exactly, including its precision — computed from the raw bucket totals divided directly by `total_slots` and multiplied by each member's own slot count, not from the already-rounded-to-cents per-portion price, to avoid compounding rounding error) are what `my_settlement` and `insights` actually charge/credit each member now, replacing their old flat `cost_per_head`/`residual_per_head` reads for this bucket. Frontend: the `/finance/summary` table's "Members"/"Per head"/"Residual / head" columns relabel for the group-wide row to make the portion-based pricing legible (was previously silently wrong-looking after the backend change alone); Insights' "Copy for WhatsApp" button (unchanged) is now joined by a new "Copy table as image" button (owner request, same day: mobile portrait squishes the on-screen table) — `copyInsightsTableAsImage` hand-draws the full on-screen 7-column table to a canvas (matching this file's existing `downloadTournamentImage`/`downloadDraftLeaderboardImage` pattern, no third-party DOM-to-canvas library) and copies the PNG straight to the clipboard via `navigator.clipboard.write`/`ClipboardItem`, falling back to a plain download (anchor appended to the DOM before `.click()`, matching `downloadCSV`'s more robust pattern rather than the three existing tournament image functions' bare unattached click) when clipboard image support isn't available. Walk-in records get a new optional numeric field `sessions_covered` (owner report, 2026-08-28: Insights' "Sessions paid" for non-members equaled a raw COUNT of walk-in fee entries, not real sessions — a guest who pays a lump sum in one entry, like paying for the whole month at once, showed a tiny fake number regardless of what the fee covered) — defaults to 1 when absent/blank/zero so every existing entry and every per-session payer is unaffected; `insights()`'s guest-conversion loop now sums `sessions_covered` instead of counting entries. Frontend: new "Sessions covered" field on the walk-in add/edit form, auto-suggested from the guest's own most recent per-session rate on fee blur (`suggestWalkinSessions`) but always overridable and never re-clobbered once hand-edited; walk-ins table gets a "Sessions" column. |
 | ANY `/finance-secure/{proxy+}` | finance | COGNITO | Same ops, Cognito-gated by finance role |
 | DELETE `/finance-delete/{record_type}/{record_id}` | finance | COGNITO | Triple-gated delete |
 | GET `/finance/walkins/public`, `/finance/upi/public` | finance | NONE | Public walk-ins list + UPI pay card |
@@ -432,55 +432,55 @@ _NetWorth - tournaments Lambda (singles or doubles)_
 | `substitute_player` | tournament_id, event | 3633 | Swap a player out of a team for all of that team's FUTURE (unplayed) |
 | `_response` | status_code, body_dict | 3726 | — |
 
-#### `finance` — 1639 LOC
+#### `finance` — 1660 LOC
 _NetWorth - finance Lambda_
 
 **Module constants:** `GROUPS_TABLE`, `DEFAULT_GROUP_NAME`, `GROUP_SLOT`, `VIEW_KEY`, `CONFIRMATION_CODE`, `MONTHS`, `FINANCE_LEVELS`, `ALLOWED_FIELDS`, `NUMERIC_FIELDS`, `REQUIRED_FIELDS`, `DEFAULT_CLUB_UTC_OFFSET_MINUTES`, `AVG_GAMES_PER_SESSION`, `SESSION_RATE`, `ACTIVE_DAYS_THRESHOLD`, `SLOT_GRACE_MINUTES`, `ASSUMED_MINUTES_PER_GAME`, `DEFAULT_ASSUMED_MINUTES_PER_GAME`, `DENSITY_FLAG_RATIO`, `_SLOT_LABEL_RE`
 
 | Function | Args | Line | What it does |
 |---|---|---|---|
-| `_scan_all` | table | 76 | Full-table scan that follows LastEvaluatedKey - a bare .scan() returns |
-| `_caller_claims` | event | 104 | Claims API Gateway's Cognito Authorizer attaches to the request. |
-| `_is_super_admin` | claims | 112 | — |
-| `_finance_role` | claims | 126 | — |
-| `_finance_level` | claims | 142 | — |
-| `_has_finance_access` | claims | 146 | View or better - the gate for reading finance at all. |
-| `_default_group_id` |  | 151 | The group_id of the 'Club (default)' group that the pre-migration |
-| `_group_for_request` | params, body | 167 | The group_id this finance op targets. Falls back to the default group |
-| `_group_finance_level` | claims, group_id | 174 | A caller's finance level (0-3) FOR A SPECIFIC GROUP. |
-| `_slot_key` | slot | 200 | Normalize a record's slot for bucketing/comparison: a missing/blank |
-| `_member_assigned_slots` | pid, group | 207 | The set of slots (raw, already-normalized strings) a player is |
-| `_view_scope_slots` | claims, group_id, level | 216 | Stage 4c: a plain 'view'-level grant only sees their own assigned |
-| `_has_any_group_finance` | claims | 242 | True if the caller has finance access in ANY group (owner/admin, or a |
-| `_effective_finance_role` | claims, group_id | 257 | The role name to REPORT to the frontend for button visibility: the |
-| `finance_key_for_caller` | event | 282 | Hands the shared view key to any caller with finance access - global |
-| `set_finance_access` | event | 299 | SuperAdmin sets a player's finance role directly. |
-| `handler` | event, context | 323 | — |
-| `_scan_type` | record_type, group_id | 441 | — |
-| `_num` | v, default | 452 | — |
-| `_clean` | record_type, data | 475 | — |
-| `_resolve_name` | pid_cache, player_id | 487 | — |
-| `_prev_period` | month, year | 498 | — |
-| `_next_period` | month, year | 503 | — |
-| `_member_relief` | settlement, memberships, ident, month, year,  | 508 | Relief a member gets in (month, year): the previous month's residual. |
-| `list_records` | record_type, params, group_id, scope_slots | 531 | — |
-| `create_records` | record_type, body, group_id | 593 | — |
-| `update_record` | record_type, record_id, body, group_id | 615 | — |
-| `delete_record_enforced` | record_type, record_id, event | 678 | Triple-gated: SuperAdmin identity + FINANCE_VIEW_KEY + the existing |
-| `delete_record` | record_type, record_id, body, group_id | 701 | — |
-| `get_settings` |  | 718 | — |
-| `put_settings` | body | 746 | — |
-| `public_upi` |  | 775 | The pay card is shown to guests (they pay walk-in fees), so the UPI |
-| `my_settlement` | claims, group_id | 783 | A single member's own dues in a group: for every (month, slot) where |
-| `public_walkins` |  | 924 | — |
-| `_settlement_rows` | group_id | 944 | Per (month, year, slot): the exact math from the Calculations sheet. |
-| `summary` | group_id, scope_slots | 1157 | — |
-| `_parse_slot_window` | label | 1198 | Best-effort parse of a free-form slot label ('7AM-8AM', '19:00-20:00', |
-| `_local_minutes_of_day` | iso_ts, offset_minutes | 1234 | Convert a stored ISO-8601 UTC match timestamp to local minute-of-day |
-| `_minute_in_window` | minute, window, grace_minutes | 1254 | Whether `minute` (local minute-of-day) falls inside `window` (start, |
-| `_timing_checks` | matches, group, offset_minutes, target_ym | 1267 | Best-effort, non-authoritative diagnostics only (see module note |
-| `insights` | group_id | 1347 | Per-member monthly economics, ghosts, and walk-in conversion. |
-| `_response` | status_code, body_dict | 1630 | — |
+| `_scan_all` | table | 87 | Full-table scan that follows LastEvaluatedKey - a bare .scan() returns |
+| `_caller_claims` | event | 115 | Claims API Gateway's Cognito Authorizer attaches to the request. |
+| `_is_super_admin` | claims | 123 | — |
+| `_finance_role` | claims | 137 | — |
+| `_finance_level` | claims | 153 | — |
+| `_has_finance_access` | claims | 157 | View or better - the gate for reading finance at all. |
+| `_default_group_id` |  | 162 | The group_id of the 'Club (default)' group that the pre-migration |
+| `_group_for_request` | params, body | 178 | The group_id this finance op targets. Falls back to the default group |
+| `_group_finance_level` | claims, group_id | 185 | A caller's finance level (0-3) FOR A SPECIFIC GROUP. |
+| `_slot_key` | slot | 211 | Normalize a record's slot for bucketing/comparison: a missing/blank |
+| `_member_assigned_slots` | pid, group | 218 | The set of slots (raw, already-normalized strings) a player is |
+| `_view_scope_slots` | claims, group_id, level | 227 | Stage 4c: a plain 'view'-level grant only sees their own assigned |
+| `_has_any_group_finance` | claims | 253 | True if the caller has finance access in ANY group (owner/admin, or a |
+| `_effective_finance_role` | claims, group_id | 268 | The role name to REPORT to the frontend for button visibility: the |
+| `finance_key_for_caller` | event | 293 | Hands the shared view key to any caller with finance access - global |
+| `set_finance_access` | event | 310 | SuperAdmin sets a player's finance role directly. |
+| `handler` | event, context | 334 | — |
+| `_scan_type` | record_type, group_id | 452 | — |
+| `_num` | v, default | 463 | — |
+| `_clean` | record_type, data | 487 | — |
+| `_resolve_name` | pid_cache, player_id | 499 | — |
+| `_prev_period` | month, year | 510 | — |
+| `_next_period` | month, year | 515 | — |
+| `_member_relief` | settlement, memberships, ident, month, year,  | 520 | Relief a member gets in (month, year): the previous month's residual. |
+| `list_records` | record_type, params, group_id, scope_slots | 543 | — |
+| `create_records` | record_type, body, group_id | 605 | — |
+| `update_record` | record_type, record_id, body, group_id | 627 | — |
+| `delete_record_enforced` | record_type, record_id, event | 690 | Triple-gated: SuperAdmin identity + FINANCE_VIEW_KEY + the existing |
+| `delete_record` | record_type, record_id, body, group_id | 713 | — |
+| `get_settings` |  | 730 | — |
+| `put_settings` | body | 758 | — |
+| `public_upi` |  | 787 | The pay card is shown to guests (they pay walk-in fees), so the UPI |
+| `my_settlement` | claims, group_id | 795 | A single member's own dues in a group: for every (month, slot) where |
+| `public_walkins` |  | 936 | — |
+| `_settlement_rows` | group_id | 956 | Per (month, year, slot): the exact math from the Calculations sheet. |
+| `summary` | group_id, scope_slots | 1169 | — |
+| `_parse_slot_window` | label | 1210 | Best-effort parse of a free-form slot label ('7AM-8AM', '19:00-20:00', |
+| `_local_minutes_of_day` | iso_ts, offset_minutes | 1246 | Convert a stored ISO-8601 UTC match timestamp to local minute-of-day |
+| `_minute_in_window` | minute, window, grace_minutes | 1266 | Whether `minute` (local minute-of-day) falls inside `window` (start, |
+| `_timing_checks` | matches, group, offset_minutes, target_ym | 1279 | Best-effort, non-authoritative diagnostics only (see module note |
+| `insights` | group_id | 1359 | Per-member monthly economics, ghosts, and walk-in conversion. |
+| `_response` | status_code, body_dict | 1651 | — |
 
 #### `progress_scheduler` — 238 LOC
 _NetWorth - progress_scheduler Lambda_
@@ -500,7 +500,7 @@ _NetWorth - progress_scheduler Lambda_
 ## 6. Frontend function reference
 
 <!-- AUTOGEN:FRONTEND START (regenerated by tools/generate_codebase_map.py — do not hand-edit below) -->
-### Frontend (`frontend/js/app.js` — 11143 LOC, flat global script, ~457 functions)
+### Frontend (`frontend/js/app.js` — 11198 LOC, flat global script, ~458 functions)
 
 _Loaded by `index.html` after an inline `<script>` defines the globals `API_BASE_URL`, `COGNITO_USER_POOL_ID`, `COGNITO_CLIENT_ID`, `UPI_ID`, `FINANCE_VIEW_KEY` placeholders. Functions live in global scope (not an IIFE); most are wired to `onclick=` in the HTML._
 
@@ -821,196 +821,197 @@ _Loaded by `index.html` after an inline `<script>` defines the globals `API_BASE
 - `bulkAddFromRoster()` — L5892
 - `copyPreviousMonthMembers()` — L5907
 - `addFinanceMember()` — L5943
-- `resetWalkinEdit()` — L5967
-- `loadFinanceWalkins()` — L5976
-- `addFinanceWalkin()` — L6024
-- `loadFinanceInsights()` — L6055
-- `copyDuesForWhatsApp()` — L6069
-- `pad(s, w)` — L6086
-- `padL(s, w)` — L6087
-- `line(n, o, r, p)` — L6088
-- `done()` — L6098
-- `fallbackCopy(text, cb)` — L6104
-- `copyInsightsTableAsImage()` — L6133
-- `renderInsights()` — L6239
-- `saveFinanceSettings()` — L6373
-- `loadPublicWalkins()` — L6419
+- `resetWalkinEdit()` — L5969
+- `suggestWalkinSessions()` — L5988
+- `loadFinanceWalkins()` — L6020
+- `addFinanceWalkin()` — L6072
+- `loadFinanceInsights()` — L6105
+- `copyDuesForWhatsApp()` — L6119
+- `pad(s, w)` — L6136
+- `padL(s, w)` — L6137
+- `line(n, o, r, p)` — L6138
+- `done()` — L6148
+- `fallbackCopy(text, cb)` — L6154
+- `copyInsightsTableAsImage()` — L6183
+- `renderInsights()` — L6289
 
 **Live scoring inside tournaments**  (from L6421)
-- `loadReviewDay()` — L6508
-- `reviewOrderChanged()` — L6552
-- `renderReviewList()` — L6558
-- `applyReviewOrder()` — L6619
-- `updateAuthUI()` — L6647
-- `hiddenNow(id, btn)` — L6675
-- `refreshMySession(statusElId)` — L6760
-- `setStatus(msg)` — L6761
-- `openAchievementsModal()` — L6789
-- `closeAchievementsModal()` — L6798
-- `openAuthModal()` — L6799
-- `closeAuthModal()` — L6800
-- `showAuthView(view)` — L6801
-- `setAuthSession(session, user, opts = {})` — L6809
-- `closeCompleteProfileModal()` — L6829
-- `openCompleteProfileModal()` — L6830
-- `showCompleteProfileMode(mode, preselectPlayerId)` — L6845
-- `populateClaimPicker(preselectPlayerId)` — L6853
-- `submitClaimProfile()` — L6877
-- `closeCompleteProfileModal()` — L6917
-- `sanitizeNickname(raw)` — L6923
-- `editDistance(a, b)` — L6928
-- `checkForExistingPlayer(name, typedNickname, statusEl)` — L6950
-- `submitCompleteProfile()` — L7005
-- `finishRequestAndSignOut(message)` — L7081
-- `doLogin()` — L7087
-- `doNewPassword()` — L7140
-- `doSignup()` — L7151
-- `doConfirmSignup()` — L7168
-- `doResendConfirmCode()` — L7199
-- `doForgotPassword()` — L7210
-- `doConfirmForgotPassword()` — L7225
-- `doLogout()` — L7237
-- `restoreSession()` — L7281
-- `restoreTabFromHash()` — L7325
-- `addManualTeamRow()` — L7400
-- `collectManualTeams()` — L7436
-- `loadTournamentGroupOptions()` — L7449
-- `loadTournamentParticipantsChecklist()` — L7458
-- `updateParticipantsCount()` — L7488
-- `collectTournamentParticipants()` — L7500
-- `loadTournamentsList()` — L7504
-- `submitTournamentCreation(payload)` — L7511
-- `submitManualDraftCreation(group_id, name)` — L7537
-- `draftPlayerName(pid)` — L7585
-- `draftEveryone(t)` — L7590
-- `renderManualDraftTournament(t)` — L7596
-- `fetchTournamentDetail(tournamentId)` — L7695
-- `fetchAndRenderTournamentDetail(tournamentId)` — L7711
-- `stopSchedulePolling()` — L7742
-- `startSchedulePolling(tournamentId)` — L7747
-- `isSchedulePollingActiveFor(tournamentId)` — L7757
-- `schedulePollTick(tournamentId)` — L7759
-- `renderDraftLeaderPicker(t)` — L7790
-- `saveDraftLeaders(tournamentId)` — L7810
-- `renderDraftPoolBoard(t)` — L7820
-- `chip(pid)` — L7825
-- `draftChipTapped(pid, ev)` — L7872
-- `draftPoolColumnTapped(tournamentId, poolName)` — L7879
-- `draftChipDragStart(ev, pid)` — L7886
-- `draftPoolDragOver(ev)` — L7891
-- `draftPoolDrop(ev, tournamentId, poolName)` — L7896
-- `moveDraftPlayerToPool(tournamentId, poolName, playerId)` — L7905
-- `putDraftPool(tournamentId, poolName, playerIds)` — L7925
-- `addNewDraftPlayer(tournamentId, groupId)` — L7935
-- `removeDraftPlayer(tournamentId, playerId)` — L7961
-- `lockDraftPools(tournamentId)` — L7974
-- `stopDraftPolling()` — L8004
-- `startDraftPolling(tournamentId)` — L8009
-- `isDraftPollingActiveFor(tournamentId)` — L8022
-- `pollDraftStateTick(tournamentId)` — L8024
-- `draftDecidedIds(draft)` — L8035
-- `renderDraftStartAuctionPanel(t)` — L8044
-- `startDraftAuction(tournamentId)` — L8053
-- `renderDraftAuctionRoom(t)` — L8063
-- `draftAssignEligibleLeaders(t, pool)` — L8078
-- `draftAssignLeaderOptionsHtml(t, pool)` — L8088
-- `updateDraftAssignLeaderOptions()` — L8094
-- `renderDraftOrganizerAssignPanel(t)` — L8103
-- `organizerAssignPlayer(tournamentId)` — L8128
-- `renderDraftLiveStatusHtml(tournamentId, draftLike)` — L8149
-- `updateDraftLiveStatus(tournamentId, draftLike)` — L8184
-- `renderDraftQueuePicker(t)` — L8197
-- `openDraftLot(tournamentId, playerId)` — L8224
-- `closeDraftLot(tournamentId)` — L8232
-- `skipDraftLot(tournamentId)` — L8242
-- `renderDraftBidBox()` — L8252
-- `draftBidBump(delta)` — L8265
-- `submitDraftBid(tournamentId)` — L8272
-- `renderDraftSquadsReview(t)` — L8301
-- `renderSetSquadPairsPanel(t)` — L8321
-- `generateCrossSquadGroups(tournamentId, status)` — L8384
-- `saveSquadPairs(tournamentId, squadId, numGroups, slotsP)` — L8401
-- `generateDraftSchedule(tournamentId)` — L8422
-- `renderSquadRosterEditPanel(t, allowMove)` — L8443
-- `renameSquadPrompt(tournamentId, squadId)` — L8509
-- `moveSquadPlayer(tournamentId)` — L8526
-- `toggleSquadSubNewPlayerFields(useNew)` — L8540
-- `substituteSquadPlayer(tournamentId)` — L8557
-- `draftSquadName(t, squadId)` — L8609
-- `toggleDraftGroupOpen(name, detailsEl)` — L8631
-- `toggleDraftSquadSection(key, detailsEl)` — L8644
-- `renderDraftScheduleView(t)` — L8648
-- `renderProjectedKnockout(t)` — L8745
-- `renderRegenerateScheduleGroupPanel(t)` — L8767
-- `regenerateDraftSchedule(tournamentId)` — L8791
-- `renderSquadStandingsTable(standings, projection)` — L8818
-- `computeLeaderboardRows(stats, t)` — L8857
-- `tallyPair(side)` — L8894
-- `squadSideField(tie, sid)` — L8956
-- `decidingPairKey(tie, sid)` — L8957
-- `podiumRank(row)` — L9015
-- `renderPlayerTournamentStatsTable(stats, t)` — L9031
-- `rowHtml(row)` — L9039
-- `renderTieSection(title, ties, t, stageKind)` — L9084
-- `renderTieCard(tie, t, stageKind)` — L9091
-- `renderTieMatchRow(tie, m, idx, t, stageKind, iLeadA, iLead)` — L9123
-- `draftTieMatchAdminControlsHtml(tournamentId, tieId, idx, stageKind, sid)` — L9309
-- `cancelDraftTieMatch(tournamentId, tieId, matchIndex, stageKi)` — L9317
-- `forfeitDraftTieMatch(tournamentId, tieId, matchIndex, stageKi)` — L9328
-- `draftPlayerPickerHtml(tournamentId, tieId, matchIndex, members)` — L9339
-- `opts(selected)` — L9345
-- `pickTiePlayer(tournamentId, tieId, matchIndex, playerI)` — L9365
-- `pickTiePlayerPair(tournamentId, tieId, matchIndex, squadId)` — L9377
-- `submitDraftTieScore(tournamentId, tieId, matchIndex, stageKi)` — L9393
-- `submitDraftTieScoreDirect(tournamentId, tieId, matchIndex, stageKi)` — L9410
-- `collectAllEntities(t)` — L9576
-- `getAllTeamEntities(t)` — L9592
-- `renderTeamCompositionBars(t, containerId)` — L9610
-- `populateSubstitutionSection(t)` — L9645
-- `updateSubOldPlayerOptions()` — L9656
-- `formatGames(games)` — L9745
-- `applyTournamentViewMode()` — L9752
-- `matchTotals(match)` — L9768
-- `truncateBracketName(name, maxChars = 22)` — L9776
-- `renderBracketView(t)` — L9781
-- `renderDraftBracketGroupsPanel(t)` — L9909
-- `renderDraftBracketView(t)` — L9945
-- `renderTournament(t)` — L10076
-- `generateTournamentRecap(t)` — L10251
-- `downloadTournamentImage()` — L10283
-- `loadImg(src)` — L10310
-- `sideVisuals(side)` — L10320
-- `drawCard(x, y, w, match, isFinal)` — L10327
-- `drawAvatars(ctx, x, y, side, isWinner)` — L10373
-- `paintTeam(ctx, x, y, w, h, side, fallback)` — L10392
-- `roundRect(ctx, x, y, w, h, r)` — L10420
-- `downloadDraftShareImage()` — L10436
-- `loadImg(src)` — L10443
-- `sideAvatars(squadId)` — L10492
-- `drawSide(side, sx, sy, isWinner)` — L10573
-- `downloadDraftLeaderboardImage()` — L10654
-- `loadImg(src)` — L10663
-- `presetKeyFor(bannerCss)` — L10672
-- `copyTournamentRecap()` — L10782
-- `item_has_third_place(t)` — L10793
-- `submitGroupScore(tournamentId, subgroup, fixtureId)` — L10797
-- `submitGroupScoreDirect(tournamentId, subgroup, fixtureId, score)` — L10803
-- `submitKnockoutScore(tournamentId, roundIndex, matchIndex)` — L10840
-- `submitKnockoutScoreDirect(tournamentId, roundIndex, matchIndex, sc)` — L10846
-- `submitThirdPlaceScore(tournamentId)` — L10873
-- `submitThirdPlaceScoreDirect(tournamentId, score_a, score_b, override)` — L10879
-- `getTournamentLiveLog(matchKey)` — L10910
-- `tournamentLivePoint(matchKey, side, target)` — L10915
-- `tournamentUndoPoint(matchKey, target)` — L10924
-- `updateTournamentLiveDisplay(matchKey, target)` — L10930
-- `finishGroupLiveGame(matchKey, tournamentId, subgroup, fixtur)` — L10948
-- `finishKnockoutLiveGame(matchKey, tournamentId, roundIndex, matc)` — L10962
-- `finishThirdPlaceLiveGame(matchKey, tournamentId)` — L10971
-- `finishDraftTieLiveGame(matchKey, tournamentId, tieId, matchInde)` — L10989
-- `renderLiveScoreControls(matchKey, target, finishCallExpr, nameA,)` — L10998
-- `activateTab(tabName)` — L11022
-- `jumpToRecordMatch()` — L11118
-- `applyTheme(theme)` — L11124
+- `saveFinanceSettings()` — L6424
+- `loadPublicWalkins()` — L6470
+- `loadReviewDay()` — L6563
+- `reviewOrderChanged()` — L6607
+- `renderReviewList()` — L6613
+- `applyReviewOrder()` — L6674
+- `updateAuthUI()` — L6702
+- `hiddenNow(id, btn)` — L6730
+- `refreshMySession(statusElId)` — L6815
+- `setStatus(msg)` — L6816
+- `openAchievementsModal()` — L6844
+- `closeAchievementsModal()` — L6853
+- `openAuthModal()` — L6854
+- `closeAuthModal()` — L6855
+- `showAuthView(view)` — L6856
+- `setAuthSession(session, user, opts = {})` — L6864
+- `closeCompleteProfileModal()` — L6884
+- `openCompleteProfileModal()` — L6885
+- `showCompleteProfileMode(mode, preselectPlayerId)` — L6900
+- `populateClaimPicker(preselectPlayerId)` — L6908
+- `submitClaimProfile()` — L6932
+- `closeCompleteProfileModal()` — L6972
+- `sanitizeNickname(raw)` — L6978
+- `editDistance(a, b)` — L6983
+- `checkForExistingPlayer(name, typedNickname, statusEl)` — L7005
+- `submitCompleteProfile()` — L7060
+- `finishRequestAndSignOut(message)` — L7136
+- `doLogin()` — L7142
+- `doNewPassword()` — L7195
+- `doSignup()` — L7206
+- `doConfirmSignup()` — L7223
+- `doResendConfirmCode()` — L7254
+- `doForgotPassword()` — L7265
+- `doConfirmForgotPassword()` — L7280
+- `doLogout()` — L7292
+- `restoreSession()` — L7336
+- `restoreTabFromHash()` — L7380
+- `addManualTeamRow()` — L7455
+- `collectManualTeams()` — L7491
+- `loadTournamentGroupOptions()` — L7504
+- `loadTournamentParticipantsChecklist()` — L7513
+- `updateParticipantsCount()` — L7543
+- `collectTournamentParticipants()` — L7555
+- `loadTournamentsList()` — L7559
+- `submitTournamentCreation(payload)` — L7566
+- `submitManualDraftCreation(group_id, name)` — L7592
+- `draftPlayerName(pid)` — L7640
+- `draftEveryone(t)` — L7645
+- `renderManualDraftTournament(t)` — L7651
+- `fetchTournamentDetail(tournamentId)` — L7750
+- `fetchAndRenderTournamentDetail(tournamentId)` — L7766
+- `stopSchedulePolling()` — L7797
+- `startSchedulePolling(tournamentId)` — L7802
+- `isSchedulePollingActiveFor(tournamentId)` — L7812
+- `schedulePollTick(tournamentId)` — L7814
+- `renderDraftLeaderPicker(t)` — L7845
+- `saveDraftLeaders(tournamentId)` — L7865
+- `renderDraftPoolBoard(t)` — L7875
+- `chip(pid)` — L7880
+- `draftChipTapped(pid, ev)` — L7927
+- `draftPoolColumnTapped(tournamentId, poolName)` — L7934
+- `draftChipDragStart(ev, pid)` — L7941
+- `draftPoolDragOver(ev)` — L7946
+- `draftPoolDrop(ev, tournamentId, poolName)` — L7951
+- `moveDraftPlayerToPool(tournamentId, poolName, playerId)` — L7960
+- `putDraftPool(tournamentId, poolName, playerIds)` — L7980
+- `addNewDraftPlayer(tournamentId, groupId)` — L7990
+- `removeDraftPlayer(tournamentId, playerId)` — L8016
+- `lockDraftPools(tournamentId)` — L8029
+- `stopDraftPolling()` — L8059
+- `startDraftPolling(tournamentId)` — L8064
+- `isDraftPollingActiveFor(tournamentId)` — L8077
+- `pollDraftStateTick(tournamentId)` — L8079
+- `draftDecidedIds(draft)` — L8090
+- `renderDraftStartAuctionPanel(t)` — L8099
+- `startDraftAuction(tournamentId)` — L8108
+- `renderDraftAuctionRoom(t)` — L8118
+- `draftAssignEligibleLeaders(t, pool)` — L8133
+- `draftAssignLeaderOptionsHtml(t, pool)` — L8143
+- `updateDraftAssignLeaderOptions()` — L8149
+- `renderDraftOrganizerAssignPanel(t)` — L8158
+- `organizerAssignPlayer(tournamentId)` — L8183
+- `renderDraftLiveStatusHtml(tournamentId, draftLike)` — L8204
+- `updateDraftLiveStatus(tournamentId, draftLike)` — L8239
+- `renderDraftQueuePicker(t)` — L8252
+- `openDraftLot(tournamentId, playerId)` — L8279
+- `closeDraftLot(tournamentId)` — L8287
+- `skipDraftLot(tournamentId)` — L8297
+- `renderDraftBidBox()` — L8307
+- `draftBidBump(delta)` — L8320
+- `submitDraftBid(tournamentId)` — L8327
+- `renderDraftSquadsReview(t)` — L8356
+- `renderSetSquadPairsPanel(t)` — L8376
+- `generateCrossSquadGroups(tournamentId, status)` — L8439
+- `saveSquadPairs(tournamentId, squadId, numGroups, slotsP)` — L8456
+- `generateDraftSchedule(tournamentId)` — L8477
+- `renderSquadRosterEditPanel(t, allowMove)` — L8498
+- `renameSquadPrompt(tournamentId, squadId)` — L8564
+- `moveSquadPlayer(tournamentId)` — L8581
+- `toggleSquadSubNewPlayerFields(useNew)` — L8595
+- `substituteSquadPlayer(tournamentId)` — L8612
+- `draftSquadName(t, squadId)` — L8664
+- `toggleDraftGroupOpen(name, detailsEl)` — L8686
+- `toggleDraftSquadSection(key, detailsEl)` — L8699
+- `renderDraftScheduleView(t)` — L8703
+- `renderProjectedKnockout(t)` — L8800
+- `renderRegenerateScheduleGroupPanel(t)` — L8822
+- `regenerateDraftSchedule(tournamentId)` — L8846
+- `renderSquadStandingsTable(standings, projection)` — L8873
+- `computeLeaderboardRows(stats, t)` — L8912
+- `tallyPair(side)` — L8949
+- `squadSideField(tie, sid)` — L9011
+- `decidingPairKey(tie, sid)` — L9012
+- `podiumRank(row)` — L9070
+- `renderPlayerTournamentStatsTable(stats, t)` — L9086
+- `rowHtml(row)` — L9094
+- `renderTieSection(title, ties, t, stageKind)` — L9139
+- `renderTieCard(tie, t, stageKind)` — L9146
+- `renderTieMatchRow(tie, m, idx, t, stageKind, iLeadA, iLead)` — L9178
+- `draftTieMatchAdminControlsHtml(tournamentId, tieId, idx, stageKind, sid)` — L9364
+- `cancelDraftTieMatch(tournamentId, tieId, matchIndex, stageKi)` — L9372
+- `forfeitDraftTieMatch(tournamentId, tieId, matchIndex, stageKi)` — L9383
+- `draftPlayerPickerHtml(tournamentId, tieId, matchIndex, members)` — L9394
+- `opts(selected)` — L9400
+- `pickTiePlayer(tournamentId, tieId, matchIndex, playerI)` — L9420
+- `pickTiePlayerPair(tournamentId, tieId, matchIndex, squadId)` — L9432
+- `submitDraftTieScore(tournamentId, tieId, matchIndex, stageKi)` — L9448
+- `submitDraftTieScoreDirect(tournamentId, tieId, matchIndex, stageKi)` — L9465
+- `collectAllEntities(t)` — L9631
+- `getAllTeamEntities(t)` — L9647
+- `renderTeamCompositionBars(t, containerId)` — L9665
+- `populateSubstitutionSection(t)` — L9700
+- `updateSubOldPlayerOptions()` — L9711
+- `formatGames(games)` — L9800
+- `applyTournamentViewMode()` — L9807
+- `matchTotals(match)` — L9823
+- `truncateBracketName(name, maxChars = 22)` — L9831
+- `renderBracketView(t)` — L9836
+- `renderDraftBracketGroupsPanel(t)` — L9964
+- `renderDraftBracketView(t)` — L10000
+- `renderTournament(t)` — L10131
+- `generateTournamentRecap(t)` — L10306
+- `downloadTournamentImage()` — L10338
+- `loadImg(src)` — L10365
+- `sideVisuals(side)` — L10375
+- `drawCard(x, y, w, match, isFinal)` — L10382
+- `drawAvatars(ctx, x, y, side, isWinner)` — L10428
+- `paintTeam(ctx, x, y, w, h, side, fallback)` — L10447
+- `roundRect(ctx, x, y, w, h, r)` — L10475
+- `downloadDraftShareImage()` — L10491
+- `loadImg(src)` — L10498
+- `sideAvatars(squadId)` — L10547
+- `drawSide(side, sx, sy, isWinner)` — L10628
+- `downloadDraftLeaderboardImage()` — L10709
+- `loadImg(src)` — L10718
+- `presetKeyFor(bannerCss)` — L10727
+- `copyTournamentRecap()` — L10837
+- `item_has_third_place(t)` — L10848
+- `submitGroupScore(tournamentId, subgroup, fixtureId)` — L10852
+- `submitGroupScoreDirect(tournamentId, subgroup, fixtureId, score)` — L10858
+- `submitKnockoutScore(tournamentId, roundIndex, matchIndex)` — L10895
+- `submitKnockoutScoreDirect(tournamentId, roundIndex, matchIndex, sc)` — L10901
+- `submitThirdPlaceScore(tournamentId)` — L10928
+- `submitThirdPlaceScoreDirect(tournamentId, score_a, score_b, override)` — L10934
+- `getTournamentLiveLog(matchKey)` — L10965
+- `tournamentLivePoint(matchKey, side, target)` — L10970
+- `tournamentUndoPoint(matchKey, target)` — L10979
+- `updateTournamentLiveDisplay(matchKey, target)` — L10985
+- `finishGroupLiveGame(matchKey, tournamentId, subgroup, fixtur)` — L11003
+- `finishKnockoutLiveGame(matchKey, tournamentId, roundIndex, matc)` — L11017
+- `finishThirdPlaceLiveGame(matchKey, tournamentId)` — L11026
+- `finishDraftTieLiveGame(matchKey, tournamentId, tieId, matchInde)` — L11044
+- `renderLiveScoreControls(matchKey, target, finishCallExpr, nameA,)` — L11053
+- `activateTab(tabName)` — L11077
+- `jumpToRecordMatch()` — L11173
+- `applyTheme(theme)` — L11179
 <!-- AUTOGEN:FRONTEND END -->
 
 ---

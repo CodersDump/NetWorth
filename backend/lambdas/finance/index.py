@@ -25,7 +25,18 @@ DATA MODEL (single table, FINANCE_TABLE, hash key record_id)
                                player_id?, status Yes/No/NA, remark}
     record_type='walkin':     {date ISO yyyy-mm-dd, slot, display_name,
                                player_id?, fee, skill, recruit_verdict,
-                               note}  (negative fee = refund/adjustment)
+                               note, sessions_covered?}  (negative fee =
+                               refund/adjustment; sessions_covered is how
+                               many sessions this one fee entry pays for -
+                               omitted/blank means 1, the normal case for a
+                               guest who pays per session. A lump sum that
+                               settles several sessions at once - paid
+                               upfront for a stretch, or paid in one go at
+                               month's end - should set this to the real
+                               count so "sessions paid" in Insights reflects
+                               reality instead of a raw count of fee
+                               entries. Same idea covers 2 slots paid for in
+                               one entry on the same day.)
     record_id='settings':     {walkins_public: bool}
 
 Routes (via API Gateway {proxy+} on /finance):
@@ -462,9 +473,10 @@ ALLOWED_FIELDS = {
     'membership': ['month', 'year', 'slot', 'display_name', 'player_id', 'status', 'remark',
                     'attended_briefly', 'attendance_note', 'forfeit_residual'],
     'walkin': ['date', 'slot', 'display_name', 'player_id', 'fee', 'skill',
-               'recruit_verdict', 'note'],
+               'recruit_verdict', 'note', 'sessions_covered'],
 }
-NUMERIC_FIELDS = {'estimated_cost', 'actual_cost', 'estimated_qty', 'actual_qty', 'fee', 'year'}
+NUMERIC_FIELDS = {'estimated_cost', 'actual_cost', 'estimated_qty', 'actual_qty', 'fee', 'year',
+                   'sessions_covered'}
 REQUIRED_FIELDS = {
     'expense': ['month', 'year', 'item'],          # slot optional -> group-wide
     'membership': ['month', 'year', 'slot', 'display_name', 'status'],
@@ -1553,7 +1565,16 @@ def insights(group_id=None):
         g = guests.setdefault(gkey, {'display_name': _resolve_name(cache, w.get('player_id')) or w.get('display_name'),
                                       'sessions': 0, 'fees_paid': 0.0, 'recruit_verdict': None,
                                       'became_member': False})
-        g['sessions'] += 1
+        # "Sessions paid" must reflect real sessions covered by this fee, not
+        # a raw count of fee entries (Owner-reported 2026-08-28: a guest who
+        # pays 80/slot every day should show N sessions for N entries, but a
+        # guest who pays a lump sum for the whole month in one entry was
+        # showing "1 session" no matter how much the lump sum actually
+        # covered). sessions_covered defaults to 1 (any missing/blank/zero
+        # value) so every existing entry - and every guest who already pays
+        # per-session - is completely unaffected by this change.
+        sc = _num(w.get('sessions_covered'), 0)
+        g['sessions'] += sc if sc > 0 else 1
         g['fees_paid'] = round(g['fees_paid'] + _num(w.get('fee')), 2)
         if w.get('recruit_verdict'):
             g['recruit_verdict'] = w.get('recruit_verdict')
