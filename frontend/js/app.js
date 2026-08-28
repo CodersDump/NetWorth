@@ -5658,24 +5658,30 @@ let userPool = null;
       if (!data.summary.length) { el.textContent = 'No finance data yet.'; return; }
       let html = '<table><tr><th>Month</th><th>Slot</th><th>Estimated</th><th>Actual</th><th>Extra collected</th><th>Members</th><th>Per head</th><th>Residual / head</th><th>Status</th></tr>';
       data.summary.forEach(r => {
+        // "(whole group)" rows are now priced PER PORTION, not per member
+        // (owner request, 2026-08-24: a member in 2 slots pays 2 portions
+        // of the group-wide expense, matching how the walk-in split already
+        // worked - reverses the 2026-08-20 "dedupe to distinct members"
+        // decision for the expense side specifically). player_count on
+        // this row is now total slot-enrollments ("portions"), so it's
+        // shown with the distinct member count alongside it for clarity.
+        const isGroupWide = r.slot === '(whole group)';
+        const membersCell = isGroupWide
+          ? `${r.player_count} portions<br><span style="font-size:11px;opacity:0.65;">(${r.distinct_member_count} members)</span>`
+          : r.player_count;
         const perHead = r.cost_per_head === null ? 'pending'
-          : `${r.cost_per_head}<br><span style="font-size:11px;opacity:0.65;">${r.estimated_total}÷${r.player_count}</span>`;
+          : isGroupWide
+            ? `${r.cost_per_head}/portion<br><span style="font-size:11px;opacity:0.65;">${r.estimated_total}÷${r.player_count} portions - multi-slot members pay that many times</span>`
+            : `${r.cost_per_head}<br><span style="font-size:11px;opacity:0.65;">${r.estimated_total}÷${r.player_count}</span>`;
         const status = r.collection_status === 'settled' ? 'Settled ✓'
           : r.collection_status === 'collecting' ? `Collecting ${r.confirmed_count}/${r.player_count}` : '-';
-        // "(whole group)" rows split two ways now (Owner-requested
-        // 2026-08-20): the expense side (residual_per_head) is still one
-        // even share for everyone, but the walk-in side (walkin_total) is
-        // weighted by how many of the month's slots each member plays -
-        // there's no single "residual/head" number for that part, so show
-        // both pieces instead of one misleading average.
-        const isGroupWide = r.slot === '(whole group)';
         const residualCell = r.residual_per_head === null ? 'pending'
           : isGroupWide
-            ? `${r.residual_per_head} even (expense)` +
+            ? `${r.residual_per_head}/portion (expense)` +
               (r.walkin_total ? `<br><span style="font-size:11px;opacity:0.65;">+ ₹${r.walkin_total} walk-in, split by slot-count across ${r.walkin_denominator} slot-enrollments</span>` : '')
             : r.residual_per_head;
         html += `<tr><td>${r.month} ${r.year}</td><td>${r.slot}</td><td>${r.estimated_total}</td><td>${r.actual_total}</td>` +
-          `<td>${r.extra_collected}</td><td>${r.player_count}</td>` +
+          `<td>${r.extra_collected}</td><td>${membersCell}</td>` +
           `<td>${perHead}</td>` +
           `<td>${residualCell}</td><td>${status}</td></tr>`;
       });
@@ -6104,6 +6110,132 @@ let userPool = null;
       document.body.removeChild(ta);
     }
 
+    /**
+     * Renders the full "Effective monthly cost per member" table (the same
+     * one on screen) to a PNG and copies it straight to the clipboard, so
+     * it can be pasted into WhatsApp as an actual image - owner request,
+     * 2026-08-24: "can you make in the finace section under insights that
+     * i can copy the image of the table that gets created and not just the
+     * 'copy for whatsapp' part. reason being, in desktop it looks fine but
+     * in mobile only when i make it landscape mode the tabular data is
+     * readable, else in normal portrait mode it gets squished." Unlike
+     * copyDuesForWhatsApp's simplified 4-column monospace text block, this
+     * mirrors the full on-screen table (all 7 columns, same Estimated/
+     * Actual matches toggle state) as a picture - a picture reads fine at
+     * any width the viewer opens it at, unlike a squished HTML table or a
+     * monospace block that still wraps on a narrow screen.
+     *
+     * Hand-drawn on a canvas (matching this file's existing
+     * downloadTournamentImage/downloadDraftLeaderboardImage pattern) rather
+     * than a DOM-to-canvas library - no third-party dependency, and a plain
+     * data table is simple enough to lay out directly.
+     */
+    async function copyInsightsTableAsImage() {
+      const data = lastInsights;
+      if (!data || !data.cost_rows || !data.cost_rows.length) { nwAlert('Load insights first.'); return; }
+      const useEst = document.getElementById('fins_estimated').checked;
+      const rows = data.cost_rows;
+      const month = rows[0].month, year = rows[0].year;
+      const sameMonth = rows.every(r => r.month === month && r.year === year);
+
+      const cols = [
+        { label: 'Member', align: 'left', get: r => r.display_name + (r.linked ? '' : ' (unlinked)') },
+        { label: 'Slots', align: 'left', get: r => r.slots.join(', ') },
+        { label: 'Paid', align: 'right', get: r => r.paid === null ? 'pending' : `₹${r.paid.toFixed(2)}` },
+        { label: 'Relief', align: 'right', get: r => `₹${Number(r.relief || 0).toFixed(2)}` },
+        { label: 'Effective', align: 'right', get: r => r.effective_cost === null ? 'pending' : `₹${r.effective_cost.toFixed(2)}` },
+        { label: 'Games', align: 'right', get: r => {
+          const m = useEst ? r.matches_estimated : r.matches_actual;
+          return m === null ? '?' : (useEst && r.estimated_applied ? `~${m}` : `${m}`);
+        } },
+        { label: '₹/Game', align: 'right', get: r => {
+          const cpm = useEst ? r.cost_per_match_estimated : r.cost_per_match_actual;
+          return cpm === null ? '-' : `₹${cpm.toFixed(2)}`;
+        } },
+      ];
+      if (!sameMonth) cols.unshift({ label: 'Month', align: 'left', get: r => `${r.month} ${r.year}` });
+
+      const W = 900, pad = 28, rowH = 40, headerH = 46, titleH = 64;
+      const H = titleH + headerH + rows.length * rowH + pad;
+      const canvas = document.createElement('canvas');
+      canvas.width = W; canvas.height = H;
+      const ctx = canvas.getContext('2d');
+
+      ctx.fillStyle = '#0F1B15';
+      ctx.fillRect(0, 0, W, H);
+
+      ctx.textBaseline = 'middle';
+      ctx.textAlign = 'left';
+      ctx.font = "700 22px 'Rajdhani', sans-serif";
+      ctx.fillStyle = '#FFD23F';
+      ctx.fillText(sameMonth ? `${month} ${year} — Cost per member` : 'Cost per member', pad, titleH / 2 + 6);
+      ctx.font = "600 13px system-ui";
+      ctx.fillStyle = '#8fa89a';
+      ctx.fillText('NetWorth · Finance Insights', pad, titleH / 2 + 26);
+
+      // Column widths: fixed-ish, first (name) column gets whatever's left.
+      const fixedW = { Slots: 110, Paid: 100, Relief: 90, Effective: 100, Games: 70, '₹/Game': 90, Month: 100 };
+      let usedFixed = 0;
+      cols.forEach(c => { if (c.label !== 'Member') usedFixed += (fixedW[c.label] || 90); });
+      const nameW = Math.max(140, W - pad * 2 - usedFixed);
+      const colW = cols.map(c => c.label === 'Member' ? nameW : (fixedW[c.label] || 90));
+      const colX = [pad];
+      for (let i = 1; i < cols.length; i++) colX.push(colX[i - 1] + colW[i - 1]);
+
+      let y = titleH;
+      ctx.fillStyle = '#16261C';
+      ctx.fillRect(0, y, W, headerH);
+      ctx.font = "700 14px 'Rajdhani', sans-serif";
+      ctx.fillStyle = '#c9d4ce';
+      cols.forEach((c, i) => {
+        ctx.textAlign = c.align;
+        const x = c.align === 'left' ? colX[i] : colX[i] + colW[i] - 12;
+        ctx.fillText(c.label, x, y + headerH / 2);
+      });
+      y += headerH;
+
+      rows.forEach((r, ri) => {
+        if (ri % 2 === 1) { ctx.fillStyle = 'rgba(255,255,255,0.03)'; ctx.fillRect(0, y, W, rowH); }
+        ctx.font = "500 14px system-ui";
+        ctx.fillStyle = '#e8efe9';
+        cols.forEach((c, i) => {
+          ctx.textAlign = c.align;
+          const x = c.align === 'left' ? colX[i] : colX[i] + colW[i] - 12;
+          let text = String(c.get(r));
+          // Truncate an overlong name/slot list rather than overflow into
+          // the next column - this is a summary image, not the full table.
+          const maxChars = c.label === 'Member' ? 22 : (c.label === 'Slots' ? 16 : 14);
+          if (text.length > maxChars) text = text.slice(0, maxChars - 1) + '…';
+          ctx.fillText(text, x, y + rowH / 2);
+        });
+        y += rowH;
+      });
+
+      canvas.toBlob(async (blob) => {
+        if (!blob) { nwAlert('Could not generate the image.'); return; }
+        if (navigator.clipboard && window.ClipboardItem) {
+          try {
+            await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+            nwAlert('Table copied as an image - paste it into WhatsApp.');
+            return;
+          } catch (e) { /* fall through to download */ }
+        }
+        // Clipboard image write isn't supported on this browser (or the
+        // paste permission was denied) - fall back to a plain download.
+        // Appended to the DOM before clicking (matching downloadCSV's
+        // pattern above, more robust than the tournament share-image
+        // functions' bare unattached click) and removed right after.
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url; a.download = `finance_insights_${(sameMonth ? month + '_' + year : 'summary').replace(/\s+/g, '_')}.png`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+        nwAlert("Couldn't copy directly on this browser - downloaded the image instead, attach it from your downloads.");
+      }, 'image/png');
+    }
+
     function renderInsights() {
       const el = document.getElementById('finance-insights-result');
       const data = lastInsights;
@@ -6137,7 +6269,14 @@ let userPool = null;
           const paidCell = r.paid === null ? 'pending'
             : `${r.paid}<br><span style="font-size:11px;opacity:0.65;">` +
               (r.paid_breakdown || []).filter(b => b.per_head != null)
-                .map(b => `${b.slot}: ${b.total}÷${b.members}=${b.per_head}`).join('<br>') + `</span>`;
+                // Group-wide lines show what THIS member actually paid
+                // (your_share = per-portion price x their slot count,
+                // 2026-08-24) rather than the bare per-portion price, which
+                // would otherwise read like their whole contribution when a
+                // multi-slot member's real share is a multiple of it.
+                .map(b => b.your_share != null && b.your_slots > 1
+                  ? `${b.slot}: ${b.per_head}/portion x ${b.your_slots} slots = ${b.your_share}`
+                  : `${b.slot}: ${b.total}÷${b.members}=${b.per_head}`).join('<br>') + `</span>`;
           html += `<tr><td>${r.month} ${r.year}</td><td>${r.display_name}${r.linked ? '' : ' <span style="opacity:0.6;">(unlinked)</span>'}</td>` +
             `<td>${r.slots.join(', ')}</td>` +
             `<td>${paidCell}</td><td>${r.relief}</td>` +
@@ -6146,7 +6285,8 @@ let userPool = null;
             `<td>${cpm === null ? (r.effective_cost === null ? 'pending' : '∞ (no matches)') : (est ? '~' + cpm : cpm)}</td></tr>`;
         });
         html += '</table>';
-        html += '<button type="button" class="secondary" style="margin-top:10px;" onclick="copyDuesForWhatsApp()">Copy for WhatsApp</button>';
+        html += '<button type="button" class="secondary" style="margin-top:10px;" onclick="copyDuesForWhatsApp()">Copy for WhatsApp</button>' +
+          '<button type="button" class="secondary" style="margin-top:10px;margin-left:8px;" onclick="copyInsightsTableAsImage()">Copy table as image</button>';
         if (data.cost_rows.some(r => r.estimated_applied)) {
           html += `<p style="font-size:12px; opacity:0.7;">~ = estimated: match tracking began ${data.tracking_start || 'mid-month'}; counts for players with under 10 recorded play days include an estimate of ~4.5 games x sessions held before tracking. Untick the box above for captured counts only.</p>`;
         }

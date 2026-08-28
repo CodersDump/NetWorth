@@ -363,6 +363,57 @@
 
 ## Done
 
+- ✅ 2026-08-24 (v1.70.0) — **Finance: group-wide expenses now split by total slot-enrollments
+  ("portions"), not distinct members; Insights table gets a "Copy as image" button.** Two owner
+  requests in one message.
+  (1) Group-wide (slot-less) expense split, e.g. shuttle boxes: "you know how the whole group
+  calculations happens by splitting the amount to unique members across each slot for that month and
+  then divides the amount. can we switch it back to members in all the slots and then if a group has 2
+  slots and 3 members share both the groups then they should have 2 portions each ... we have 2 slots
+  like 12 and 12 each, the total amount for 5 boxes of shuttle amounts to 6000, 1200 per box, then the
+  amount 6000 should be divided into 24 parts ... those who belong to one slot pay for the one slot
+  while others who play in both slots will pay for the 2 portions." This deliberately REVERSES the
+  narrower 2026-08-20 decision (recorded in a big comment in `_settlement_rows`) that deduped the
+  group-wide expense side to distinct members while leaving only walk-in fees slot-weighted - the
+  owner now wants both sides using the exact same weighting. Fixed in `backend/lambdas/finance/index.py`:
+  the group-wide bucket's denominator (`player_count`) is now `total_slots` (sum of every Yes member's
+  slot-enrollments that month, matching `walkin_denominator` exactly) instead of `len(distinct members)`
+  - so `cost_per_head`/`residual_per_head` on that bucket become PER-PORTION prices; a new
+  `distinct_member_count` field keeps the old headcount available separately for the UI; new
+  `expense_shares`/`expense_residual_shares` per-member dicts (mirroring the pre-existing
+  `walkin_shares` exactly, including precision - computed from the raw totals divided by `total_slots`
+  directly, not from the already-rounded per-portion price times slot count, to avoid compounding
+  rounding error) are what `my_settlement` (the "My dues" personal view) and `insights` (the organizer
+  Insights table) now actually charge/credit each member, replacing their old flat per-bucket reads.
+  Frontend `loadFinanceSummary()` relabels the group-wide row's Members/Per head/Residual columns so
+  the portion-based pricing reads clearly (e.g. "24 portions (12 members)") instead of looking like a
+  broken headcount; the Insights cost-breakdown tooltip shows a multi-slot member's actual weighted
+  share ("1000/portion x 2 slots = 2000") instead of the bare per-portion price. Verified with a new
+  `/tmp/test_group_wide_expense_split.py` (21 checks) reproducing the owner's exact worked example
+  (2×12 slots, 6000 ÷ 24 = 250/portion) plus an overlapping-membership scenario hand-verified against
+  the expected math, and the pre-existing `/tmp/test_group_split.py` had its now-superseded assertions
+  (12 distinct members as the denominator) updated to the new correct behavior (18 portions) with new
+  `expense_shares` checks added - full backend suite re-run clean (34 files).
+  (2) "can you make in the finance section under insights that i can copy the image of the table that
+  gets created and not just the 'copy for whatsapp' part. reason being, in desktop it looks fine but in
+  mobile only when i make it landscape mode the tabular data is readable, else in normal portrait mode
+  it gets squished." New `copyInsightsTableAsImage()` in `app.js`, a "Copy table as image" button next
+  to the existing "Copy for WhatsApp" one in the Insights panel - hand-draws the full on-screen 7-column
+  table (Member/Slots/Paid/Relief/Effective/Games/₹-per-Game, same Estimated/Actual toggle state as the
+  screen) to a canvas, matching this file's existing `downloadTournamentImage`/
+  `downloadDraftLeaderboardImage` pattern rather than pulling in a third-party DOM-to-canvas library,
+  then copies the PNG straight to the clipboard via `navigator.clipboard.write`/`ClipboardItem` so it
+  can be pasted directly into WhatsApp as a real image (unlike copyDuesForWhatsApp's simplified
+  4-column monospace text block, which still wraps on a narrow phone) - falls back to a plain download
+  when clipboard image support isn't available (anchor appended to the DOM before `.click()` and
+  removed after, matching `downloadCSV`'s more robust pattern rather than the three existing tournament
+  share-image functions' bare unattached click - fixed there too as a drive-by, since Playwright
+  couldn't reliably detect the download event without it). Verified with a new
+  `/tmp/test_insights_image_copy_ui.js` (10 checks): drives the real `loadFinanceInsights()` ->
+  `renderInsights()` flow against mocked data, confirms the button renders, and exercises BOTH the
+  clipboard-copy path and (by explicitly stripping `window.ClipboardItem`) the download-fallback path,
+  checking the resulting PNG has real nonzero image bytes either way.
+
 - ✅ 2026-08-24 (v1.69.0) — **Account security: forgot-password let you reset to your OLD password.**
   Owner report, testing the forgot-password flow himself right after the v1.68.0 investigation: "i was
   able to forget password and use my old password again. it should not allow that as well." Cognito

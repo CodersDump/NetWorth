@@ -879,11 +879,22 @@ def my_settlement(claims, group_id):
         gw = rows.get((mth, yr, GROUP_SLOT))
         if not gw or gw.get('cost_per_head') is None:
             continue
-        gw_cost = gw['cost_per_head']
-        # residual_per_head is the expense-driven even share; walkin_shares
-        # is this member's slot-weighted cut of walk-in earnings (see
-        # _settlement_rows) - summed for their total group-wide refund.
-        gw_back = (gw.get('residual_per_head') or 0.0) + (gw.get('walkin_shares', {}).get(pid, 0) or 0.0)
+        # cost_per_head/residual_per_head on a group-wide bucket are now
+        # PER-PORTION amounts (2026-08-24: portions = total slot-
+        # enrollments that month, not distinct members - see
+        # _settlement_rows). expense_shares/expense_residual_shares are
+        # this member's own amount, already weighted by how many of the
+        # month's slots they're enrolled in - falls back to 0 (not the raw
+        # per-portion figure, which would misrepresent a multi-slot
+        # member's share) in the unexpected case a member_months entry
+        # has no matching share, which shouldn't happen in practice since
+        # both are built from the same membership records.
+        gw_cost = gw.get('expense_shares', {}).get(pid, 0.0)
+        # walkin_shares is this member's slot-weighted cut of walk-in
+        # earnings (see _settlement_rows) - summed for their total
+        # group-wide refund.
+        gw_back = (gw.get('expense_residual_shares', {}).get(pid, 0.0) or 0.0) \
+            + (gw.get('walkin_shares', {}).get(pid, 0) or 0.0)
         owe_total += gw_cost
         owed_back_total += gw_back
         lines.append({
@@ -1009,12 +1020,33 @@ def _settlement_rows(group_id=None):
                 continue
             bucket(month, year, _slot_key(w.get('slot')))['extra_collected'] += _num(w.get('fee'))
 
-    # Give each group-wide bucket its denominator: the month's distinct Yes members.
-    for (month, year), members in distinct_members.items():
+    # Give each group-wide bucket its denominator: the month's TOTAL
+    # slot-enrollments (not distinct members) - changed 2026-08-24, owner
+    # request: "can we switch it back to members in all the slots and then
+    # if a group has 2 slots and 3 members share both the groups then they
+    # should have 2 portions each ... 2 slots like 12 and 12 each, the
+    # total amount for 5 boxes of shuttle amounts to 6000, 1200 per box,
+    # then the amount 6000 should be divided into 24 parts ... those who
+    # belong to one slot pay for the one slot while others who play in
+    # both slots will pay for the 2 portions." This REVERSES the
+    # 2026-08-20 decision recorded in the comment above (which deliberately
+    # deduped to distinct members for the expense side, unlike walk-ins) -
+    # the group-wide expense side now uses the exact same total-slots
+    # denominator walk-ins already used, so `cost_per_head`/
+    # `residual_per_head` below become PER-PORTION amounts, not per-member
+    # ones; `expense_shares`/`expense_residual_shares` (added in the
+    # post-pass below) are the actual per-member amounts, weighted by how
+    # many of the month's slots that member is enrolled in - mirrors
+    # `walkin_shares` exactly, now both driven by the same total_slots.
+    for (month, year), slot_counts in member_slot_counts.items():
         gwkey = (str(month), int(year), GROUP_SLOT)
         if gwkey in periods:
-            periods[gwkey]['player_count'] = len(members)
+            periods[gwkey]['player_count'] = sum(slot_counts.values())
             periods[gwkey]['is_group_wide'] = True
+            # Exposed alongside the now-portion-based player_count so the
+            # frontend can show "24 portions (15 members)" instead of a bare
+            # number that reads like a headcount.
+            periods[gwkey]['distinct_member_count'] = len(distinct_members.get((month, year), set()))
 
     for key, b in periods.items():
         count = b['player_count']
@@ -1063,6 +1095,34 @@ def _settlement_rows(group_id=None):
         b['walkin_shares'] = shares
         b['walkin_total'] = round(walkin_total, 2)
         b['walkin_denominator'] = total_slots
+
+        # Per-member expense shares, weighted by slot count (2026-08-24) -
+        # cost_per_head/residual_per_head above are now PER-PORTION (the
+        # bucket's player_count is total_slots, see the denominator pass
+        # above), so a member's actual amount is that portion price times
+        # how many of the month's slots they're enrolled in. Computed from
+        # the raw totals directly (estimated_total * n_slots / total_slots),
+        # not from the already-rounded-to-cents cost_per_head times n_slots,
+        # to avoid compounding rounding error - mirrors walkin_shares'
+        # existing precision exactly (walkin_total * n_slots / total_slots).
+        # Falls back to an even split across distinct members only in the
+        # degenerate case where there's a group-wide expense but literally
+        # no membership records this month (mirrors the walk-in fallback
+        # above, for the same reason - don't just drop the money).
+        cost_shares, residual_shares = {}, {}
+        if total_slots > 0:
+            for ident, n_slots in slot_counts.items():
+                cost_shares[ident] = round(b['estimated_total'] * n_slots / total_slots, 2)
+                residual_shares[ident] = round(
+                    (b['estimated_total'] - b['actual_total']) * n_slots / total_slots, 2)
+        elif active:
+            even_cost = round(b['estimated_total'] / active, 2)
+            even_residual = round((b['estimated_total'] - b['actual_total']) / active, 2)
+            for ident in distinct_members.get((month, year), set()):
+                cost_shares[ident] = even_cost
+                residual_shares[ident] = even_residual
+        b['expense_shares'] = cost_shares
+        b['expense_residual_shares'] = residual_shares
 
     # Settled status (second pass - needs every period's residual finalised
     # first, because a member's EFFECTIVE amount = cost_per_head - their relief,
@@ -1377,23 +1437,31 @@ def insights(group_id=None):
                                         'total': srow.get('estimated_total'),
                                         'members': srow.get('player_count')})
 
-        # Group-wide (slot-less) cost + relief, added once per distinct member.
+        # Group-wide (slot-less) cost + relief - weighted by how many of the
+        # month's slots this member is enrolled in (2026-08-24; see
+        # _settlement_rows). cost_per_head on the group-wide bucket is now a
+        # PER-PORTION amount, not a per-member one - expense_shares is this
+        # member's own (already-weighted) amount.
         gw = settlement.get((month, year, GROUP_SLOT))
         if gw and gw.get('cost_per_head') is not None:
-            paid += gw['cost_per_head']
+            gw_share = gw.get('expense_shares', {}).get(ident, 0.0)
+            paid += gw_share
             paid_breakdown.append({'slot': GROUP_SLOT, 'per_head': gw['cost_per_head'],
+                                    'your_share': gw_share, 'your_slots': len(entry['slots']),
                                     'total': gw.get('estimated_total'), 'members': gw.get('player_count')})
 
         p_month, p_year = prev_period(month, year)
         relief = _member_relief(settlement, memberships, ident, month, year)
         # Group-wide relief from last month (only if they were a distinct Yes
         # member then, i.e. they have an entry for the previous period).
-        # residual_per_head is the expense-driven even share; walkin_shares
-        # is this member's slot-weighted cut of walk-in earnings (see
+        # expense_residual_shares is the expense-driven share, already
+        # weighted by that prior month's slot count; walkin_shares is this
+        # member's slot-weighted cut of walk-in earnings (see
         # _settlement_rows) - both count toward relief.
         p_gw = settlement.get((p_month, p_year, GROUP_SLOT))
         if p_gw and (ident, p_month, p_year) in by_member_month:
-            relief += (p_gw.get('residual_per_head') or 0) + (p_gw.get('walkin_shares', {}).get(ident, 0) or 0)
+            relief += (p_gw.get('expense_residual_shares', {}).get(ident, 0) or 0) \
+                + (p_gw.get('walkin_shares', {}).get(ident, 0) or 0)
 
         attended_briefly = any(
             mem3.get('attended_briefly') for mem3 in memberships
