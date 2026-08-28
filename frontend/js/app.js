@@ -5963,6 +5963,8 @@ let userPool = null;
 
     let editingWalkinId = null;
     let lastWalkins = [];
+    let allWalkinsCache = null; // full history, lazily fetched - used only to suggest "sessions covered"
+    let sessionsFieldManuallyEdited = false;
 
     function resetWalkinEdit() {
       editingWalkinId = null;
@@ -5971,6 +5973,48 @@ let userPool = null;
       document.getElementById('fwalk_name').value = '';
       document.getElementById('fwalk_note').value = '';
       document.getElementById('fwalk_player').value = '';
+      document.getElementById('fwalk_sessions').value = '';
+      document.getElementById('fwalk_sessions_hint').textContent = '';
+      sessionsFieldManuallyEdited = false;
+    }
+
+    // Suggests how many sessions the fee currently typed in probably covers,
+    // based on this guest's own most recent history - e.g. if their last
+    // entry was a single 80 payment, a new 240 entry suggests "3 sessions".
+    // Owner asked for this ("Both - auto-suggest, still editable"): it only
+    // ever pre-fills the field, the organizer can always type over it, and a
+    // guest with no history or an un-derivable rate gets no suggestion at
+    // all (field stays blank, meaning "1", same as before this feature).
+    async function suggestWalkinSessions() {
+      if (sessionsFieldManuallyEdited) return;
+      const feeVal = parseFloat(document.getElementById('fwalk_fee').value);
+      if (!feeVal || feeVal <= 0) { document.getElementById('fwalk_sessions_hint').textContent = ''; return; }
+      const pid = document.getElementById('fwalk_player').value;
+      const name = document.getElementById('fwalk_name').value.trim();
+      if (!pid && !name) { document.getElementById('fwalk_sessions_hint').textContent = ''; return; }
+      if (!allWalkinsCache) {
+        try {
+          const res = await fetch(`${financeBaseUrl()}/walkins`, { headers: getAuthHeaders() });
+          const data = await res.json();
+          allWalkinsCache = res.ok ? (data.walkins || []) : [];
+        } catch (e) { allWalkinsCache = []; }
+      }
+      const history = allWalkinsCache
+        .filter(w => w.record_id !== editingWalkinId && (pid ? w.player_id === pid : (!w.player_id && w.display_name === name)))
+        .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+      if (!history.length) { document.getElementById('fwalk_sessions_hint').textContent = ''; return; }
+      // Prefer their most recent *confirmed* single-session entry (a clean
+      // rate, not a guess) - falls back to the most recent entry's own
+      // implied per-session rate if every past entry was itself a lump sum.
+      const clean = history.find(w => !(parseFloat(w.sessions_covered) > 1));
+      const basis = clean || history[0];
+      const basisSessions = parseFloat(basis.sessions_covered) > 0 ? parseFloat(basis.sessions_covered) : 1;
+      const rate = parseFloat(basis.fee) / basisSessions;
+      if (!rate || rate <= 0) { document.getElementById('fwalk_sessions_hint').textContent = ''; return; }
+      const suggested = Math.max(1, Math.round(feeVal / rate));
+      document.getElementById('fwalk_sessions').value = suggested;
+      document.getElementById('fwalk_sessions_hint').textContent =
+        `auto-suggested from their usual ~${rate}/session - edit if wrong`;
     }
 
     async function loadFinanceWalkins() {
@@ -5985,16 +6029,17 @@ let userPool = null;
       if (!res.ok) { el.textContent = `Error: ${data.error}`; return; }
       if (!data.walkins.length) { el.textContent = 'No walk-ins for this period.'; return; }
       lastWalkins = data.walkins;
-      let html = '<table><tr><th>Date</th><th>Slot</th><th>Name</th><th>Fee</th><th>Skill</th><th>Recruit?</th><th></th></tr>';
+      let html = '<table><tr><th>Date</th><th>Slot</th><th>Name</th><th>Fee</th><th>Sessions</th><th>Skill</th><th>Recruit?</th><th></th></tr>';
       data.walkins.forEach(w => {
         // Linked to a roster player -> show their CURRENT name/nickname,
         // toggle-aware, ignoring the frozen display_name snapshot from
         // whenever the walk-in was recorded. A true guest (no player_id
         // at all) has no nickname concept, so their typed name stays as-is.
         const label = w.player_id ? playerLabelById(w.player_id, w.display_name) : w.display_name;
+        const sessionsCell = (parseFloat(w.sessions_covered) > 0) ? w.sessions_covered : 1;
         html += `<tr><td>${w.date}</td><td>${w.slot}</td>` +
           `<td>${label}${w.player_id ? '' : ' <span style="opacity:0.6;">(guest)</span>'}${w.note ? ` <span title="${String(w.note).replace(/"/g, '&quot;')}" onclick="nwAlert('${String(w.note).replace(/'/g, "\\'").replace(/"/g, '&quot;')}')">📝</span>` : ''}</td>` +
-          `<td>${w.fee}</td><td>${w.skill || ''}</td><td>${w.recruit_verdict || ''}</td>` +
+          `<td>${w.fee}</td><td>${sessionsCell}</td><td>${w.skill || ''}</td><td>${w.recruit_verdict || ''}</td>` +
           `<td><button type="button" class="secondary fin-edit-walkin" data-id="${w.record_id}">Edit</button> ` +
           `<button type="button" class="secondary fin-del" data-kind="walkins" data-id="${w.record_id}">Delete</button></td></tr>`;
       });
@@ -6011,6 +6056,9 @@ let userPool = null;
         document.getElementById('fwalk_player').value = w.player_id || '';
         document.getElementById('fwalk_name').value = w.player_id ? '' : (w.display_name || '');
         document.getElementById('fwalk_fee').value = w.fee ?? '';
+        document.getElementById('fwalk_sessions').value = (parseFloat(w.sessions_covered) > 0) ? w.sessions_covered : '';
+        document.getElementById('fwalk_sessions_hint').textContent = '';
+        sessionsFieldManuallyEdited = true; // editing an existing entry - don't clobber its saved value
         document.getElementById('fwalk_skill').value = w.skill || '';
         document.getElementById('fwalk_recruit').value = w.recruit_verdict || '';
         document.getElementById('fwalk_note').value = w.note || '';
@@ -6032,6 +6080,7 @@ let userPool = null;
         slot: document.getElementById('fwalk_slot').value,
         display_name: chosen ? chosen.name : name,
         fee: document.getElementById('fwalk_fee').value,
+        sessions_covered: document.getElementById('fwalk_sessions').value,
         skill: document.getElementById('fwalk_skill').value.trim(),
         recruit_verdict: document.getElementById('fwalk_recruit').value,
         note: document.getElementById('fwalk_note').value.trim(),
@@ -6042,6 +6091,7 @@ let userPool = null;
         : await finPost('walkins', 'POST', body);
       if (!ok || (data.errors && data.errors.length)) { nwAlert('Error: ' + JSON.stringify(data.errors || data.error)); return; }
       resetWalkinEdit();
+      allWalkinsCache = null; // this guest's history just changed - drop the cache so future suggestions see it
       // Always reload the table rather than patching the DOM locally - the
       // Edit button on any hand-built row would need its own listener
       // re-wired (loadFinanceWalkins does that via querySelectorAll), and a
@@ -6315,6 +6365,7 @@ let userPool = null;
         html += c.scoped_to_month
           ? `<p style="font-size:12px; color:var(--text-secondary); margin:2px 0 8px;">Showing <strong>${c.scoped_to_month}</strong> only. Clear Year above for the lifetime total.</p>`
           : '<p style="font-size:12px; color:var(--text-secondary); margin:2px 0 8px;">Showing the lifetime total. Pick a Month + Year above to see just that month.</p>';
+        html += '<p style="font-size:12px; color:var(--text-secondary); margin:2px 0 8px;">"Sessions paid" is the real number of sessions their fees cover - a lump-sum entry counts for as many sessions as its "Sessions covered" field says, not as "1 entry". Set that field when logging a walk-in fee (Finance → Walk-ins) if it\'s not a plain per-session payment.</p>';
         if (c.guests && c.guests.length) {
           html += '<table><tr><th>Guest</th><th>Days attended</th><th>Sessions paid</th><th>Fees paid</th>'
                 + (c.default_walkin_fee ? '<th>Expected</th><th>Pending</th>' : '')
@@ -6471,6 +6522,10 @@ let userPool = null;
     document.getElementById('finance-add-walkin-btn').addEventListener('click', addFinanceWalkin);
     document.getElementById('finance-cancel-walkin-edit-btn').addEventListener('click', resetWalkinEdit);
     document.getElementById('finance-load-walkins-btn').addEventListener('click', loadFinanceWalkins);
+    document.getElementById('fwalk_fee').addEventListener('blur', suggestWalkinSessions);
+    document.getElementById('fwalk_player').addEventListener('change', suggestWalkinSessions);
+    document.getElementById('fwalk_name').addEventListener('blur', suggestWalkinSessions);
+    document.getElementById('fwalk_sessions').addEventListener('input', () => { sessionsFieldManuallyEdited = true; });
     (function initInsightsFilter() {
       const now = new Date();
       const monthNames = ['January','February','March','April','May','June','July','August','September','October','November','December'];

@@ -363,6 +363,36 @@
 
 ## Done
 
+- ✅ 2026-08-28 (v1.71.0) — **Finance Insights: "Sessions paid" for non-members now reflects real
+  sessions, not a raw count of fee entries.** Owner report, with 2 screenshots of the "🎯 Non-members:
+  attendance, fees & conversion" table: "the sessions paid is equivalent to how many entries i have
+  made for them" — some guests pay per-session (80/slot every day) and were fine, but a guest who pays
+  a lump sum in one entry (Shashi: whole month at once, 23 real days shown as "Sessions paid: 2" because
+  he only has 2 fee entries) or in batches (some pay 180 every third day; Aniket was a 90/slot weekend-
+  only guest) got wildly undercounted. Owner also asked whether 2 slots paid in one entry on one day
+  could be made to read the same as 2 single-slot entries on different days (both paying the same total).
+  Root cause: `insights()`'s guest-conversion loop (`backend/lambdas/finance/index.py`) did
+  `g['sessions'] += 1` per walk-in record, regardless of what the fee actually covered. Fix: new optional
+  numeric field `sessions_covered` on a walk-in record (`ALLOWED_FIELDS['walkin']`/`NUMERIC_FIELDS`) -
+  defaults to 1 whenever absent/blank/zero, so every existing entry and every guest who already pays
+  per-session is completely unaffected. `insights()` now sums `sessions_covered` instead of counting
+  entries. Asked the owner (AskUserQuestion) how to fill this field in practice - chose **"Both -
+  auto-suggest, still editable"**: new "Sessions covered" input on the Finance → Walk-ins add/edit form
+  (`fwalk_sessions`), auto-suggested from that guest's own most recent per-session rate (prefers their
+  latest *confirmed single-session* entry as the rate basis, else falls back to the latest entry's own
+  implied rate) the moment a fee is typed and the field loses focus (`suggestWalkinSessions()` in
+  `app.js`) - always overridable, and a manual edit is remembered for the rest of that form session so a
+  later fee edit never clobbers it. Walk-ins list table gets a new "Sessions" column so the value is
+  visible/auditable per entry, and the Insights table gets an explanatory caption. **Historical data:**
+  owner chose to fix already-logged entries himself via the existing Edit button now that the field
+  exists, rather than having me patch specific records - Insights table's existing days-attended /
+  fees-paid columns (for linked guests) remain the cross-check for which guests still look off.
+  Verified with new `/tmp/test_walkin_sessions_covered.py` (14 checks: API round-trip of the new field,
+  unchanged per-session behaviour, the Shashi lump-sum case, a mixed per-session+batched guest, the
+  "2 slots one day == 2 single-slot days" equivalence, and 0/blank falling back to 1 not 0) and
+  `/tmp/test_walkin_sessions_ui.js` (8 checks: field renders, table column, auto-suggest fill +
+  hint text, manual-override protection, and the POST body actually carrying the field).
+
 - ✅ 2026-08-24 (v1.70.0) — **Finance: group-wide expenses now split by total slot-enrollments
   ("portions"), not distinct members; Insights table gets a "Copy as image" button.** Two owner
   requests in one message.
