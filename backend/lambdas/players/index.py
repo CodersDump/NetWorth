@@ -1216,12 +1216,15 @@ def decide_claim_request(event):
         return _response(400, {'error': f"this request was already {req.get('status')}"})
 
     # SuperAdmin may decide anything. A group owner/admin may decide only the
-    # owner-decidable types (claim / edit_own_name) for players in a group they
-    # own - everything else (finance, deletes, match changes) stays SuperAdmin.
+    # owner-decidable types for players/matches in a group they own -
+    # OWNER_DECIDABLE_TYPES = claim, edit_own_name, finance_access, match_edit,
+    # match_delete (added 2026-08-20). A request with no group_id (a genuinely
+    # ungrouped match, or new_profile) has no owner to route to and stays
+    # SuperAdmin-only regardless of type - see _owner_may_decide.
     if not is_super:
         owned = _caller_owned_group_ids(claims)
         if not owned or not _owner_may_decide(req, owned):
-            return _response(403, {'error': 'you can only approve claim or rename requests for members of a group you own'})
+            return _response(403, {'error': 'you can only approve requests for members/matches of a group you own'})
 
     decided = {
         'status': 'approved' if action == 'approve' else 'rejected',

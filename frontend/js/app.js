@@ -819,6 +819,7 @@ let userPool = null;
       allGroups = data.groups || [];
       populateSelect(document.getElementById('group_select'), allGroups, 'group_id', 'group_name', null);
       populateSelect(document.getElementById('register_group_id'), allGroups, 'group_id', 'group_name', "Don't add to a group yet");
+      populateSelect(document.getElementById('bulk_register_group_id'), allGroups, 'group_id', 'group_name', "Don't add to a group yet");
       populateSelect(document.getElementById('match_group_select'), allGroups, 'group_id', 'group_name', 'None');
       defaultMatchGroup();  // pre-pick the recorder's group once groups are loaded
       // Every group-scoped STATS/HISTORY filter below offers "all groups you
@@ -1433,22 +1434,64 @@ let userPool = null;
       }
     });
 
+    // Owner-requested 2026-08-28: "under the bulk registration, allow to
+    // select a group as well and option to create a fresh new group as well
+    // from there". "Create & use" reuses the same /group-create (logged in)
+    // / /groups (guest) endpoint the standalone Groups tab's create-group-form
+    // already uses (see that handler above), then selects the new group in
+    // the dropdown right below so it's ready for "Register all" immediately.
+    document.getElementById('bulk-register-create-group-btn').addEventListener('click', async () => {
+      const group_name = document.getElementById('bulk_register_new_group_name').value.trim();
+      const resultEl = document.getElementById('bulk-register-new-group-result');
+      if (!group_name) { resultEl.textContent = 'Enter a group name first.'; return; }
+      resultEl.textContent = 'Creating...';
+      try {
+        const url = isLoggedIn() ? `${API_BASE_URL}/group-create` : `${API_BASE_URL}/groups`;
+        const res = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+          body: JSON.stringify({ group_name })
+        });
+        const data = await res.json();
+        if (res.ok) {
+          resultEl.textContent = `Created "${data.group_name}" - selected below.`;
+          document.getElementById('bulk_register_new_group_name').value = '';
+          await loadGroups();
+          document.getElementById('bulk_register_group_id').value = data.group_id;
+        } else if (res.status === 402) {
+          resultEl.textContent = data.error + ' (Check the Store tab.)';
+        } else {
+          resultEl.textContent = `Error: ${data.error}`;
+        }
+      } catch (err) {
+        resultEl.textContent = `Request failed: ${err.message}`;
+      }
+    });
+
     document.getElementById('bulk-register-btn').addEventListener('click', async () => {
       const namesRaw = document.getElementById('bulk_register_names').value;
       const skill_level = document.getElementById('bulk_register_skill').value;
+      const groupId = document.getElementById('bulk_register_group_id').value;
       const resultEl = document.getElementById('bulk-register-result');
       const names = namesRaw.split('\n').map(n => n.trim()).filter(Boolean);
       if (!names.length) { resultEl.textContent = 'Paste at least one name.'; return; }
+      if (!isLoggedIn()) { resultEl.textContent = 'Log in to register players.'; return; }
 
       resultEl.textContent = `Registering ${names.length} player(s)...`;
       const registered = [];
       const failed = [];
       for (const name of names) {
         try {
-          const { res, data, error } = await authedFetch(`${API_BASE_URL}/register`, {
+          // Switched from the older group-unaware /register to /register-
+          // and-join (same route the single-registration form above already
+          // uses) so a group picked/created above is actually applied to
+          // every bulk-added player, not silently dropped.
+          const body = { name, skill_level };
+          if (groupId) body.group_id = groupId;
+          const { res, data, error } = await authedFetch(`${API_BASE_URL}/register-and-join`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ name, skill_level })
+            body: JSON.stringify(body)
           });
           if (res.ok) registered.push(name);
           else failed.push(`${name} (${error})`);
@@ -1461,6 +1504,7 @@ let userPool = null;
       resultEl.textContent = msg;
       document.getElementById('bulk_register_names').value = '';
       loadPlayers();
+      loadGroups();
     });
 
     // ---------- delete player ----------
@@ -2369,12 +2413,11 @@ let userPool = null;
 
     /**
      * Who may see Edit/Delete on a match. Precedence, highest first:
-     *   SuperAdmin      -> everything
-     *   group owner     -> matches in their group
-     *   group member    -> matches in their group
-     *   match player    -> their own matches
-     * Returns { canSee, canActDirectly }. Only SuperAdmin acts directly
-     * (they're the approver); everyone else files a request.
+     *   SuperAdmin      -> everything, acts directly
+     *   group owner/admin of the match's own group -> acts directly
+     *   group member    -> can see, but files a request
+     *   match player    -> can see, but files a request
+     * Returns { canSee, canActDirectly }.
      */
     function matchPermissions(m) {
       if (isSuperAdmin()) return { canSee: true, canActDirectly: true };
@@ -2391,15 +2434,36 @@ let userPool = null;
       // An ungrouped match belongs to no one in particular, so any linked
       // player may request a change to it - there's no group boundary to
       // respect. Grouped matches stay restricted to their members and
-      // participants. Either way, only SuperAdmin acts directly; everyone
-      // else files a request.
+      // participants. Owner/admin of the match's own group acts directly
+      // (canActOnMatchDirectly, matches the backend's _caller_may_edit_match
+      // bar exactly); everyone else files a request.
       const ungrouped = !m.group_id;
-      return { canSee: inMatch || inGroup || ungrouped, canActDirectly: false };
+      return { canSee: inMatch || inGroup || ungrouped, canActDirectly: canActOnMatchDirectly(m) };
     }
 
     function matchGroupLabel(m) {
       const g = m.group_id && allGroups.find(x => x.group_id === m.group_id);
       return g ? g.group_name : '';
+    }
+
+    // SuperAdmin, or owner/admin of the match's OWN group, may edit/delete a
+    // match directly (PUT/DELETE /matches/{id}) - matches _caller_may_edit_match
+    // in the matches lambda exactly (an ungrouped match still has no owner to
+    // authorize it, so it stays SuperAdmin-only either way). The frontend used
+    // to gate all direct action to isSuperAdmin() only, funneling group owners
+    // into the slower request+approve flow even though the backend already
+    // trusted them to act directly - the backend's own comment on
+    // _caller_may_edit_match says as much ("going direct isn't a lower bar
+    // than going through request+approve, it's the same approval, minus the
+    // detour"). Owner-reported 2026-08-28: also wants the ability to fix a
+    // wrongly-added participant, not just the score - that capability
+    // (editMatch's full players+score modal) already existed for SuperAdmin;
+    // it just needed the same group-owner bar applied to it.
+    function canActOnMatchDirectly(m) {
+      if (isSuperAdmin()) return true;
+      if (!m || !m.group_id) return false;
+      const g = allGroups.find(x => x.group_id === m.group_id);
+      return !!(g && canManageGroup(g));
     }
 
     async function requestMatchChange(matchId, type, label, groupId, extra) {
@@ -2420,14 +2484,17 @@ let userPool = null;
       } catch (e) { nwAlert(`Request failed: ${e.message}`); }
     }
 
-    // Full match edit (players + score), SuperAdmin only. Non-admins keep the
-    // score-only request flow. Changing players recomputes every rating, same
-    // as a score edit, since Elo is path-dependent.
+    // Full match edit (players + score): SuperAdmin, or owner/admin of the
+    // match's own group (canActOnMatchDirectly). Everyone else keeps the
+    // score-only request flow (participant changes still have no request
+    // path - only a group owner/SuperAdmin can fix a wrongly-added player,
+    // directly). Changing players recomputes every rating, same as a score
+    // edit, since Elo is path-dependent.
     async function editMatch(matchId, groupId) {
       const m = (gameLogRows || []).find(r => r.match_id === matchId);
       if (!m) { return editMatchScore(matchId, 0, 0, '', groupId || ''); }
-      if (!isSuperAdmin()) {
-        // non-admins: fall back to the existing score-only request path
+      if (!canActOnMatchDirectly(m)) {
+        // not authorized to act directly: fall back to the score-only request path
         const label = playerLabelsById(m.team_a, m.team_a_names).join(' & ') + ' vs ' + playerLabelsById(m.team_b, m.team_b_names).join(' & ');
         return editMatchScore(matchId, m.score_a, m.score_b, encodeURIComponent(label), groupId || '');
       }
@@ -2487,8 +2554,8 @@ let userPool = null;
       const newScoreB = await nwPrompt('Enter corrected Team B score:', currentScoreB);
       if (newScoreB === null) return;
 
-      // Non-admins file a request with a reason; only SuperAdmin edits live.
-      if (!isSuperAdmin()) {
+      // Not authorized to act directly: file a request with a reason instead.
+      if (!canActOnMatchDirectly({ group_id: groupId })) {
         return requestMatchChange(matchId, 'match_edit', label, groupId,
           { new_score_a: parseInt(newScoreA, 10), new_score_b: parseInt(newScoreB, 10) });
       }
@@ -2518,8 +2585,8 @@ let userPool = null;
 
     async function deleteMatch(matchId, encLabel, groupId) {
       const label = encLabel ? decodeURIComponent(encLabel) : matchId;
-      // Non-admins file a request with a reason; only SuperAdmin deletes live.
-      if (!isSuperAdmin()) {
+      // Not authorized to act directly: file a request with a reason instead.
+      if (!canActOnMatchDirectly({ group_id: groupId })) {
         return requestMatchChange(matchId, 'match_delete', label, groupId);
       }
 
@@ -3787,9 +3854,24 @@ let userPool = null;
             claim:         `wants to be ${target}`
           }[r.type || 'claim'];
           const reason = r.reason ? `<div style="color:var(--text-secondary); font-size:12px; font-style:italic;">"${escapeHtml(r.reason)}"</div>` : '';
+          // Which group this request belongs to. Owner-reported 2026-08-28:
+          // "i'm still not getting the match edit or delete request of our
+          // group" - the approval routing itself already sends grouped match
+          // requests to the group owner (2026-08-20), but nothing in this
+          // list ever showed which group a request was tagged with. A
+          // SuperAdmin sees every pending request (grouped or not) and can
+          // now see at a glance which ones say "Global / no group" - those
+          // are the ones from a match recorded with no group selected, which
+          // by design stay SuperAdmin-only since there's no group owner to
+          // route them to. For a group owner's own (already-filtered) list,
+          // this badge should always read their own group's name - if it
+          // ever doesn't, that's the signal something's actually wrong.
+          const g = r.group_id && (allGroups || []).find(x => x.group_id === r.group_id);
+          const groupBadge = `<span style="display:inline-block; margin-bottom:6px; padding:1px 8px; border-radius:10px; font-size:11px; background:var(--bg-secondary,#0002); color:var(--text-secondary);">${g ? escapeHtml(g.group_name) : (r.group_id ? '(unknown group)' : 'Global / no group')}</span>`;
           return `
           <div style="border:1px solid var(--border); border-radius:var(--radius); padding:10px; margin-bottom:8px;">
             <div style="font-weight:600;">${escapeHtml(r.requester_email)}</div>
+            <div>${groupBadge}</div>
             <div style="color:var(--text-secondary); font-size:12px; margin-bottom:8px;">${what}</div>
             ${reason}
             <button type="button" style="margin:0; padding:5px 12px; font-size:12px;"

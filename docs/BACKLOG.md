@@ -363,6 +363,49 @@
 
 ## Done
 
+- ✅ 2026-08-28 (v1.72.0) — **Group owners get real direct match edit/delete (incl. participants), a
+  group label on pending requests, and bulk registration can target/create a group.** Three owner
+  reports/asks in one message.
+  (1) "i'm still not getting the match edit or delete request of our group ... can we also show which
+  group or if global is the match coming from." Investigated: the approval-routing itself was already
+  fixed on 2026-08-20 (`match_edit`/`match_delete` are in `OWNER_DECIDABLE_TYPES`, `_owner_may_decide`
+  scopes them by the request's own `group_id` exactly like `finance_access`) - a request with no
+  `group_id` (an ungrouped, one-off match) has no owner to route to and correctly stays SuperAdmin-only
+  by design, which is the most likely explanation for what looked like a missing request. Two things
+  fixed regardless: `players/index.py`'s `decide_claim_request` had a stale comment/403 message still
+  claiming only claim/rename are owner-decidable, three lines above code that (correctly) already
+  handles finance/match types too - corrected the text so it can't mislead a future debugging session.
+  And `loadClaimRequests` (app.js) now shows a group-name badge (or "Global / no group") on every
+  pending request row, so it's visible at a glance which group (if any) a request is tagged with.
+  (2) "the edit option should allow not only to change the score but also the naming as well ... i need
+  the ability to edit that as well" (e.g. a wrongly-added participant). Investigated and found the
+  backend (`_caller_may_edit_match`, matches lambda) already authorizes a group owner/admin to directly
+  edit/delete their own group's matches - identical bar to SuperAdmin, per that function's own comment
+  ("going direct isn't a lower bar than request+approve, it's the same approval, minus the detour") -
+  and `update_match` already accepts `team_a`/`team_b` changes from any caller it authorizes, not just
+  score. The gap was purely in the frontend: `editMatch`/`editMatchScore`/`deleteMatch` all gated direct
+  action to `isSuperAdmin()` only, funneling group owners into the slower request flow (score-only, no
+  participant-change path at all) even though the backend already trusted them to act directly. Added
+  `canActOnMatchDirectly(m)` (SuperAdmin, or owner/admin of the match's own group) and wired it into all
+  three call sites plus `matchPermissions()` (which drives the Edit/Delete button labels) - a group
+  owner now gets the full players+score edit modal and a direct delete on their own group's matches,
+  exactly like SuperAdmin; everyone else's behavior (request flow, ungrouped-match handling) is
+  unchanged.
+  (3) "under the bulk registration, allow to select a group as well and option to create a fresh new
+  group as well from there." Bulk registration previously called the older group-unaware `POST
+  /register` with no way to target a group at all (despite its own card copy saying "useful for adding
+  a whole new group at once"). Added a group `<select>` (populated the same way the single-registration
+  form's already does) plus an inline "Create & use" mini-form (reuses the existing `/group-create` /
+  `/groups` endpoints, auto-selects the new group once created) to the Bulk register players card;
+  switched the registration loop from `/register` to `/register-and-join` (same route the single form
+  uses) so the selected `group_id` is actually applied per player.
+  Verified with `/tmp/test_match_owner_direct_edit.js` (10 checks: owner/admin vs plain member vs
+  SuperAdmin vs a different group's match vs ungrouped, plus an end-to-end editMatch() run confirming a
+  group owner's save PUTs directly and never files a request), `/tmp/test_bulk_register_group_ui.js`
+  (12 checks: dropdown population, create-and-auto-select, register-and-join carrying `group_id`,
+  optional-group case still working), and `/tmp/test_claim_requests_group_badge.js` (3 checks: real
+  group name vs "Global / no group"). Full existing backend suite (35 files) re-run clean.
+
 - ✅ 2026-08-28 (v1.71.0) — **Finance Insights: "Sessions paid" for non-members now reflects real
   sessions, not a raw count of fee entries.** Owner report, with 2 screenshots of the "🎯 Non-members:
   attendance, fees & conversion" table: "the sessions paid is equivalent to how many entries i have

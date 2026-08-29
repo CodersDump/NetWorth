@@ -286,6 +286,16 @@
             <option value="advanced">Advanced</option>
           </select>
         </label>
+        <label>Add all to a group (optional)
+          <select id="bulk_register_group_id"><option value="">Don't add to a group yet</option></select>
+        </label>
+        <div style="display:flex; gap:8px; align-items:flex-end; margin-bottom:10px;">
+          <label style="flex:1; margin-bottom:0;">Or create a new group for them
+            <input type="text" id="bulk_register_new_group_name" placeholder="New group name">
+          </label>
+          <button type="button" id="bulk-register-create-group-btn" class="secondary" style="margin-bottom:0;">Create &amp; use</button>
+        </div>
+        <div id="bulk-register-new-group-result" class="result" style="font-size:12px;"></div>
         <button type="button" id="bulk-register-btn">Register all</button>
         <div id="bulk-register-result" class="result"></div>
       </div>
