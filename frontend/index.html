@@ -510,6 +510,35 @@
 
         <!-- ===================== QUICK TAP MODE ===================== -->
         <div id="tap-mode-panel" style="display:none;">
+          <div class="nw-session-bar" id="tap-session-bar" style="display:none;">
+            <select id="tap-session-select">
+              <option value="">Full group roster</option>
+            </select>
+            <button type="button" class="secondary" id="tap-session-new-btn" style="display:none;">+ New session</button>
+            <button type="button" class="secondary" id="tap-session-edit-btn" style="display:none;">Edit roster</button>
+            <button type="button" class="secondary" id="tap-session-close-btn" style="display:none;">Close</button>
+          </div>
+          <div class="nw-session-new-row" id="tap-session-new-row" style="display:none;">
+            <input type="text" id="tap-session-new-name" placeholder='Session name, e.g. "7-8 PM"' maxlength="40">
+            <button type="button" id="tap-session-new-confirm">Create</button>
+            <button type="button" class="secondary" id="tap-session-new-cancel">Cancel</button>
+          </div>
+          <div id="tap-session-new-error" class="nw-inline-error" style="display:none;"></div>
+          <div class="nw-session-edit-panel" id="tap-session-edit-panel" style="display:none;">
+            <div class="nw-tap-hint" style="margin-bottom:6px;">This session's roster — anyone in the group can add or remove people here; it never changes the real group.</div>
+            <div id="tap-session-edit-members"></div>
+            <div class="nw-session-edit-add">
+              <select id="tap-session-add-existing">
+                <option value="">+ add an existing player…</option>
+              </select>
+              <div class="nw-session-edit-newplayer">
+                <input type="text" id="tap-session-new-player-name" placeholder="…or register someone new" maxlength="60">
+                <button type="button" id="tap-session-new-player-add">Add</button>
+              </div>
+            </div>
+            <button type="button" class="secondary" id="tap-session-edit-done">Done editing</button>
+            <div id="tap-session-edit-error" class="nw-inline-error" style="display:none;"></div>
+          </div>
           <div class="nw-tap-section-label">On court <span class="nw-tap-hint">tap up to <span id="tap-slots-hint">2</span> for each team</span></div>
           <div class="nw-avatar-grid" id="tap-avatar-grid"></div>
           <div id="tap-guest-row" style="display:none; margin:-4px 0 12px;">

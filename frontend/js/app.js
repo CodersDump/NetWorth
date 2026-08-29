@@ -1130,6 +1130,11 @@ let userPool = null;
     }
 
     let currentMatchGroupMembers = null;
+    // Roles for the currently-selected match group, captured alongside
+    // currentMatchGroupMembers (2026-08-29) so Quick tap's session bar can
+    // decide "can this person create a session" (owner/admin) without a
+    // second /groups/{id} fetch.
+    let currentMatchGroupRoles = {};
 
     /** Every dropdown always lists the FULL pool - nobody is hidden from a
      *  slot just because they're already picked in another one. Picking an
@@ -1198,6 +1203,7 @@ let userPool = null;
       const groupId = document.getElementById('match_group_select').value;
       if (!groupId) {
         currentMatchGroupMembers = null;
+        currentMatchGroupRoles = {};
         return requestId;
       }
       try {
@@ -1206,6 +1212,7 @@ let userPool = null;
         if (requestId !== randomizeTeamsRequestId) return requestId; // superseded, discard
         if (res.ok && data.members) currentMatchGroupMembers = data.members;
         else currentMatchGroupMembers = null;
+        currentMatchGroupRoles = (res.ok && data.roles) ? data.roles : {};
       } catch (err) {
         // leave cache as-is on failure
       }
@@ -1819,6 +1826,10 @@ let userPool = null;
         // of this group's actual members. Explicitly refresh the cache
         // here too, the same way an explicit user pick already does.
         updateMatchGroupCache().then(() => refreshTeamSelectOptions());
+        // Same gap for Quick tap's session bar (2026-08-29): its own
+        // refresh is wired to match_group_select's 'change' event too, so
+        // a default-picked group needs the same explicit nudge.
+        if (typeof nwLoadGroupSessions === 'function') nwLoadGroupSessions();
       }
     }
 
@@ -2198,7 +2209,10 @@ let userPool = null;
       document.getElementById('match-form').style.display = mode === 'classic' ? '' : 'none';
       document.getElementById('tap-mode-panel').style.display = mode === 'tap' ? '' : 'none';
       document.getElementById('voice-mode-panel').style.display = mode === 'voice' ? '' : 'none';
-      if (mode === 'tap') nwTapRefreshAvatarGrid();
+      if (mode === 'tap') {
+        if (typeof nwLoadGroupSessions === 'function') nwLoadGroupSessions();
+        else nwTapRefreshAvatarGrid();
+      }
     }
     document.querySelectorAll('.nw-mode-btn').forEach(b => b.addEventListener('click', () => nwSetRecordMode(b.dataset.mode)));
     document.getElementById('tap-switch-to-classic').addEventListener('click', (e) => { e.preventDefault(); nwSetRecordMode('classic'); });
@@ -2216,6 +2230,217 @@ let userPool = null;
     // and isn't persisted across a reload, since it's meant to be throwaway.
     let nwTapGuestIds = [];
 
+    // ---------- Sessions: temporary group rosters, 2026-08-29 (owner idea:
+    // "7-8 PM"/"8-9 PM" overlapping rosters that don't touch real group
+    // membership - see BACKLOG.md and groups/index.py's Sessions note).
+    // When one is selected it REPLACES the group roster in the avatar grid
+    // above (nwTapRosterPool); the one-off guest picker still layers on
+    // top of whichever pool is active, same as it always has. ----------
+    let nwGroupSessions = [];   // this group's currently-open sessions (from GET /group-sessions/{id})
+    let nwActiveSessionId = ''; // '' = no session selected, use the full group roster
+
+    function nwTapRosterPool() {
+      const session = nwGroupSessions.find(s => s.session_id === nwActiveSessionId);
+      if (session) {
+        return session.member_ids.map(id => allPlayers.find(p => p.player_id === id)).filter(Boolean);
+      }
+      return currentMatchGroupMembers || allPlayers;
+    }
+
+    async function nwLoadGroupSessions() {
+      const groupId = document.getElementById('match_group_select').value;
+      if (!groupId) {
+        nwGroupSessions = [];
+        nwActiveSessionId = '';
+        nwRenderSessionBar();
+        return;
+      }
+      try {
+        const res = await fetch(`${API_BASE_URL}/group-sessions/${groupId}`);
+        const data = await res.json();
+        nwGroupSessions = (res.ok && data.sessions) ? data.sessions : [];
+      } catch (err) {
+        nwGroupSessions = [];
+      }
+      if (!nwGroupSessions.some(s => s.session_id === nwActiveSessionId)) nwActiveSessionId = '';
+      nwRenderSessionBar();
+      nwTapRefreshAvatarGrid();
+    }
+
+    function nwRenderSessionBar() {
+      const bar = document.getElementById('tap-session-bar');
+      if (!bar) return;
+      const groupId = document.getElementById('match_group_select').value;
+      if (!groupId) {
+        bar.style.display = 'none';
+        document.getElementById('tap-session-new-row').style.display = 'none';
+        document.getElementById('tap-session-edit-panel').style.display = 'none';
+        return;
+      }
+      bar.style.display = '';
+
+      const sel = document.getElementById('tap-session-select');
+      const prevValue = nwActiveSessionId;
+      sel.innerHTML = '<option value="">Full group roster</option>' +
+        nwGroupSessions.map(s => `<option value="${s.session_id}">${escapeHtml(s.name)} (${s.member_ids.length})</option>`).join('');
+      sel.value = prevValue;
+
+      const myRole = (currentMatchGroupRoles || {})[myPlayerId()];
+      const canCreate = isSuperAdmin() || myRole === 'owner' || myRole === 'admin';
+      document.getElementById('tap-session-new-btn').style.display = canCreate ? '' : 'none';
+
+      const active = nwGroupSessions.find(s => s.session_id === nwActiveSessionId);
+      document.getElementById('tap-session-edit-btn').style.display = (active && isLoggedIn()) ? '' : 'none';
+      const canClose = !!active && (isSuperAdmin() || active.created_by === myPlayerId() || myRole === 'owner' || myRole === 'admin');
+      document.getElementById('tap-session-close-btn').style.display = canClose ? '' : 'none';
+      if (!active) document.getElementById('tap-session-edit-panel').style.display = 'none';
+    }
+
+    document.getElementById('tap-session-select').addEventListener('change', (e) => {
+      nwActiveSessionId = e.target.value;
+      // Switching rosters mid-pick would leave stale selections pointing
+      // at people no longer in the active pool - same reasoning as
+      // switching groups already clears these.
+      nwTapGuestIds = [];
+      nwTapTeamA = []; nwTapTeamB = [];
+      document.getElementById('tap-session-edit-panel').style.display = 'none';
+      nwRenderSessionBar();
+      nwTapRefreshAvatarGrid();
+    });
+
+    document.getElementById('tap-session-new-btn').addEventListener('click', () => {
+      document.getElementById('tap-session-new-error').style.display = 'none';
+      document.getElementById('tap-session-new-row').style.display = '';
+      const input = document.getElementById('tap-session-new-name');
+      input.value = '';
+      input.focus();
+    });
+    document.getElementById('tap-session-new-cancel').addEventListener('click', () => {
+      document.getElementById('tap-session-new-row').style.display = 'none';
+    });
+    document.getElementById('tap-session-new-confirm').addEventListener('click', async () => {
+      const errEl = document.getElementById('tap-session-new-error');
+      errEl.style.display = 'none';
+      const groupId = document.getElementById('match_group_select').value;
+      const name = document.getElementById('tap-session-new-name').value.trim();
+      if (!name) { errEl.textContent = 'Give the session a name, e.g. "7-8 PM".'; errEl.style.display = ''; return; }
+      const { res, data, error } = await authedFetch(`${API_BASE_URL}/sessions`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ group_id: groupId, name })
+      });
+      if (!res.ok) {
+        errEl.textContent = error || (data && data.error) || 'Could not create the session.';
+        errEl.style.display = '';
+        return;
+      }
+      document.getElementById('tap-session-new-row').style.display = 'none';
+      await nwLoadGroupSessions();
+      nwActiveSessionId = data.session_id;
+      nwRenderSessionBar();
+      nwTapRefreshAvatarGrid();
+    });
+
+    document.getElementById('tap-session-close-btn').addEventListener('click', async () => {
+      if (!nwActiveSessionId) return;
+      const errEl = document.getElementById('tap-session-new-error');
+      errEl.style.display = 'none';
+      const { res, data, error } = await authedFetch(`${API_BASE_URL}/sessions/${nwActiveSessionId}/close`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({})
+      });
+      if (!res.ok) {
+        errEl.textContent = error || (data && data.error) || 'Could not close the session.';
+        errEl.style.display = '';
+        return;
+      }
+      nwActiveSessionId = '';
+      await nwLoadGroupSessions();
+      nwRenderSessionBar();
+      nwTapRefreshAvatarGrid();
+    });
+
+    function nwRenderSessionEditPanel() {
+      const session = nwGroupSessions.find(s => s.session_id === nwActiveSessionId);
+      const membersEl = document.getElementById('tap-session-edit-members');
+      if (!session) { membersEl.innerHTML = ''; return; }
+      membersEl.innerHTML = session.member_ids.map(id => {
+        const p = allPlayers.find(pl => pl.player_id === id);
+        const label = p ? (p.nickname || p.name) : id;
+        return `<span class="nw-session-member-chip">${escapeHtml(label)}<button type="button" data-remove-session-member="${id}" title="remove">&times;</button></span>`;
+      }).join('') || '<span class="nw-tap-hint">No one added yet.</span>';
+      membersEl.querySelectorAll('[data-remove-session-member]').forEach(btn => {
+        btn.addEventListener('click', () => nwSessionRemoveMember(btn.getAttribute('data-remove-session-member')));
+      });
+
+      const addSel = document.getElementById('tap-session-add-existing');
+      const memberSet = new Set(session.member_ids);
+      const candidates = allPlayers.filter(p => !memberSet.has(p.player_id))
+        .sort((a, b) => String(a.name).localeCompare(String(b.name)));
+      addSel.innerHTML = '<option value="">+ add an existing player…</option>' +
+        candidates.map(p => `<option value="${p.player_id}">${escapeHtml(p.nickname || p.name)}</option>`).join('');
+    }
+
+    document.getElementById('tap-session-edit-btn').addEventListener('click', () => {
+      document.getElementById('tap-session-edit-error').style.display = 'none';
+      document.getElementById('tap-session-edit-panel').style.display = '';
+      nwRenderSessionEditPanel();
+    });
+    document.getElementById('tap-session-edit-done').addEventListener('click', () => {
+      document.getElementById('tap-session-edit-panel').style.display = 'none';
+    });
+
+    async function nwSessionAddMember(body) {
+      const errEl = document.getElementById('tap-session-edit-error');
+      errEl.style.display = 'none';
+      const { res, data, error } = await authedFetch(`${API_BASE_URL}/sessions/${nwActiveSessionId}/members`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+      });
+      if (!res.ok) {
+        errEl.textContent = error || (data && data.error) || 'Could not add that player to the session.';
+        errEl.style.display = '';
+        return;
+      }
+      const session = nwGroupSessions.find(s => s.session_id === nwActiveSessionId);
+      if (session) session.member_ids = data.member_ids;
+      // A brand-new registration isn't in allPlayers yet - a full reload
+      // keeps every other picker (classic dropdowns, guest list) in sync
+      // too, not just this one panel.
+      if (body.new_player_name) await loadPlayers();
+      nwRenderSessionEditPanel();
+      nwRenderSessionBar();
+      nwTapRefreshAvatarGrid();
+    }
+
+    document.getElementById('tap-session-add-existing').addEventListener('change', (e) => {
+      const id = e.target.value;
+      if (!id) return;
+      e.target.value = '';
+      nwSessionAddMember({ player_id: id });
+    });
+    document.getElementById('tap-session-new-player-add').addEventListener('click', () => {
+      const input = document.getElementById('tap-session-new-player-name');
+      const name = input.value.trim();
+      if (!name) return;
+      input.value = '';
+      nwSessionAddMember({ new_player_name: name });
+    });
+
+    async function nwSessionRemoveMember(playerId) {
+      const { res, data, error } = await authedFetch(`${API_BASE_URL}/sessions/${nwActiveSessionId}/members/${playerId}`, {
+        method: 'DELETE'
+      });
+      if (!res.ok) {
+        const errEl = document.getElementById('tap-session-edit-error');
+        errEl.textContent = error || (data && data.error) || 'Could not remove that player.';
+        errEl.style.display = '';
+        return;
+      }
+      const session = nwGroupSessions.find(s => s.session_id === nwActiveSessionId);
+      if (session) session.member_ids = data.member_ids;
+      nwRenderSessionEditPanel();
+      nwRenderSessionBar();
+      nwTapRefreshAvatarGrid();
+    }
+
     function nwTapSlotsPerTeam() {
       return document.getElementById('match_type_select').value === 'doubles' ? 2 : 1;
     }
@@ -2224,7 +2449,7 @@ let userPool = null;
       const grid = document.getElementById('tap-avatar-grid');
       if (!grid) return;
       const groupId = document.getElementById('match_group_select').value;
-      const memberPool = currentMatchGroupMembers || allPlayers;
+      const memberPool = nwTapRosterPool();
       const memberIds = new Set(memberPool.map(p => p.player_id));
       const guestPlayers = nwTapGuestIds.map(id => allPlayers.find(p => p.player_id === id)).filter(Boolean);
       const pool = [...memberPool, ...guestPlayers.filter(p => !memberIds.has(p.player_id))];
@@ -2298,18 +2523,21 @@ let userPool = null;
     });
 
     document.getElementById('match_group_select').addEventListener('change', () => {
-      // A guest is scoped to whichever group they were added under - switch
-      // groups and that stops applying (updateMatchGroupCache's own
-      // 'change' listener repopulates currentMatchGroupMembers and then
-      // calls refreshTeamSelectOptions -> nwTapRefreshAvatarGrid, so this
-      // just needs to clear the state before that later render happens).
+      // A guest (or an active session) is scoped to whichever group it
+      // belongs to - switch groups and neither carries over
+      // (updateMatchGroupCache's own 'change' listener repopulates
+      // currentMatchGroupMembers/Roles and then calls
+      // refreshTeamSelectOptions -> nwTapRefreshAvatarGrid, so this just
+      // needs to clear the state before that later render happens).
       nwTapGuestIds = [];
       nwTapTeamA = []; nwTapTeamB = [];
+      nwActiveSessionId = '';
+      nwLoadGroupSessions();
     });
 
     document.getElementById('tap-recall-btn').addEventListener('click', () => {
       if (!nwLastTapMatch) return;
-      const pool = currentMatchGroupMembers || allPlayers;
+      const pool = nwTapRosterPool();
       const poolIds = new Set([...pool.map(p => p.player_id), ...nwTapGuestIds]);
       nwTapTeamA = nwLastTapMatch.team_a.filter(id => poolIds.has(id));
       nwTapTeamB = nwLastTapMatch.team_b.filter(id => poolIds.has(id));

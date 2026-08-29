@@ -522,6 +522,26 @@
 .nw-avatar.guest .nw-avatar-circ { border-style: dashed; border-color: var(--text-secondary); }
 .nw-avatar-guest-tag { font-size: 9px; color: var(--text-secondary); font-style: italic; }
 
+/* ---------- Sessions: temporary group rosters ("7-8 PM"), 2026-08-29 -
+   see app.js "quick record" block and BACKLOG.md ---------- */
+.nw-session-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 10px; }
+.nw-session-bar select { font-size: 12.5px; padding: 6px 8px; border-radius: 8px; flex: 1 1 auto; min-width: 140px; }
+.nw-session-bar button { font-size: 12px; padding: 6px 10px; white-space: nowrap; }
+.nw-session-new-row { display: flex; flex-wrap: wrap; gap: 6px; margin: -4px 0 10px; }
+.nw-session-new-row input { flex: 1 1 auto; min-width: 140px; font-size: 12.5px; padding: 6px 8px; border-radius: 8px; }
+.nw-session-new-row button { font-size: 12px; padding: 6px 10px; }
+.nw-session-edit-panel { background: var(--surface-2); border-radius: var(--radius); padding: 10px 12px; margin-bottom: 12px; }
+.nw-session-edit-members { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+.nw-session-member-chip { display: inline-flex; align-items: center; gap: 5px; background: var(--surface); border: 1px solid var(--border);
+  border-radius: 999px; padding: 4px 6px 4px 10px; font-size: 12px; }
+.nw-session-member-chip button { border: none; background: transparent; color: var(--text-secondary); cursor: pointer;
+  font-size: 13px; line-height: 1; padding: 2px 4px; }
+.nw-session-edit-add { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.nw-session-edit-add select { font-size: 12.5px; padding: 6px 8px; border-radius: 8px; flex: 1 1 100%; }
+.nw-session-edit-newplayer { display: flex; gap: 6px; flex: 1 1 100%; }
+.nw-session-edit-newplayer input { flex: 1 1 auto; font-size: 12.5px; padding: 6px 8px; border-radius: 8px; }
+.nw-session-edit-newplayer button { font-size: 12px; padding: 6px 10px; white-space: nowrap; }
+
 .nw-teamrow { display: flex; gap: 10px; margin: 4px 0; }
 .nw-teamslot { flex: 1; border-radius: var(--radius); padding: 10px; text-align: center; min-height: 60px; }
 .nw-teamslot.a { background: rgba(0,180,216,.08); border: 1.5px dashed rgba(0,180,216,.4); }
