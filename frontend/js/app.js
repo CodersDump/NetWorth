@@ -845,6 +845,7 @@ let userPool = null;
       const oppFilter = document.getElementById('log_opponent_filter');
       if (oppFilter) populateSelect(oppFilter, labeled, 'player_id', 'label', 'Any opponent');
       if (typeof nwPairingRefreshList === 'function') nwPairingRefreshList();
+      if (typeof nwTapRefreshAvatarGrid === 'function') nwTapRefreshAvatarGrid();
       // Profile-related selects are populated by loadVisiblePlayers()
       // instead (group-scoped server-side) - not here, which would show
       // the full unrestricted roster regardless of who's actually
@@ -1150,6 +1151,10 @@ let userPool = null;
         }
       });
       syncTeamSelectValues();
+      // Quick tap's avatar grid draws from the exact same pool - keep it
+      // in sync everywhere this function already runs (group change,
+      // randomize, quick-add player).
+      if (typeof nwTapRefreshAvatarGrid === 'function') nwTapRefreshAvatarGrid();
     }
 
     function syncTeamSelectValues() {
@@ -2151,6 +2156,470 @@ let userPool = null;
     }
     nwPairingInit();
     // ================= end team pairing preview =================
+
+    // ================= Quick record: tap mode + voice stack + shared queue =================
+    // Two more ways to build a match alongside the classic dropdown form
+    // below, which is completely untouched - its own submit handler still
+    // posts straight to /record-match exactly as it always has, and stays
+    // the default for anyone who hasn't picked something else.
+    //
+    // Quick tap and Voice both produce the SAME payload shape and push it
+    // onto one shared, locally-persisted queue instead of hitting the
+    // network immediately. Nothing is sent until "Send all" is tapped, and
+    // items always send strictly in queue order - Elo is path-dependent
+    // (see recompute_all_ratings on the backend), so order matters more
+    // than exact timestamps. "Send all" is deliberately all-or-nothing:
+    // if anything in the queue is still flagged for review, sending stays
+    // blocked rather than silently skipping it and sending the rest out of
+    // the order they were actually played in.
+
+    function postMatchPayload(payload) {
+      return authedFetch(`${API_BASE_URL}/record-match`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+    }
+
+    // ---------- mode switch (classic / tap / voice) ----------
+    const NW_MODE_KEY = 'nw_record_mode';
+    function nwSetRecordMode(mode) {
+      try { localStorage.setItem(NW_MODE_KEY, mode); } catch (_) {}
+      document.querySelectorAll('.nw-mode-btn').forEach(b => b.classList.toggle('active', b.dataset.mode === mode));
+      document.getElementById('match-form').style.display = mode === 'classic' ? '' : 'none';
+      document.getElementById('tap-mode-panel').style.display = mode === 'tap' ? '' : 'none';
+      document.getElementById('voice-mode-panel').style.display = mode === 'voice' ? '' : 'none';
+      if (mode === 'tap') nwTapRefreshAvatarGrid();
+    }
+    document.querySelectorAll('.nw-mode-btn').forEach(b => b.addEventListener('click', () => nwSetRecordMode(b.dataset.mode)));
+    document.getElementById('tap-switch-to-classic').addEventListener('click', (e) => { e.preventDefault(); nwSetRecordMode('classic'); });
+
+    // ---------- quick tap: team builder ----------
+    let nwTapTeamA = [], nwTapTeamB = [];
+    let nwLastTapMatch = null; // { team_a: [ids], team_b: [ids] } - last item added, for "same as last match"
+
+    function nwTapSlotsPerTeam() {
+      return document.getElementById('match_type_select').value === 'doubles' ? 2 : 1;
+    }
+
+    function nwTapRefreshAvatarGrid() {
+      const grid = document.getElementById('tap-avatar-grid');
+      if (!grid) return;
+      const pool = currentMatchGroupMembers || allPlayers;
+      document.getElementById('tap-slots-hint').textContent = nwTapSlotsPerTeam();
+      grid.innerHTML = '';
+      pool.forEach(p => {
+        const el = document.createElement('div');
+        el.className = 'nw-avatar';
+        if (nwTapTeamA.includes(p.player_id)) el.classList.add('sel-a');
+        if (nwTapTeamB.includes(p.player_id)) el.classList.add('sel-b');
+        const initials = (p.name || '?').trim().split(/\s+/).map(w => w[0]).join('').slice(0, 2).toUpperCase();
+        el.innerHTML = `<div class="nw-avatar-circ">${initials}</div><div class="nw-avatar-lbl">${escapeHtml(p.nickname || p.name)}</div>`;
+        el.addEventListener('click', () => nwTapToggleAvatar(p.player_id));
+        grid.appendChild(el);
+      });
+      document.getElementById('tap-recall-btn').style.display = nwLastTapMatch ? '' : 'none';
+      nwTapRenderTeams();
+    }
+
+    function nwTapToggleAvatar(playerId) {
+      const slots = nwTapSlotsPerTeam();
+      if (nwTapTeamA.includes(playerId)) nwTapTeamA = nwTapTeamA.filter(id => id !== playerId);
+      else if (nwTapTeamB.includes(playerId)) nwTapTeamB = nwTapTeamB.filter(id => id !== playerId);
+      else if (nwTapTeamA.length < slots) nwTapTeamA.push(playerId);
+      else if (nwTapTeamB.length < slots) nwTapTeamB.push(playerId);
+      nwTapRefreshAvatarGrid();
+    }
+
+    function nwTapPlayerName(id) {
+      const p = allPlayers.find(pl => pl.player_id === id);
+      return p ? (p.nickname || p.name) : id;
+    }
+
+    function nwTapRenderTeams() {
+      document.getElementById('tap-team-a-names').textContent = nwTapTeamA.length ? nwTapTeamA.map(nwTapPlayerName).join(' & ') : 'tap above';
+      document.getElementById('tap-team-b-names').textContent = nwTapTeamB.length ? nwTapTeamB.map(nwTapPlayerName).join(' & ') : 'tap above';
+    }
+
+    document.getElementById('match_type_select').addEventListener('change', () => {
+      nwTapTeamA = []; nwTapTeamB = [];
+      nwTapRefreshAvatarGrid();
+    });
+
+    document.getElementById('tap-recall-btn').addEventListener('click', () => {
+      if (!nwLastTapMatch) return;
+      const pool = currentMatchGroupMembers || allPlayers;
+      const poolIds = new Set(pool.map(p => p.player_id));
+      nwTapTeamA = nwLastTapMatch.team_a.filter(id => poolIds.has(id));
+      nwTapTeamB = nwLastTapMatch.team_b.filter(id => poolIds.has(id));
+      nwTapRefreshAvatarGrid();
+    });
+
+    // ---------- quick tap: score (who won + loser's score, deuce fallback) ----------
+    let nwTapWinner = 'A', nwTapLoserScore = 15;
+    let nwTapManualA = 23, nwTapManualB = 21;
+
+    function nwTapPointsToWin() { return parseInt(document.getElementById('points_to_win_select').value, 10) || 21; }
+    function nwTapFinalScore() {
+      const target = nwTapPointsToWin();
+      return nwTapWinner === 'A' ? [target, nwTapLoserScore] : [nwTapLoserScore, target];
+    }
+    function nwTapRenderQuickScore() {
+      const target = nwTapPointsToWin();
+      nwTapLoserScore = Math.min(nwTapLoserScore, target - 2);
+      document.querySelectorAll('.nw-won-btn').forEach(b => b.classList.toggle('selected', b.dataset.won === nwTapWinner));
+      document.getElementById('tap-loser-score').textContent = nwTapLoserScore;
+      const [a, b] = nwTapFinalScore();
+      document.getElementById('tap-final-score-line').textContent = a + ' – ' + b;
+    }
+    document.querySelectorAll('.nw-won-btn').forEach(b => b.addEventListener('click', () => { nwTapWinner = b.dataset.won; nwTapRenderQuickScore(); }));
+    document.querySelectorAll('#tap-quick-score .nw-stepper button').forEach(b => b.addEventListener('click', () => {
+      const target = nwTapPointsToWin();
+      nwTapLoserScore = Math.max(0, Math.min(target - 2, nwTapLoserScore + Number(b.dataset.tapStep)));
+      document.querySelectorAll('#tap-loser-presets .nw-preset-chip').forEach(c => c.classList.remove('selected'));
+      nwTapRenderQuickScore();
+    }));
+    const NW_TAP_LOSER_PRESETS = [0, 5, 10, 12, 15, 17, 19];
+    const nwTapPresetsWrap = document.getElementById('tap-loser-presets');
+    NW_TAP_LOSER_PRESETS.forEach(v => {
+      const chip = document.createElement('div');
+      chip.className = 'nw-preset-chip';
+      chip.textContent = v;
+      chip.addEventListener('click', () => {
+        document.querySelectorAll('#tap-loser-presets .nw-preset-chip').forEach(c => c.classList.remove('selected'));
+        chip.classList.add('selected');
+        nwTapLoserScore = v;
+        nwTapRenderQuickScore();
+      });
+      nwTapPresetsWrap.appendChild(chip);
+    });
+    document.getElementById('points_to_win_select').addEventListener('change', nwTapRenderQuickScore);
+    nwTapRenderQuickScore();
+
+    function nwTapRenderManual() {
+      document.getElementById('tap-manual-a').textContent = nwTapManualA;
+      document.getElementById('tap-manual-b').textContent = nwTapManualB;
+    }
+    document.querySelectorAll('[data-tap-manual]').forEach(b => b.addEventListener('click', () => {
+      const dir = Number(b.dataset.dir);
+      if (b.dataset.tapManual === 'A') nwTapManualA = Math.max(0, nwTapManualA + dir);
+      else nwTapManualB = Math.max(0, nwTapManualB + dir);
+      nwTapRenderManual();
+    }));
+    document.getElementById('tap-deuce-link').addEventListener('click', () => {
+      const [a, b] = nwTapFinalScore();
+      nwTapManualA = a; nwTapManualB = b; nwTapRenderManual();
+      document.getElementById('tap-quick-score').style.display = 'none';
+      document.getElementById('tap-manual-score').style.display = 'block';
+    });
+    document.getElementById('tap-back-to-quick').addEventListener('click', () => {
+      document.getElementById('tap-manual-score').style.display = 'none';
+      document.getElementById('tap-quick-score').style.display = 'block';
+    });
+
+    // ---------- quick tap: add to queue ----------
+    document.getElementById('tap-add-queue-btn').addEventListener('click', () => {
+      const errEl = document.getElementById('tap-add-error');
+      errEl.textContent = '';
+      const group_id = document.getElementById('match_group_select').value || null;
+      const match_type = document.getElementById('match_type_select').value;
+      const points_to_win = document.getElementById('points_to_win_select').value;
+      const slots = nwTapSlotsPerTeam();
+
+      if (!group_id && !isSuperAdmin()) { errEl.textContent = 'Please select a group for this match.'; return; }
+      if (nwTapTeamA.length !== slots || nwTapTeamB.length !== slots) {
+        errEl.textContent = `Tap ${slots} player${slots > 1 ? 's' : ''} for each team first.`;
+        return;
+      }
+
+      const usingManual = document.getElementById('tap-manual-score').style.display === 'block';
+      let score_a, score_b;
+      if (usingManual) {
+        score_a = nwTapManualA; score_b = nwTapManualB;
+        if (!isGameOver(score_a, score_b, parseInt(points_to_win, 10))) {
+          errEl.textContent = `Not a valid finished score at ${points_to_win} points (win by 2, or the hard cap).`;
+          return;
+        }
+      } else {
+        [score_a, score_b] = nwTapFinalScore();
+      }
+
+      const team_a = [...nwTapTeamA], team_b = [...nwTapTeamB];
+      const item = {
+        id: 'q' + Date.now() + Math.random().toString(36).slice(2, 7),
+        source: 'tap', status: 'ok', reviewReason: '',
+        group_id, match_type, points_to_win,
+        team_a, team_b,
+        team_a_label: team_a.map(nwTapPlayerName).join(' & '),
+        team_b_label: team_b.map(nwTapPlayerName).join(' & '),
+        score_a, score_b
+      };
+      nwMatchQueue.push(item);
+      nwSaveQueue();
+      nwRenderQueue();
+
+      nwLastTapMatch = { team_a, team_b };
+      nwTapTeamA = []; nwTapTeamB = [];
+      document.getElementById('tap-manual-score').style.display = 'none';
+      document.getElementById('tap-quick-score').style.display = 'block';
+      nwTapRefreshAvatarGrid();
+    });
+
+    // ---------- voice: stack straight into the same queue ----------
+    // Uses the exact same free, on-device parser as the single-utterance
+    // "Record by voice" button on the classic form (nwParseMatchTranscript)
+    // - no model call involved here. A note that doesn't parse cleanly
+    // still gets queued (so nothing said out loud is ever lost), just
+    // flagged for review instead of dropped.
+    (function nwVoiceStackInit() {
+      const micBtn = document.getElementById('nw-stack-mic-btn');
+      const hint = document.getElementById('nw-stack-mic-hint');
+      const stackStatus = document.getElementById('nw-note-stack');
+      if (!micBtn) return;
+      const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+      if (!SR) {
+        micBtn.disabled = true; micBtn.style.opacity = '0.5'; micBtn.style.cursor = 'not-allowed';
+        document.getElementById('nw-voice-unsupported-hint').style.display = 'block';
+        return;
+      }
+
+      let listening = false, recognizer = null;
+      micBtn.addEventListener('click', () => {
+        if (listening) { try { recognizer.stop(); } catch (_) {} return; }
+        const rec = new SR();
+        recognizer = rec;
+        rec.lang = 'en-IN';
+        rec.continuous = false;
+        rec.interimResults = true;
+        rec.maxAlternatives = 1;
+        listening = true;
+        micBtn.classList.add('rec');
+        micBtn.textContent = '⏹';
+        stackStatus.textContent = 'Opening microphone...';
+
+        rec.onstart = () => { stackStatus.textContent = '🔴 Listening - speak the result now'; };
+        rec.onresult = (ev) => {
+          let text = '';
+          for (let i = 0; i < ev.results.length; i++) text += ev.results[i][0].transcript + ' ';
+          stackStatus.textContent = '“' + text.trim() + '”';
+        };
+        rec.onerror = (ev) => {
+          if (ev.error === 'no-speech') return;
+          listening = false; micBtn.classList.remove('rec'); micBtn.textContent = '🎤';
+          stackStatus.textContent = ev.error === 'not-allowed'
+            ? 'Microphone blocked - allow mic access for this site and try again.'
+            : 'Voice error: ' + ev.error;
+        };
+        rec.onend = () => {
+          listening = false; recognizer = null;
+          micBtn.classList.remove('rec'); micBtn.textContent = '🎤';
+          const said = (stackStatus.textContent || '').replace(/^“|”$/g, '').trim();
+          hint.innerHTML = 'Hold, say the result, let go.<br>e.g. “Aditya and Sohan beat Sourabh and Mayank 21-18”';
+          if (!said || said.startsWith('Voice error') || said.startsWith('Microphone') || said.startsWith('Opening')) {
+            stackStatus.textContent = said ? '' : 'Didn’t catch anything - tap and try again.';
+            return;
+          }
+          nwStackVoiceNote(said);
+          stackStatus.textContent = '';
+        };
+        try { rec.start(); } catch (_) { listening = false; micBtn.classList.remove('rec'); micBtn.textContent = '🎤'; }
+      });
+    })();
+
+    function nwStackVoiceNote(said) {
+      const group_id = document.getElementById('match_group_select').value || null;
+      const points_to_win = document.getElementById('points_to_win_select').value;
+      const parsed = nwParseMatchTranscript(said);
+
+      const base = {
+        id: 'q' + Date.now() + Math.random().toString(36).slice(2, 7),
+        source: 'voice', rawTranscript: said,
+        group_id, points_to_win
+      };
+
+      if (parsed.error) {
+        nwMatchQueue.push({ ...base, status: 'warn', reviewReason: parsed.error,
+          match_type: 'doubles', team_a: [], team_b: [],
+          team_a_label: '?', team_b_label: '?', score_a: null, score_b: null });
+        nwSaveQueue(); nwRenderQueue();
+        return;
+      }
+      if (!group_id && !isSuperAdmin()) {
+        nwMatchQueue.push({ ...base, status: 'warn', reviewReason: 'No group selected - pick one above, or Edit this row.',
+          match_type: parsed.matchType, team_a: [], team_b: [],
+          team_a_label: 'heard: ' + parsed.teamA.map(e => e.token).join(' & '),
+          team_b_label: 'heard: ' + parsed.teamB.map(e => e.token).join(' & '),
+          score_a: parsed.scoreA, score_b: parsed.scoreB });
+        nwSaveQueue(); nwRenderQueue();
+        return;
+      }
+
+      const unresolved = [...parsed.teamA, ...parsed.teamB].filter(e => !e.player);
+      const team_a = parsed.teamA.map(e => e.player && e.player.player_id).filter(Boolean);
+      const team_b = parsed.teamB.map(e => e.player && e.player.player_id).filter(Boolean);
+      const reasons = [];
+      if (unresolved.length) reasons.push(`couldn't match: ${unresolved.map(e => `"${e.token}"`).join(', ')}`);
+      if (parsed.scoreA == null || parsed.scoreB == null) reasons.push('no score heard');
+      if (new Set([...team_a, ...team_b]).size !== team_a.length + team_b.length) reasons.push('same player heard on both sides');
+
+      nwMatchQueue.push({
+        ...base,
+        status: reasons.length ? 'warn' : 'ok',
+        reviewReason: reasons.join('; '),
+        match_type: parsed.matchType, team_a, team_b,
+        team_a_label: parsed.teamA.map(e => e.player ? nwTapPlayerName(e.player.player_id) : `"${e.token}"?`).join(' & '),
+        team_b_label: parsed.teamB.map(e => e.player ? nwTapPlayerName(e.player.player_id) : `"${e.token}"?`).join(' & '),
+        score_a: parsed.scoreA, score_b: parsed.scoreB
+      });
+      nwSaveQueue(); nwRenderQueue();
+    }
+
+    // ---------- shared queue: render, edit, remove, send all ----------
+    const NW_QUEUE_KEY = 'nw_match_queue';
+    let nwMatchQueue = [];
+    try { nwMatchQueue = JSON.parse(localStorage.getItem(NW_QUEUE_KEY) || '[]'); } catch (_) { nwMatchQueue = []; }
+    function nwSaveQueue() {
+      try { localStorage.setItem(NW_QUEUE_KEY, JSON.stringify(nwMatchQueue)); } catch (_) {}
+    }
+
+    function nwRenderQueue() {
+      const card = document.getElementById('match-queue-card');
+      const list = document.getElementById('queue-list');
+      const sendBtn = document.getElementById('queue-send-all-btn');
+      card.style.display = nwMatchQueue.length ? '' : 'none';
+      document.getElementById('queue-count').textContent = nwMatchQueue.length;
+      const groupName = (gid) => { const g = allGroups.find(x => x.group_id === gid); return g ? g.group_name : (gid ? gid : 'no group'); };
+
+      list.innerHTML = nwMatchQueue.map(item => `
+        <div class="nw-queue-row ${item.status}">
+          <div class="nw-queue-top">
+            <span>${escapeHtml(item.team_a_label)} vs ${escapeHtml(item.team_b_label)}</span>
+            <span>${item.score_a != null ? item.score_a + '–' + item.score_b : '?'}</span>
+          </div>
+          <div class="nw-queue-meta">
+            ${item.source === 'voice' ? '🎤' : '⚡'} ${groupName(item.group_id)} · ${item.match_type}
+            ${item.status === 'warn' ? `<br><span style="color:#B8860B;font-weight:600;">⚠ ${escapeHtml(item.reviewReason || 'needs review')}</span>` : ''}
+          </div>
+          <div class="nw-queue-actions" style="margin-top:6px;">
+            <a data-edit="${item.id}">✎ Edit</a>
+            <a data-remove="${item.id}" class="danger">✕ Remove</a>
+          </div>
+        </div>`).join('');
+
+      list.querySelectorAll('[data-edit]').forEach(a => a.addEventListener('click', () => nwQueueEditItem(a.dataset.edit)));
+      list.querySelectorAll('[data-remove]').forEach(a => a.addEventListener('click', () => nwQueueRemoveItem(a.dataset.remove)));
+
+      const needsReview = nwMatchQueue.some(i => i.status === 'warn');
+      sendBtn.disabled = nwMatchQueue.length === 0 || needsReview;
+      document.getElementById('queue-progress').textContent = needsReview
+        ? 'Fix or remove the flagged match(es) above before sending - this keeps everything going out in the order it was actually played.'
+        : '';
+    }
+
+    function nwQueueEditItem(id) {
+      const idx = nwMatchQueue.findIndex(i => i.id === id);
+      if (idx === -1) return;
+      const item = nwMatchQueue[idx];
+      nwMatchQueue.splice(idx, 1);
+      nwSaveQueue();
+
+      nwSetRecordMode('tap');
+      document.getElementById('match_group_select').value = item.group_id || '';
+      document.getElementById('match_type_select').value = item.match_type || 'doubles';
+      if (item.points_to_win) document.getElementById('points_to_win_select').value = item.points_to_win;
+      applyMatchTypeVisibility();
+      updateMatchGroupCache().then(() => {
+        nwTapTeamA = [...item.team_a]; nwTapTeamB = [...item.team_b];
+        nwTapRefreshAvatarGrid();
+        if (item.score_a != null && item.score_b != null) {
+          const target = nwTapPointsToWin();
+          if (item.score_a === target || item.score_b === target) {
+            nwTapWinner = item.score_a >= item.score_b ? 'A' : 'B';
+            nwTapLoserScore = Math.min(item.score_a, item.score_b);
+            nwTapRenderQuickScore();
+          } else {
+            nwTapManualA = item.score_a; nwTapManualB = item.score_b;
+            nwTapRenderManual();
+            document.getElementById('tap-quick-score').style.display = 'none';
+            document.getElementById('tap-manual-score').style.display = 'block';
+          }
+        }
+      });
+      nwRenderQueue();
+    }
+
+    async function nwQueueRemoveItem(id) {
+      if (!await nwConfirm('Remove this match from the queue? It will not be recorded.')) return;
+      nwMatchQueue = nwMatchQueue.filter(i => i.id !== id);
+      nwSaveQueue();
+      nwRenderQueue();
+    }
+
+    document.getElementById('queue-clear-btn').addEventListener('click', async () => {
+      if (!nwMatchQueue.length) return;
+      if (!await nwConfirm(`Clear all ${nwMatchQueue.length} pending match(es)? None of them will be recorded.`)) return;
+      nwMatchQueue = [];
+      nwSaveQueue();
+      nwRenderQueue();
+    });
+
+    document.getElementById('queue-send-all-btn').addEventListener('click', async () => {
+      if (!nwMatchQueue.length || nwMatchQueue.some(i => i.status === 'warn')) return;
+      const total = nwMatchQueue.length;
+      const progressEl = document.getElementById('queue-progress');
+      const sendBtn = document.getElementById('queue-send-all-btn');
+      if (!await nwConfirm(`Send all ${total} pending match(es) now? They'll be recorded in the order they were added.`)) return;
+
+      sendBtn.disabled = true;
+      let sent = 0;
+      const touchedPlayers = new Set();
+      while (nwMatchQueue.length) {
+        const item = nwMatchQueue[0];
+        progressEl.textContent = `Sending ${sent + 1} of ${total}...`;
+        const payload = {
+          group_id: item.group_id, match_type: item.match_type,
+          team_a: item.team_a, team_b: item.team_b,
+          score_a: item.score_a, score_b: item.score_b,
+          points_to_win: item.points_to_win
+        };
+        let outcome;
+        try { outcome = await postMatchPayload(payload); }
+        catch (err) { outcome = { res: null, error: err.message }; }
+
+        if (outcome.res && outcome.res.ok) {
+          nwMatchQueue.shift();
+          nwSaveQueue();
+          sent++;
+          bumpMatchesRev();
+          [...item.team_a, ...item.team_b].forEach(id => touchedPlayers.add(id));
+          nwRenderQueue();
+        } else {
+          nwSaveQueue();
+          nwRenderQueue();
+          sendBtn.disabled = false;
+          progressEl.textContent = '';
+          showMatchOutcome(false,
+            `Sent ${sent} of ${total}. Stopped on "${item.team_a_label} vs ${item.team_b_label}" - ${outcome.error || 'request failed'}. ` +
+            `The rest are still queued; fix or retry and tap Send all again.`);
+          if (outcome.sessionExpired) handleSessionExpired();
+          return;
+        }
+      }
+      progressEl.textContent = '';
+      sendBtn.disabled = false;
+      showMatchOutcome(true, `${sent} match(es) recorded.`);
+      loadPlayers();
+      refreshProfileIfShowing([...touchedPlayers]);
+    });
+
+    // initial paint, once everything above is wired
+    (function nwInitRecordMode() {
+      let saved = 'classic';
+      try { saved = localStorage.getItem(NW_MODE_KEY) || 'classic'; } catch (_) {}
+      nwSetRecordMode(saved);
+      nwRenderQueue();
+    })();
+    // ================= end quick record =================
 
     document.getElementById('match-form').addEventListener('submit', async (e) => {
       e.preventDefault();

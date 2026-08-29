@@ -9,6 +9,7 @@
 > API GW `zywd1pvlm6` · CloudFront `d1mdot1vsm6xu6.cloudfront.net` · Cognito pool `us-east-1_svy5Sv8Av`
 > **Regenerate this file:** re-run the extraction (AST for Python, regex for `app.js`) — see `docs/BACKLOG.md` → "tooling".
 > **Last mapped:** repo snapshot 2026-07-29.
+> **Shipping a change?** See `docs/DEPLOY.md` for the local zip→staging→main→tag runbook — hand back a folder-wise delta zip (changed files only, real repo-relative paths), not the whole repo.
 
 ---
 
