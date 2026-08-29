@@ -460,7 +460,15 @@ def get_group(group_id):
                              'rating': p.get('rating', 1000),
                              'previous_rating': p.get('previous_rating', p.get('rating', 1000)),
                              'games_played': int(p.get('games_played', 0) or 0),
-                             'role': roles.get(pid, 'member')})
+                             'role': roles.get(pid, 'member'),
+                             # Needed so a group-scoped Rankings view can hide
+                             # private/probationary members the same way the
+                             # all-players view already does (2026-08-29 fix -
+                             # this endpoint didn't carry these fields before,
+                             # so group-scoped rankings silently skipped the
+                             # privacy filter entirely).
+                             'privacy_private': bool(p.get('privacy_private', False)),
+                             'privacy_changed_at': p.get('privacy_changed_at')})
     return _response(200, {
         'group_id': item['group_id'], 'group_name': item['group_name'], 'members': members,
         'roles': roles,

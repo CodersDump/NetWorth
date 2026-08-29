@@ -128,15 +128,38 @@ def _scan_all(table, **kw):
 _PRIVATE_ID_KEYS = ('player_id', 'opponent_id', 'partner_id', 'top_partner_id')
 
 def _load_private_ids():
-    """player_ids currently flagged private - only when the feature flag is on,
-    so every call site is a no-op (empty set) while the feature is dark."""
+    """player_ids to exclude from rankings/leaderboards/top-N lists right now
+    - only when the feature flag is on, so every call site is a no-op (empty
+    set) while the feature is dark. Two groups (added 2026-08-29, owner
+    report: private players in the top 10 were leaving gaps in the ranking
+    instead of losing their spot):
+      1. Currently private (privacy_private=True).
+      2. On "public probation": they've flipped back to public, but haven't
+         yet stayed public for a full privacy_cooldown_days - the SAME window
+         that already gates how often they can toggle at all - so someone
+         can't duck private right before a snapshot (or repeatedly flip) to
+         dodge being outranked, then reappear instantly at their old spot.
+         Ratings/XP/coins are completely unaffected either way - a
+         private/probationary player keeps earning normally, they just don't
+         hold a leaderboard slot until they've been back for real."""
     settings = players_table.get_item(Key={'player_id': _APP_SETTINGS_ID}).get('Item') or {}
     if not bool(settings.get('privacy_mode_enabled', False)):
         return set()
+    cooldown_days = int(settings.get('privacy_cooldown_days', 7) or 0)
+    now = datetime.now(timezone.utc)
     ids = set()
-    for it in _scan_all(players_table, ProjectionExpression='player_id, privacy_private'):
+    for it in _scan_all(players_table, ProjectionExpression='player_id, privacy_private, privacy_changed_at'):
         if it.get('privacy_private'):
             ids.add(it['player_id'])
+            continue
+        changed_at = it.get('privacy_changed_at')
+        if changed_at and cooldown_days > 0:
+            try:
+                last = datetime.fromisoformat(changed_at)
+                if (now - last).total_seconds() < cooldown_days * 86400:
+                    ids.add(it['player_id'])
+            except (TypeError, ValueError):
+                pass
     return ids
 
 def _entry_is_private(x, private_ids):
@@ -163,6 +186,20 @@ def _scrub_private(obj, private_ids):
     if isinstance(obj, dict):
         return {k: _scrub_private(v, private_ids) for k, v in obj.items()}
     return obj
+
+def _rerank_visible(leaders, hidden_ids):
+    """For a rank-ordered leaders list (already sorted best-first, each row
+    carrying an int 'rank'): drop private/probationary players and RENUMBER
+    the remaining rows contiguously, so an excluded player's old slot (e.g.
+    rank 3) is actually handed to the next eligible player instead of being
+    left vacant - they lose the rank outright, not just get hidden in place
+    while everyone below keeps the old, gapped numbers (2026-08-29 fix)."""
+    if not hidden_ids:
+        return leaders
+    visible = [dict(l) for l in leaders if l.get('player_id') not in hidden_ids]
+    for i, l in enumerate(visible):
+        l['rank'] = i + 1
+    return visible
 
 # Weekly quest condition types. Each is a rule evaluated against a player's
 # matches for the current week. The admin picks a type + target + reward.
@@ -1657,7 +1694,7 @@ def list_matches(event):
         # the caller's own group, so first paint is group-scoped without
         # costing an extra request - the bundle is still exactly one call).
         return _response(200, {
-            'hall_of_fame': _scrub_private(compute_hall_of_fame(items, group_id), private_ids),
+            'hall_of_fame': compute_hall_of_fame(items, group_id, hidden_ids=private_ids),
             'diversity': _scrub_private(compute_diversity(items, group_id), private_ids),
             'progress_badges': _scrub_private(compute_progress_badges(items, group_id), private_ids),
             'attendance': _scrub_private(compute_attendance(items, group_id), private_ids),
@@ -1705,7 +1742,7 @@ def list_matches(event):
             if s_row.get('sealed_leaders') is not None:
                 return _response(200, {'season': season, 'enabled': True, 'sealed': True,
                                        'min_games': 5,
-                                       'leaders': _scrub_private(s_row['sealed_leaders'], private_ids)})
+                                       'leaders': _rerank_visible(s_row['sealed_leaders'], private_ids)})
             board = compute_season_leaderboard(season, items, s_k)
             try:
                 matches_table.update_item(Key={'match_id': s_row_id},
@@ -1715,11 +1752,11 @@ def list_matches(event):
                 pass
             board['sealed'] = True
             board['enabled'] = True
-            board['leaders'] = _scrub_private(board['leaders'], private_ids)
+            board['leaders'] = _rerank_visible(board['leaders'], private_ids)
             return _response(200, board)
         # Ongoing season -> compute live (recalculates from the frozen baseline).
         board = compute_season_leaderboard(season, items, s_k)
-        board['leaders'] = _scrub_private(board['leaders'], private_ids)
+        board['leaders'] = _rerank_visible(board['leaders'], private_ids)
         board['enabled'] = True
         return _response(200, board)
 
@@ -1735,7 +1772,7 @@ def list_matches(event):
     if attendance:
         return _response(200, _scrub_private(compute_attendance(items, group_id), private_ids))
     if hall_of_fame:
-        return _response(200, _scrub_private(compute_hall_of_fame(items, group_id), private_ids))
+        return _response(200, compute_hall_of_fame(items, group_id, hidden_ids=private_ids))
     if params.get('diversity'):
         return _response(200, _scrub_private(compute_diversity(items, group_id), private_ids))
     if params.get('progress_badges'):
@@ -1749,7 +1786,7 @@ def list_matches(event):
         # Scrub leaderboard/distribution parts for private players; leave the
         # card owner's own factual history (recent_form, record) untouched.
         return _response(200, {
-            'hall_of_fame': _scrub_private(compute_hall_of_fame(items), private_ids),
+            'hall_of_fame': compute_hall_of_fame(items, hidden_ids=private_ids),
             'progress_badges': _scrub_private(compute_progress_badges(items), private_ids),
             'achievements': compute_achievements(player_id, items, all_tournaments),
             'recent_form': compute_recent_form(player_id, items, 10),
@@ -1910,7 +1947,7 @@ def compute_attendance(items, group_id_filter=None):
     return {'attendance': result}
 
 
-def compute_hall_of_fame(items, group_id_filter=None):
+def compute_hall_of_fame(items, group_id_filter=None, hidden_ids=None):
     """Highlight stats computed from full chronological match history:
     longest win streak, biggest blowout, peak rating ever per player,
     biggest upsets (giant-killer), best comebacks (only available for
@@ -1927,8 +1964,15 @@ def compute_hall_of_fame(items, group_id_filter=None):
     results to that group's members, but every computation still uses
     each player's FULL match history (including standalone matches never
     tagged with any group) - a group filter means 'show me these
-    people's numbers', not 'only count matches tagged with this group'."""
+    people's numbers', not 'only count matches tagged with this group'.
+
+    hidden_ids (private/probationary players, 2026-08-29) are excluded the
+    same way group membership already is - via in_group/side_in_group,
+    BEFORE any top-N slicing happens - so a hidden player's spot on e.g.
+    peak_ratings/giant_killer_top5 correctly backfills with the next
+    eligible player instead of just shrinking the list by one."""
     member_ids = get_group_member_ids(group_id_filter) if group_id_filter else None
+    hidden = hidden_ids or set()
 
     matches = sorted(items, key=lambda m: m.get('date', ''))
 
@@ -2069,12 +2113,13 @@ def compute_hall_of_fame(items, group_id_filter=None):
     # Group filtering happens here, at output time, not by restricting
     # which matches got processed above - every calculation above already
     # used each player's FULL history. This just decides which rows are
-    # relevant to show for this group.
+    # relevant to show for this group. hidden (private/probationary) players
+    # are excluded the same way, at the same point - before any top-N slice.
     def in_group(pid):
-        return member_ids is None or pid in member_ids
+        return (member_ids is None or pid in member_ids) and pid not in hidden
 
     def side_in_group(ids):
-        return member_ids is None or all(pid in member_ids for pid in ids)
+        return (member_ids is None or all(pid in member_ids for pid in ids)) and not any(pid in hidden for pid in ids)
 
     giant_killer_candidates = [g for g in giant_killer_candidates if side_in_group(g['winner_ids'])]
     comeback_candidates = [c for c in comeback_candidates if side_in_group(c['winner_ids'])]
