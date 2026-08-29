@@ -1810,7 +1810,16 @@ let userPool = null;
       const sel = document.getElementById('match_group_select');
       if (!sel || sel.value) return;              // don't override a choice already made
       const mine = myGroups();
-      if (mine.length) sel.value = mine[0].group_id;
+      if (mine.length) {
+        sel.value = mine[0].group_id;
+        // Setting .value directly does NOT fire 'change', so the listener
+        // that populates currentMatchGroupMembers never runs for a
+        // default-picked group - team selects and Quick tap's avatar grid
+        // would then silently fall back to the ENTIRE club roster instead
+        // of this group's actual members. Explicitly refresh the cache
+        // here too, the same way an explicit user pick already does.
+        updateMatchGroupCache().then(() => refreshTeamSelectOptions());
+      }
     }
 
     // ================= Voice match entry =================
@@ -2197,6 +2206,15 @@ let userPool = null;
     // ---------- quick tap: team builder ----------
     let nwTapTeamA = [], nwTapTeamB = [];
     let nwLastTapMatch = null; // { team_a: [ids], team_b: [ids] } - last item added, for "same as last match"
+    // Guests: an existing player who isn't a member of the SELECTED group,
+    // added just so they can be tapped into tonight's matches. Purely local
+    // state - never touches group membership. The only real way into a
+    // group stays the owner's explicit "add player to group" action on the
+    // Groups tab; recording a match with a guest never does that, same as
+    // it never did before this feature existed. Resets when the group
+    // changes (a guest of one group isn't implicitly a guest of another)
+    // and isn't persisted across a reload, since it's meant to be throwaway.
+    let nwTapGuestIds = [];
 
     function nwTapSlotsPerTeam() {
       return document.getElementById('match_type_select').value === 'doubles' ? 2 : 1;
@@ -2205,22 +2223,55 @@ let userPool = null;
     function nwTapRefreshAvatarGrid() {
       const grid = document.getElementById('tap-avatar-grid');
       if (!grid) return;
-      const pool = currentMatchGroupMembers || allPlayers;
+      const groupId = document.getElementById('match_group_select').value;
+      const memberPool = currentMatchGroupMembers || allPlayers;
+      const memberIds = new Set(memberPool.map(p => p.player_id));
+      const guestPlayers = nwTapGuestIds.map(id => allPlayers.find(p => p.player_id === id)).filter(Boolean);
+      const pool = [...memberPool, ...guestPlayers.filter(p => !memberIds.has(p.player_id))];
+
       document.getElementById('tap-slots-hint').textContent = nwTapSlotsPerTeam();
       grid.innerHTML = '';
       pool.forEach(p => {
+        const isGuest = !memberIds.has(p.player_id);
         const el = document.createElement('div');
-        el.className = 'nw-avatar';
+        el.className = 'nw-avatar' + (isGuest ? ' guest' : '');
         if (nwTapTeamA.includes(p.player_id)) el.classList.add('sel-a');
         if (nwTapTeamB.includes(p.player_id)) el.classList.add('sel-b');
         const initials = (p.name || '?').trim().split(/\s+/).map(w => w[0]).join('').slice(0, 2).toUpperCase();
-        el.innerHTML = `<div class="nw-avatar-circ">${initials}</div><div class="nw-avatar-lbl">${escapeHtml(p.nickname || p.name)}</div>`;
+        el.innerHTML = `<div class="nw-avatar-circ">${initials}</div><div class="nw-avatar-lbl">${escapeHtml(p.nickname || p.name)}</div>` +
+          (isGuest ? '<div class="nw-avatar-guest-tag">guest</div>' : '');
         el.addEventListener('click', () => nwTapToggleAvatar(p.player_id));
         grid.appendChild(el);
       });
       document.getElementById('tap-recall-btn').style.display = nwLastTapMatch ? '' : 'none';
+
+      // The guest picker only makes sense once a specific group is actually
+      // selected AND its member list has resolved - with no group (or the
+      // "None" ungrouped case), the pool IS the whole club already, so
+      // there's no meaningful "not in this group" left to add.
+      const guestRow = document.getElementById('tap-guest-row');
+      const guestSelect = document.getElementById('tap-guest-select');
+      if (groupId && currentMatchGroupMembers) {
+        guestRow.style.display = '';
+        const candidates = allPlayers
+          .filter(p => !memberIds.has(p.player_id) && !nwTapGuestIds.includes(p.player_id))
+          .sort((a, b) => String(a.name).localeCompare(String(b.name)));
+        guestSelect.innerHTML = '<option value="">+ Add someone not in this group (guest, this match only)</option>' +
+          candidates.map(p => `<option value="${p.player_id}">${escapeHtml(p.nickname || p.name)}</option>`).join('');
+      } else {
+        guestRow.style.display = 'none';
+      }
+
       nwTapRenderTeams();
     }
+
+    document.getElementById('tap-guest-select').addEventListener('change', (e) => {
+      const id = e.target.value;
+      if (!id) return;
+      nwTapGuestIds.push(id);
+      e.target.value = '';
+      nwTapRefreshAvatarGrid();
+    });
 
     function nwTapToggleAvatar(playerId) {
       const slots = nwTapSlotsPerTeam();
@@ -2246,10 +2297,20 @@ let userPool = null;
       nwTapRefreshAvatarGrid();
     });
 
+    document.getElementById('match_group_select').addEventListener('change', () => {
+      // A guest is scoped to whichever group they were added under - switch
+      // groups and that stops applying (updateMatchGroupCache's own
+      // 'change' listener repopulates currentMatchGroupMembers and then
+      // calls refreshTeamSelectOptions -> nwTapRefreshAvatarGrid, so this
+      // just needs to clear the state before that later render happens).
+      nwTapGuestIds = [];
+      nwTapTeamA = []; nwTapTeamB = [];
+    });
+
     document.getElementById('tap-recall-btn').addEventListener('click', () => {
       if (!nwLastTapMatch) return;
       const pool = currentMatchGroupMembers || allPlayers;
-      const poolIds = new Set(pool.map(p => p.player_id));
+      const poolIds = new Set([...pool.map(p => p.player_id), ...nwTapGuestIds]);
       nwTapTeamA = nwLastTapMatch.team_a.filter(id => poolIds.has(id));
       nwTapTeamB = nwLastTapMatch.team_b.filter(id => poolIds.has(id));
       nwTapRefreshAvatarGrid();
@@ -2530,6 +2591,11 @@ let userPool = null;
       applyMatchTypeVisibility();
       updateMatchGroupCache().then(() => {
         nwTapTeamA = [...item.team_a]; nwTapTeamB = [...item.team_b];
+        // Anyone on the item who isn't a member of the (re-selected) group
+        // needs to go back in as a guest, or they'd be selected but not
+        // actually rendered as a tappable avatar at all.
+        const memberIds = new Set((currentMatchGroupMembers || allPlayers).map(p => p.player_id));
+        nwTapGuestIds = [...new Set([...item.team_a, ...item.team_b].filter(pid => !memberIds.has(pid)))];
         nwTapRefreshAvatarGrid();
         if (item.score_a != null && item.score_b != null) {
           const target = nwTapPointsToWin();

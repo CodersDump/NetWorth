@@ -270,6 +270,13 @@
 - `[ops] S` Add a CI guard that fails the build if any `s3 sync --delete` appears in a workflow.
   **DONE 2026-08-20** (see Done). (KNOWN_ISSUES #9)
 - `[ops] S` Stop tracking `__pycache__/*.pyc` in git. (KNOWN_ISSUES #14)
+- `[feat] M` **Decide: backend-enforced "one player, one group" exclusivity?** Owner floated this while
+  reviewing Quick-tap (2026-08-29) — a player should really belong to only one real group, with
+  ad-hoc appearances elsewhere handled as guests, not membership. v1.76.1 already ships the
+  guest-picker half of this (client-side only, no backend change — see Done). Not yet built: an
+  actual backend rule in `groups.py` (`add_player_enforced` / `register_and_join` / `set_role`) that
+  blocks or migrates a player already in another group. Needs a decision first: what happens to any
+  player currently a real member of 2+ groups today (grandfather them vs. force a pick)?
 
 ## Later / ideas
 
@@ -281,7 +288,11 @@
   (owner's local Ollama/LMStudio or a hosted box); validate the returned JSON hard (player-name
   resolution + BWF score validity via the same rules as `_is_valid_completed_game`) before writing;
   show a review/confirm step before any match is recorded. Owner is still deciding the hosting shape.
-  (Owner idea 2026-07-31.)
+  (Owner idea 2026-07-31.) **Partly landed in v1.76.0:** the stack-and-review UI now exists for real
+  (Voice mode's note stack + the shared `nw_match_queue` bulk-send, also shared with Quick tap) — what
+  remains here is specifically the "send the stack to an LLM for hard cases" tier: model/endpoint
+  config (admin-only, not shown to regular users) and the actual send-to-model action gated to
+  owner/owners, per the owner's explicit request.
 - `[feat] S` ~~Export tournament recap as image already exists (`downloadTournamentImage`); extend to
   a shareable per-player season card.~~ **DONE in v1.8** — `frontend/js/card-share.js` adds a
   spotlight-carousel customizer (Share card button on the Player Card) that renders the player's
@@ -362,6 +373,60 @@
 ---
 
 ## Done
+
+- ✅ 2026-08-29 (v1.76.1) — **Fix: `defaultMatchGroup()` silently fell back to the entire club roster
+  instead of the selected group.** Owner report, from the deployed Quick-tap grid: a group with a
+  handful of real members ("Matchpoint") was showing ~40 avatars. Root cause: `defaultMatchGroup()`
+  auto-picks the user's first group by setting `match_group_select.value` directly — but assigning
+  `.value` in vanilla JS does not fire a `change` event, so the listener that populates
+  `currentMatchGroupMembers` (via `updateMatchGroupCache()`) never ran for an auto-picked group. Both
+  the classic team dropdowns and the new Quick-tap grid fall back to `currentMatchGroupMembers ||
+  allPlayers` — with the cache never populated, both silently showed the whole club instead of the
+  group. Only reproduced when the group was auto-selected (page load with exactly one group); an
+  explicit manual pick already dispatched `change` correctly and was never affected. Fixed by having
+  `defaultMatchGroup()` explicitly call `updateMatchGroupCache().then(() => refreshTeamSelectOptions())`
+  after setting the default, the same way a manual pick already does.
+  **Feature: ad-hoc/guest players in Quick-tap without touching real group membership.** Owner request:
+  a group should keep a fixed, real roster, but occasional non-members (someone else's group's player,
+  sitting in for one match) need to be tappable for that one match — and the *only* way into real
+  group membership must stay the existing owner-driven "add player" flow in the Groups tab, never a
+  side effect of recording a match. Added a client-side-only, non-persisted guest layer: a new
+  "+ add a guest for this match" picker (`#tap-guest-row` / `#tap-guest-select`, populated from the
+  full player list minus current group members) lets any existing player be tapped into the avatar
+  grid for the current match only, visually marked with a dashed border + "guest" tag so it's never
+  mistaken for a real member. Guest picks live in an in-memory `nwTapGuestIds` array that resets on
+  group change and is never sent to any group-membership endpoint — `record_match` itself already
+  doesn't validate that team members belong to the match's `group_id` (it's attribution-only), so a
+  guest can play a real, correctly-attributed match without ever being written into the group's
+  member list. Recall/edit-from-queue paths updated to reconstruct the guest set from whichever team
+  members aren't in the (re-)loaded group, so a queued match with a guest still edits correctly.
+  Deliberately did *not* build a backend-enforced "one player, one group" rule this round — that
+  would touch `groups.py`'s membership-mutation endpoints and needs a decision about any players who
+  are currently real members of more than one group; flagged as a separate follow-up if wanted.
+
+- ✅ 2026-08-29 (v1.76.0) — **Feature: sub-5-second match recording (Quick tap + Voice stack), plus a
+  shared bulk-send queue.** Recording a match took 30-45s through the classic dropdown form; owner
+  wanted it under 5s without removing the classic form for people used to it. Added a mode switch
+  (Classic / ⚡ Quick tap / 🎤 Voice, persisted in `localStorage` as `nw_record_mode`) above the
+  existing, byte-identical `#match-form` — the two new modes are additive panels that build their own
+  payload and POST straight to `record_match` (`postMatchPayload()`), never touching the classic
+  form's fields. **Quick tap:** an avatar grid of the selected group's members; tapping fills Team A's
+  slots first, then Team B (previously alternated A/B/A/B — fixed during mockup review before this
+  landed in the real app); a "who won" toggle + loser's-score stepper derives the final score from
+  points-to-win (with a deuce/extended-play fallback), or a manual +/- stepper per side for anything
+  the presets can't express; finished entries go to "+ Add to queue" rather than submitting
+  immediately. **Voice stack:** reuses the existing free, client-side `SpeechRecognition` transcript
+  parser (`nwParseMatchTranscript`, with its phonetic/Levenshtein fuzzy roster matching) but stacks
+  each recorded note as a chip instead of submitting it right away, so a run of matches can be
+  recorded back-to-back and reviewed together. **Shared queue:** both modes feed one
+  `localStorage`-backed queue (`nw_match_queue`) with per-item edit/remove and a single "Send all";
+  Send-all is all-or-nothing (blocked entirely if any item is still flagged for review) specifically
+  to preserve strict chronological submission order, since Elo (`recompute_all_ratings`) is
+  path-dependent and replays history in order — an out-of-order bulk send would silently corrupt
+  ratings. No AI/LLM involved in this round (deliberately deferred — see `docs/CODEBASE_MAP.md`'s
+  "Voice match entry" section for the existing non-LLM parser this reuses, and the Later/ideas section
+  below for the "send stack to an LLM" tier); any future AI-assisted transcription tier is planned as
+  admin/owner-configured and owner/owners-only to trigger, never exposed to regular users.
 
 - ✅ 2026-08-29 (v1.75.0) — **Fix: private/probationary players left gaps in rankings instead of losing
   their spot.** Owner report: "3rd 6th and 7th position players have made their account private but
