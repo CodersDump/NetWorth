@@ -500,3 +500,80 @@
   background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius);
   padding: 8px 12px; font-size: 13px; font-weight: 600;
 }
+
+/* ---------- Quick tap / voice-stack match recording (added alongside the
+   classic dropdown form, not replacing it - see app.js "quick record" block) ---------- */
+.nw-mode-switch { display: flex; gap: 6px; background: var(--surface-2); padding: 4px; border-radius: 12px; margin: 12px 0 16px; }
+.nw-mode-btn { flex: 1; text-align: center; padding: 8px 4px; border-radius: 9px; font-size: 13px; font-weight: 600;
+  cursor: pointer; border: none; background: transparent; color: var(--text-secondary); }
+.nw-mode-btn.active { background: var(--surface); color: var(--court); box-shadow: 0 1px 3px rgba(0,0,0,.12); }
+
+.nw-tap-section-label { font-size: 13px; font-weight: 700; margin-bottom: 8px; }
+.nw-tap-hint { font-weight: 400; font-size: 11.5px; color: var(--text-secondary); }
+.nw-avatar-grid { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 12px; }
+.nw-avatar { width: 58px; text-align: center; cursor: pointer; user-select: none; }
+.nw-avatar .nw-avatar-circ { width: 46px; height: 46px; margin: 0 auto 4px; border-radius: 50%; background: var(--surface-2);
+  display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 14px; color: var(--court-dark);
+  border: 2px solid transparent; transition: .12s; }
+.nw-avatar .nw-avatar-lbl { font-size: 10.5px; color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nw-avatar.sel-a .nw-avatar-circ { border-color: var(--rally); background: rgba(0,180,216,.15); color: var(--rally); }
+.nw-avatar.sel-b .nw-avatar-circ { border-color: var(--smash); background: rgba(255,71,87,.15); color: var(--smash); }
+.nw-avatar:active .nw-avatar-circ { transform: scale(.92); }
+
+.nw-teamrow { display: flex; gap: 10px; margin: 4px 0; }
+.nw-teamslot { flex: 1; border-radius: var(--radius); padding: 10px; text-align: center; min-height: 60px; }
+.nw-teamslot.a { background: rgba(0,180,216,.08); border: 1.5px dashed rgba(0,180,216,.4); }
+.nw-teamslot.b { background: rgba(255,71,87,.08); border: 1.5px dashed rgba(255,71,87,.4); }
+.nw-teamslot-label { font-size: 10px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; margin-bottom: 6px; color: var(--text-secondary); }
+.nw-teamslot.a .nw-teamslot-label { color: var(--rally); }
+.nw-teamslot.b .nw-teamslot-label { color: var(--smash); }
+.nw-teamslot-names { font-size: 13px; font-weight: 600; min-height: 18px; }
+.nw-vs { display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 800; color: var(--text-secondary); width: 24px; }
+
+.nw-score-card { margin-top: 14px; }
+.nw-won-toggle { display: flex; gap: 8px; margin-bottom: 12px; }
+.nw-won-btn { flex: 1; padding: 11px; border-radius: 10px; font-weight: 700; font-size: 13px; cursor: pointer;
+  border: 2px solid var(--border); background: var(--surface); color: var(--text-secondary); }
+.nw-won-btn.a.selected { border-color: var(--rally); background: rgba(0,180,216,.13); color: var(--rally); }
+.nw-won-btn.b.selected { border-color: var(--smash); background: rgba(255,71,87,.13); color: var(--smash); }
+.nw-loser-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.nw-loser-label { font-size: 12.5px; color: var(--text-secondary); }
+.nw-stepper { display: flex; align-items: center; gap: 10px; }
+.nw-stepper button { width: 30px; height: 30px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface-2); font-size: 16px; font-weight: 700; cursor: pointer; }
+.nw-stepper span { font-family: 'JetBrains Mono', monospace; font-weight: 800; font-size: 16px; min-width: 22px; text-align: center; display: inline-block; }
+.nw-preset-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
+.nw-preset-row .nw-preset-chip { padding: 7px 13px; border-radius: 9px; background: var(--surface-2); font-weight: 700; font-size: 13px;
+  font-family: 'JetBrains Mono', monospace; cursor: pointer; border: 2px solid transparent; }
+.nw-preset-row .nw-preset-chip.selected { border-color: var(--court); background: rgba(31,122,77,.12); color: var(--court-dark); }
+.nw-final-line { font-size: 13px; color: var(--text-secondary); margin-top: 8px; }
+.nw-final-line b { color: var(--text); font-family: 'JetBrains Mono', monospace; font-size: 15px; }
+.nw-textlink { display: inline-block; margin-top: 10px; font-size: 11.5px; color: var(--rally); cursor: pointer; }
+.nw-manual-stepper { flex: 1; text-align: center; background: var(--surface-2); border-radius: 10px; padding: 10px; }
+.nw-manual-stepper button { width: 32px; height: 32px; border-radius: 8px; border: none; background: var(--surface); font-size: 17px; font-weight: 700; cursor: pointer; }
+.nw-manual-stepper span { display: block; font-family: 'JetBrains Mono', monospace; font-size: 19px; font-weight: 800; margin: 6px 0; }
+.nw-tap-livehint { font-size: 11.5px; color: var(--text-secondary); margin: 12px 0 0; }
+.nw-inline-error { color: var(--smash); font-size: 12.5px; margin-top: 6px; font-weight: 600; }
+
+.nw-mic-wrap { text-align: center; padding: 6px 0 4px; }
+.nw-mic-btn { width: 78px; height: 78px; border-radius: 50%; background: var(--court); color: #fff; font-size: 30px;
+  display: flex; align-items: center; justify-content: center; margin: 0 auto 10px; cursor: pointer; border: none;
+  box-shadow: 0 6px 18px rgba(31,122,77,.35); user-select: none; }
+.nw-mic-btn.rec { background: var(--smash); animation: nw-mic-pulse 1s infinite; }
+@keyframes nw-mic-pulse { 0% { box-shadow: 0 0 0 0 rgba(255,71,87,.45); } 70% { box-shadow: 0 0 0 16px rgba(255,71,87,0); } 100% { box-shadow: 0 0 0 0 rgba(255,71,87,0); } }
+.nw-mic-hint { font-size: 12px; color: var(--text-secondary); }
+.nw-note-stack { display: flex; gap: 8px; overflow-x: auto; padding: 12px 2px; }
+.nw-note-chip { position: relative; flex: 0 0 auto; background: var(--surface-2); border-radius: 12px; padding: 9px 12px;
+  font-size: 11px; color: var(--text-secondary); min-width: 70px; text-align: center; }
+.nw-note-chip .nw-note-badge { position: absolute; top: -6px; right: -6px; width: 16px; height: 16px; border-radius: 50%;
+  font-size: 10px; display: flex; align-items: center; justify-content: center; color: #fff; }
+.nw-note-chip .nw-note-badge.ok { background: var(--court); }
+.nw-note-chip .nw-note-badge.warn { background: var(--shuttle); color: #3a2e00; }
+
+.nw-queue-row { border: 1.5px solid var(--border); border-radius: 10px; padding: 9px 12px; margin-bottom: 8px; }
+.nw-queue-row.warn { border-left: 4px solid var(--shuttle); background: rgba(255,210,63,.08); }
+.nw-queue-row.ok { border-left: 4px solid var(--court); }
+.nw-queue-top { display: flex; justify-content: space-between; align-items: center; font-size: 13px; font-weight: 600; gap: 8px; }
+.nw-queue-meta { font-size: 11px; color: var(--text-secondary); margin-top: 3px; }
+.nw-queue-actions { display: flex; gap: 10px; white-space: nowrap; }
+.nw-queue-actions a { font-size: 11.5px; color: var(--rally); cursor: pointer; font-weight: 600; }
+.nw-queue-actions a.danger { color: var(--smash); }

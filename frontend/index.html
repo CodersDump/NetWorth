@@ -420,33 +420,47 @@
       </div>
       <div class="card" id="record-match-card">
         <h2>Record a match</h2>
-        <form id="match-form">
-          <div class="row">
-            <div>
-              <label>Group
-                <select id="match_group_select"><option value="">None</option></select>
-              </label>
-              <button type="button" class="secondary" id="match-quick-add-player-btn" style="display:none; margin-top:6px;">+ Register a new player for this match</button>
-            </div>
-            <div>
-              <label>Match type
-                <select id="match_type_select">
-                  <option value="doubles">Doubles</option>
-                  <option value="singles">Singles</option>
-                </select>
-              </label>
-            </div>
-            <div>
-              <label>Points to win
-                <select id="points_to_win_select">
-                  <option value="21" selected>21</option>
-                  <option value="15">15</option>
-                  <option value="11">11</option>
-                </select>
-              </label>
-            </div>
-          </div>
 
+        <!-- Shared context: group / match type / points-to-win apply no
+             matter which entry mode below is active, so they live outside
+             all three and are read straight off these three elements by id. -->
+        <div class="row">
+          <div>
+            <label>Group
+              <select id="match_group_select"><option value="">None</option></select>
+            </label>
+            <button type="button" class="secondary" id="match-quick-add-player-btn" style="display:none; margin-top:6px;">+ Register a new player for this match</button>
+          </div>
+          <div>
+            <label>Match type
+              <select id="match_type_select">
+                <option value="doubles">Doubles</option>
+                <option value="singles">Singles</option>
+              </select>
+            </label>
+          </div>
+          <div>
+            <label>Points to win
+              <select id="points_to_win_select">
+                <option value="21" selected>21</option>
+                <option value="15">15</option>
+                <option value="11">11</option>
+              </select>
+            </label>
+          </div>
+        </div>
+
+        <!-- Entry mode switch. "Classic" is byte-identical to the old form
+             and stays the default for everyone until they pick something
+             else - the choice is remembered locally per browser. -->
+        <div class="nw-mode-switch" id="nw-mode-switch">
+          <button type="button" class="nw-mode-btn active" data-mode="classic">Classic</button>
+          <button type="button" class="nw-mode-btn" data-mode="tap">⚡ Quick tap</button>
+          <button type="button" class="nw-mode-btn" data-mode="voice">🎤 Voice</button>
+        </div>
+
+        <!-- ===================== CLASSIC MODE (unchanged) ===================== -->
+        <form id="match-form">
           <div class="row">
             <div>
               <strong>Team A</strong>
@@ -493,6 +507,83 @@
 
           <button type="submit" id="match-submit-btn">Record match</button>
         </form>
+
+        <!-- ===================== QUICK TAP MODE ===================== -->
+        <div id="tap-mode-panel" style="display:none;">
+          <div class="nw-tap-section-label">On court <span class="nw-tap-hint">tap up to <span id="tap-slots-hint">2</span> for each team</span></div>
+          <div class="nw-avatar-grid" id="tap-avatar-grid"></div>
+
+          <div class="nw-teamrow">
+            <div class="nw-teamslot a"><div class="nw-teamslot-label">Team A</div><div class="nw-teamslot-names" id="tap-team-a-names">tap above</div></div>
+            <div class="nw-vs">vs</div>
+            <div class="nw-teamslot b"><div class="nw-teamslot-label">Team B</div><div class="nw-teamslot-names" id="tap-team-b-names">tap above</div></div>
+          </div>
+          <button type="button" class="secondary" id="tap-recall-btn" style="display:none;">↺ Same as last match</button>
+
+          <div class="nw-score-card">
+            <div id="tap-quick-score">
+              <div class="nw-won-toggle">
+                <button type="button" class="nw-won-btn a selected" data-won="A">Team A won</button>
+                <button type="button" class="nw-won-btn b" data-won="B">Team B won</button>
+              </div>
+              <div class="nw-loser-row">
+                <span class="nw-loser-label">Losing side's score</span>
+                <div class="nw-stepper">
+                  <button type="button" data-tap-step="-1">−</button>
+                  <span id="tap-loser-score">15</span>
+                  <button type="button" data-tap-step="1">+</button>
+                </div>
+              </div>
+              <div class="nw-preset-row" id="tap-loser-presets"></div>
+              <div class="nw-final-line">Recording: <b id="tap-final-score-line">21 – 15</b></div>
+              <span class="nw-textlink" id="tap-deuce-link">Went past the target (deuce)? Enter both scores →</span>
+            </div>
+            <div id="tap-manual-score" style="display:none;">
+              <div class="nw-teamrow">
+                <div class="nw-manual-stepper">
+                  <div class="nw-teamslot-label" style="color:var(--rally);">Team A</div>
+                  <button type="button" data-tap-manual="A" data-dir="-1">−</button>
+                  <span id="tap-manual-a">23</span>
+                  <button type="button" data-tap-manual="A" data-dir="1">+</button>
+                </div>
+                <div class="nw-manual-stepper">
+                  <div class="nw-teamslot-label" style="color:var(--smash);">Team B</div>
+                  <button type="button" data-tap-manual="B" data-dir="-1">−</button>
+                  <span id="tap-manual-b">21</span>
+                  <button type="button" data-tap-manual="B" data-dir="1">+</button>
+                </div>
+              </div>
+              <span class="nw-textlink" id="tap-back-to-quick">← back to quick entry</span>
+            </div>
+          </div>
+          <p class="nw-tap-livehint">Want point-by-point live tracking for this one instead? <a id="tap-switch-to-classic" href="#">Switch to Classic</a> — it's still all there, untouched.</p>
+
+          <button type="button" id="tap-add-queue-btn">+ Add to queue</button>
+          <div id="tap-add-error" class="nw-inline-error"></div>
+        </div>
+
+        <!-- ===================== VOICE MODE ===================== -->
+        <div id="voice-mode-panel" style="display:none;">
+          <div class="nw-mic-wrap">
+            <button type="button" class="nw-mic-btn" id="nw-stack-mic-btn">🎤</button>
+            <div class="nw-mic-hint" id="nw-stack-mic-hint">Hold, say the result, let go.<br>e.g. “Aditya and Sohan beat Sourabh and Mayank 21-18”</div>
+          </div>
+          <div class="nw-note-stack" id="nw-note-stack"></div>
+          <p class="nw-tap-livehint" id="nw-voice-unsupported-hint" style="display:none;">Voice input isn't supported in this browser — use Chrome/Edge/Safari, or switch to Quick tap.</p>
+        </div>
+
+        <!-- Shared by Quick tap + Voice: nothing here ever came from Classic,
+             and Classic keeps submitting straight to /record-match as before. -->
+        <div class="card" id="match-queue-card" style="display:none; margin-top:14px;">
+          <h3 style="margin:0 0 10px;">Pending matches (<span id="queue-count">0</span>)</h3>
+          <div id="queue-list"></div>
+          <div style="margin-top:10px;">
+            <button type="button" id="queue-send-all-btn">Send all</button>
+            <button type="button" class="secondary" id="queue-clear-btn">Clear queue</button>
+          </div>
+          <div id="queue-progress" class="nw-tap-hint" style="margin-top:8px;"></div>
+        </div>
+
         <div id="match-result" class="result"></div>
       </div>
 
