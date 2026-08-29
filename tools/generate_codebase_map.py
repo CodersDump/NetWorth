@@ -31,14 +31,15 @@ JS_SECTIONS = {
     226: "Data-load helpers", 510: "Live point-by-point scoring",
     591: "Split-screen live scoring", 711: "Player registration",
     776: "Delete / edit player", 850: "Groups", 979: "Matches (record/list/game-log)",
-    1016: "Voice match entry", 1264: "Team pairing preview",
-    1472: "Unsaved-match safety net", 1558: "Game log & CSV export",
-    1901: "Profile card customization", 2326: "Quests", 2430: "Store & events admin",
-    2765: "Image uploads", 2918: "Profile bundle / cards / charts",
-    3941: "UPI payment card", 3999: "Finance tab (view-key + role gated)",
-    4649: "Match review & reorder (SuperAdmin)",
-    4780: "Auth UI (Cognito login/signup/session)", 5346: "Init & session restore",
-    5371: "Tournaments", 6421: "Live scoring inside tournaments",
+    1825: "Voice match entry", 2073: "Team pairing preview",
+    2169: "Quick record: tap mode + voice stack + shared queue",
+    2801: "Unsaved-match safety net", 2887: "Game log & CSV export",
+    3230: "Profile card customization", 3655: "Quests", 3759: "Store & events admin",
+    4094: "Image uploads", 4247: "Profile bundle / cards / charts",
+    5270: "UPI payment card", 5328: "Finance tab (view-key + role gated)",
+    5978: "Match review & reorder (SuperAdmin)",
+    6109: "Auth UI (Cognito login/signup/session)", 6675: "Init & session restore",
+    6700: "Tournaments", 7750: "Live scoring inside tournaments",
 }
 
 
