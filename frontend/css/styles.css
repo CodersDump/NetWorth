@@ -519,6 +519,8 @@
 .nw-avatar.sel-a .nw-avatar-circ { border-color: var(--rally); background: rgba(0,180,216,.15); color: var(--rally); }
 .nw-avatar.sel-b .nw-avatar-circ { border-color: var(--smash); background: rgba(255,71,87,.15); color: var(--smash); }
 .nw-avatar:active .nw-avatar-circ { transform: scale(.92); }
+.nw-avatar.guest .nw-avatar-circ { border-style: dashed; border-color: var(--text-secondary); }
+.nw-avatar-guest-tag { font-size: 9px; color: var(--text-secondary); font-style: italic; }
 
 .nw-teamrow { display: flex; gap: 10px; margin: 4px 0; }
 .nw-teamslot { flex: 1; border-radius: var(--radius); padding: 10px; text-align: center; min-height: 60px; }
