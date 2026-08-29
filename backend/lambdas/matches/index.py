@@ -109,6 +109,7 @@ def xp_for_match(stage, won, margin=0):
 # totals. Overlapping events take the highest multiplier.
 _EVENTS_ROW_ID = '__events__'
 _QUESTS_ROW_ID = '__quests__'
+_ACHIEVEMENTS_ROW_ID = '__achievements__'
 _APP_SETTINGS_ID = '__app_settings__'
 
 def _scan_all(table, **kw):
@@ -174,6 +175,20 @@ QUEST_TYPES = {
     'win_margin':  'Win {target} matches by 10+ points',
     'win_deuce':   'Win {target} deuce matches (won by exactly 2 after 20)',
     'beat_higher': 'Beat a higher-rated opponent {target} times',
+}
+
+# Achievements are lifetime milestones (unlike quests, which reset weekly/
+# per-season) - "play 100 matches", "win a tournament" - checked against the
+# same numbers compute_achievements() already computes for the profile card's
+# achievement display, not re-derived separately. Each metric here maps
+# straight to one of that function's returned fields.
+ACHIEVEMENT_METRICS = {
+    'total_matches':     'Play {target} matches',
+    'total_wins':        'Win {target} matches',
+    'personal_best_streak': 'Win {target} matches in a row',
+    'tournament_wins':   'Win {target} tournament(s)',
+    'podium_finishes':   'Reach the podium (1st/2nd/3rd) in {target} tournament(s)',
+    'undefeated_sessions': 'Go undefeated (3+ wins, 0 losses) in {target} session(s)',
 }
 
 
@@ -434,7 +449,7 @@ def list_quests(event):
     quests = _load_quests()
 
     all_matches = [m for m in _scan_all(matches_table)
-                   if m.get('match_id') not in (_EVENTS_ROW_ID, _QUESTS_ROW_ID)]
+                   if m.get('match_id') not in (_EVENTS_ROW_ID, _QUESTS_ROW_ID, _ACHIEVEMENTS_ROW_ID)]
     monday, _nm = _week_bounds_utc()
     player = players_table.get_item(Key={'player_id': pid}).get('Item') if pid else None
     rating_by_id = {}  # lazy - only needed for beat_higher fallback
@@ -531,7 +546,7 @@ def claim_quest(event):
         return _response(400, {'error': 'this season quest is not active right now'})
     lo, hi = bounds
     q_matches = [m for m in _scan_all(matches_table)
-                 if m.get('match_id') not in (_EVENTS_ROW_ID, _QUESTS_ROW_ID)
+                 if m.get('match_id') not in (_EVENTS_ROW_ID, _QUESTS_ROW_ID, _ACHIEVEMENTS_ROW_ID)
                  and lo <= (m.get('date') or '')[:10] < hi]
     progress = _evaluate_quest(quest, pid, q_matches, {})
     if progress < int(quest.get('target', 1)):
@@ -562,6 +577,180 @@ def claim_quest(event):
         Key={'player_id': pid},
         UpdateExpression='SET quest_claims = :qc, quest_xp = :qx, quest_coins = :qco, coins = :c, owned_items = :o',
         ExpressionAttributeValues={':qc': claimed, ':qx': new_quest_xp, ':qco': new_quest_coins,
+                                   ':c': new_coins, ':o': owned}
+    )
+    return _response(200, {'ok': True, 'reward_xp': reward_xp, 'reward_coins': reward_coins,
+                           'reward_cosmetic': bool(cosmetic), 'coins': new_coins})
+
+
+# ---------- achievements: lifetime milestones, claim -> cosmetic/xp/coins ----------
+# Same shape/pattern as quests just above (reserved sentinel row in this same
+# table, SuperAdmin-managed catalog, player claims a completed one for a
+# reward) but lifetime rather than weekly/seasonal, and progress comes from
+# compute_achievements() (further down this file) instead of a fresh
+# per-quest-type evaluator, since that function already computes every
+# candidate metric from the player's real match/tournament history - reusing
+# it means an achievement's progress number is always the exact same number
+# already shown on that player's profile card, never a second source of
+# truth that could drift from it. Owner-requested 2026-08-28: "if someone
+# achieves certain things, then they should also be rewarded certain banners
+# or store items ... it should then get displayed in their settings as well
+# as part of their achievement earned UI things" - claim-button model (like
+# quests, not auto-granted), reward cosmetics are regular store catalog
+# items (see players lambda's save_store_item) marked active:false so they
+# can never be bought with coins, only earned - once granted into
+# owned_items the existing equip machinery (_owns_store_cosmetic,
+# renderStoreCosmeticStrip) picks them up with zero changes, exactly like a
+# quest-earned cosmetic already does.
+def _load_achievements():
+    item = matches_table.get_item(Key={'match_id': _ACHIEVEMENTS_ROW_ID}).get('Item') or {}
+    return item.get('achievements', [])
+
+
+def list_achievements(event):
+    """Every achievement, with the caller's live progress/claim state.
+    Definitions are visible to anyone logged in; progress requires a linked
+    player (0 otherwise, same convention as list_quests)."""
+    claims = _caller_claims(event)
+    pid = claims.get('custom:player_id')
+    achievements = _load_achievements()
+    if not achievements:
+        return _response(200, {'achievements': []})
+
+    stats = {}
+    if pid:
+        all_matches = [m for m in _scan_all(matches_table)
+                       if m.get('match_id') not in (_EVENTS_ROW_ID, _QUESTS_ROW_ID, _ACHIEVEMENTS_ROW_ID)]
+        all_tournaments = _scan_all(tournaments_table)
+        stats = compute_achievements(pid, all_matches, all_tournaments)
+    player = players_table.get_item(Key={'player_id': pid}).get('Item') if pid else None
+    claimed = (player or {}).get('achievement_claims', {}) if player else {}
+
+    out = []
+    for a in achievements:
+        if not a.get('active', True):
+            continue
+        metric = a.get('metric')
+        target = int(a.get('target', 1))
+        progress = int(stats.get(metric, 0)) if pid else 0
+        done = progress >= target
+        out.append({
+            'achievement_id': a.get('achievement_id'),
+            'name': a.get('name'),
+            'description': a.get('description') or ACHIEVEMENT_METRICS.get(metric, '').format(target=target),
+            'metric': metric,
+            'target': target,
+            'reward_xp': int(a.get('reward_xp', 0)),
+            'reward_coins': int(a.get('reward_coins', 0)),
+            'reward_cosmetic_id': a.get('reward_cosmetic_id') or None,
+            'progress': min(progress, target),
+            'complete': done,
+            'claimed': bool(claimed.get(a.get('achievement_id'))),
+        })
+    # Claimed and complete-but-unclaimed first (most actionable), then by
+    # how close to completion, so someone with many achievements sees what's
+    # ready to claim before a long list of far-off ones.
+    out.sort(key=lambda r: (not r['claimed'], not r['complete'],
+                            -(r['progress'] / r['target'] if r['target'] else 0)))
+    return _response(200, {'achievements': out})
+
+
+def save_achievement(event):
+    claims = _caller_claims(event)
+    if not _is_super_admin(claims):
+        return _response(403, {'error': 'only a SuperAdmin can manage achievements'})
+    body = json.loads(event.get('body') or '{}')
+    name = (body.get('name') or '').strip()
+    metric = body.get('metric')
+    if not name:
+        return _response(400, {'error': 'name is required'})
+    if metric not in ACHIEVEMENT_METRICS:
+        return _response(400, {'error': f'metric must be one of {list(ACHIEVEMENT_METRICS)}'})
+    try:
+        target = int(body.get('target'))
+    except (TypeError, ValueError):
+        return _response(400, {'error': 'target must be a whole number'})
+    if target < 1:
+        return _response(400, {'error': 'target must be at least 1'})
+
+    achievements = _load_achievements()
+    aid = body.get('achievement_id') or str(uuid.uuid4())
+    row = {
+        'achievement_id': aid, 'name': name, 'metric': metric, 'target': target,
+        'description': (body.get('description') or '').strip() or None,
+        'reward_xp': int(body.get('reward_xp', 0) or 0),
+        'reward_coins': int(body.get('reward_coins', 0) or 0),
+        'reward_cosmetic_id': body.get('reward_cosmetic_id') or None,
+        'active': bool(body.get('active', True)),
+    }
+    achievements = [a for a in achievements if a.get('achievement_id') != aid]
+    achievements.append(row)
+    matches_table.put_item(Item={'match_id': _ACHIEVEMENTS_ROW_ID, 'achievements': achievements})
+    return _response(200, {'achievement': row})
+
+
+def delete_achievement(event):
+    claims = _caller_claims(event)
+    if not _is_super_admin(claims):
+        return _response(403, {'error': 'only a SuperAdmin can manage achievements'})
+    body = json.loads(event.get('body') or '{}')
+    aid = body.get('achievement_id')
+    if not aid:
+        return _response(400, {'error': 'achievement_id is required'})
+    achievements = [a for a in _load_achievements() if a.get('achievement_id') != aid]
+    matches_table.put_item(Item={'match_id': _ACHIEVEMENTS_ROW_ID, 'achievements': achievements})
+    return _response(200, {'ok': True})
+
+
+def claim_achievement(event):
+    """Player claims a completed achievement's reward. Progress is
+    re-verified server-side from real match/tournament history via
+    compute_achievements - the client can't fake completion. Idempotent
+    forever (a flat claimed flag, not a per-period key like quests, since an
+    achievement never resets)."""
+    claims = _caller_claims(event)
+    pid = claims.get('custom:player_id')
+    if not pid:
+        return _response(403, {'error': 'link a profile first'})
+    body = json.loads(event.get('body') or '{}')
+    aid = body.get('achievement_id')
+
+    achievement = next((a for a in _load_achievements() if a.get('achievement_id') == aid), None)
+    if not achievement or not achievement.get('active', True):
+        return _response(404, {'error': 'achievement not found'})
+
+    player = players_table.get_item(Key={'player_id': pid}).get('Item') or {}
+    claimed = player.get('achievement_claims') or {}
+    if claimed.get(aid):
+        return _response(400, {'error': 'already claimed'})
+
+    all_matches = [m for m in _scan_all(matches_table)
+                   if m.get('match_id') not in (_EVENTS_ROW_ID, _QUESTS_ROW_ID, _ACHIEVEMENTS_ROW_ID)]
+    all_tournaments = _scan_all(tournaments_table)
+    stats = compute_achievements(pid, all_matches, all_tournaments)
+    progress = int(stats.get(achievement.get('metric'), 0))
+    if progress < int(achievement.get('target', 1)):
+        return _response(400, {'error': 'achievement not complete yet'})
+
+    # Same reward-granting pattern as claim_quest: XP/coins go into
+    # dedicated fields the recompute preserves, a cosmetic reward is added
+    # straight to owned_items so the existing equip UI just works.
+    reward_xp = int(achievement.get('reward_xp', 0) or 0)
+    reward_coins = int(achievement.get('reward_coins', 0) or 0)
+    cosmetic = achievement.get('reward_cosmetic_id')
+
+    claimed[aid] = True
+    new_quest_xp = int(player.get('quest_xp', 0) or 0) + reward_xp
+    new_quest_coins = int(player.get('quest_coins', 0) or 0) + reward_coins
+    new_coins = int(player.get('coins', 0) or 0) + reward_coins
+    owned = player.get('owned_items') or {}
+    if cosmetic:
+        owned[cosmetic] = True
+
+    players_table.update_item(
+        Key={'player_id': pid},
+        UpdateExpression='SET achievement_claims = :ac, quest_xp = :qx, quest_coins = :qco, coins = :c, owned_items = :o',
+        ExpressionAttributeValues={':ac': claimed, ':qx': new_quest_xp, ':qco': new_quest_coins,
                                    ':c': new_coins, ':o': owned}
     )
     return _response(200, {'ok': True, 'reward_xp': reward_xp, 'reward_coins': reward_coins,
@@ -800,6 +989,14 @@ def handler(event, context):
             return delete_quest(event)
         if event.get('resource') == '/quest-claim' and method == 'POST':
             return claim_quest(event)
+        if event.get('resource') == '/achievements' and method == 'GET':
+            return list_achievements(event)
+        if event.get('resource') == '/achievements' and method == 'POST':
+            return save_achievement(event)
+        if event.get('resource') == '/achievements' and method == 'DELETE':
+            return delete_achievement(event)
+        if event.get('resource') == '/achievement-claim' and method == 'POST':
+            return claim_achievement(event)
 
         # Epic 7 extension: profile viewing is now genuinely restricted -
         # guests can't view any profile at all; logged-in members can only
@@ -1095,7 +1292,7 @@ def recompute_all_ratings():
 
     matches = _scan_all(matches_table)
     # The reserved events row lives in this table but isn't a match.
-    matches = [m for m in matches if m.get('match_id') not in (_EVENTS_ROW_ID, _QUESTS_ROW_ID)]
+    matches = [m for m in matches if m.get('match_id') not in (_EVENTS_ROW_ID, _QUESTS_ROW_ID, _ACHIEVEMENTS_ROW_ID)]
     matches.sort(key=lambda m: m.get('date', ''))
     # Load events once for the whole replay rather than per match.
     _events = _load_events()
@@ -1396,7 +1593,7 @@ def list_matches(event):
 
     items = _scan_all(matches_table)
     # Reserved config rows (events) live in this table but aren't matches.
-    items = [i for i in items if i.get('match_id') not in (_EVENTS_ROW_ID, _QUESTS_ROW_ID)]
+    items = [i for i in items if i.get('match_id') not in (_EVENTS_ROW_ID, _QUESTS_ROW_ID, _ACHIEVEMENTS_ROW_ID)]
     # Privacy: omit private players from comparative outputs for everyone but a
     # SuperAdmin (only ever identified via an authed route). No-op when off.
     private_ids = set() if _is_super_admin(_caller_claims(event)) else _load_private_ids()

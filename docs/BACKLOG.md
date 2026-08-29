@@ -363,6 +363,53 @@
 
 ## Done
 
+- ✅ 2026-08-28 (v1.73.0) — **New feature: achievements.** Owner request: "if someone achieves certain
+  things, then they should also be rewarded certain banners or store items. Like lets say as part of
+  achievement, someone won 100 matches, they would win certain banners or profile pic or some
+  background. similarly for the tournamnets as well. it should then get displayed in their settings as
+  well as part of their acheivemnt earned UI things." Investigated the existing economy first
+  (quests/store/`compute_achievements`) before building anything, to reuse rather than duplicate: quests
+  already had exactly the "define a server-checkable condition → verify against real match history →
+  idempotent claim → grant XP/coins and/or a cosmetic into `owned_items`" pattern this needed, and
+  `compute_achievements` (matches lambda) already computed nearly every candidate lifetime metric for the
+  profile card's achievement display - it just never stored an "unlocked" state or granted anything.
+  Built as a lifetime-scoped sibling of quests, reusing both directly: new `backend/lambdas/matches/
+  index.py` engine (`_load_achievements`/`list_achievements`/`save_achievement`/`delete_achievement`/
+  `claim_achievement`, new sentinel row `__achievements__` in the matches table, added to every existing
+  sentinel-row exclusion list alongside `__events__`/`__quests__` so it's never mistaken for a match by
+  `recompute_all_ratings`/`list_matches`/quest evaluation) — `list_achievements`/`claim_achievement` read
+  progress straight from `compute_achievements(pid, matches, tournaments)`, so an achievement's progress
+  number is always the exact same number already shown on that player's profile card, never a second
+  source of truth. Claim-button model (owner's pick, not auto-grant, matching Quests) — reward XP/coins
+  reuse the existing `quest_xp`/`quest_coins` fields (already proven to survive `recompute_all_ratings`,
+  no new field needed) and a cosmetic reward is added straight into `owned_items`, so the existing equip
+  machinery (`_owns_store_cosmetic`, `renderStoreCosmeticStrip`) picks it up with zero changes — a reward
+  is just a regular store catalog item (`type:'cosmetic'`) marked `active:false` (owner's pick, "new
+  achievement-only cosmetics") so it can never be bought with coins via the normal Store grid, only
+  earned. New API routes `/achievements` (GET/POST/DELETE) + `/achievement-claim` (POST), Cognito-gated,
+  mirroring `/quests`+`/quest-claim`'s API Gateway resources exactly (added to `ApiDeployment`'s
+  `DependsOn`, verified the whole template still parses - 208 resources, was 200). Frontend: a "My
+  achievements" section in the Settings modal (owner's explicit ask - progress bars + Claim buttons,
+  visible once a player links a profile, same gate as the cosmetics pickers above it; claiming
+  immediately re-renders the avatar/banner/background pickers so a won cosmetic is pickable without a
+  reload) and a SuperAdmin-only "Achievements" admin panel under Reviews & Approvals (mirrors the
+  existing Weekly quests panel exactly - list, add, delete). Also shipped `badgeSvg(tier, glyph)`, a
+  small generator implementing `docs/BADGE_FORMAT.md`'s hexagon-badge recipe (the doc's own suggested
+  next step, "a future `badgeSvg(kind)`") as data-URI SVGs, plus a one-click "Create starter
+  achievements" admin button that seeds 9 ready-made achievements spanning all 3 categories the owner
+  picked (match-count: Century Club/Iron Regular; win-count/streak: Half-Century Wins/Century
+  Wins/Hot Streak/Unstoppable; tournament: Champion/Serial Champion/Podium Regular) each with its own
+  generated badge cosmetic — idempotent (skips any store item/achievement whose name already exists), so
+  it's safe to click again after deleting one to redo it, and gives the owner real working achievements
+  immediately instead of 18 manual form submissions. Verified with `/tmp/test_achievements.py` (27
+  checks: SuperAdmin-only create/delete, unknown-metric rejection, the sentinel row never counted as a
+  match, per-player progress correctness including a tournament-win metric read from the tournaments
+  table, claim-before-complete rejection, reward grant into owned_items/quest_xp/quest_coins/coins,
+  double-claim idempotency, deleting an achievement not clawing back an already-granted reward) and
+  `/tmp/test_achievements_ui.js` (11 checks: badge SVG generation incl. a UTF-8/btoa fix for emoji
+  glyphs, My Achievements claim flow, admin create, and the starter-pack seed being genuinely
+  idempotent on a second run). Full backend suite (36 files) re-run clean.
+
 - ✅ 2026-08-28 (v1.72.0) — **Group owners get real direct match edit/delete (incl. participants), a
   group label on pending requests, and bulk registration can target/create a group.** Three owner
   reports/asks in one message.
