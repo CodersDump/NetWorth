@@ -211,6 +211,11 @@
              onchange="uploadCardImage('background', this)">
       <div id="settings-background-uploads" style="margin-bottom:10px;"></div>
       <div id="settings-background-picker" style="display:flex; flex-wrap:wrap; gap:6px;"></div>
+      <div class="card" style="margin-top:14px;">
+        <h2>My achievements</h2>
+        <p class="card-sub">Lifetime milestones. Earned automatically, claimed here - claiming grants the reward, including any banner/avatar/background cosmetic straight into your customization options above.</p>
+        <div id="my-achievements-list" style="margin-top:8px;"></div>
+      </div>
       </div>
       <div id="settings-status" style="font-size:13px; margin-top:10px;"></div>
 
@@ -1161,6 +1166,42 @@
               <label>Resets <select id="quest-scope"><option value="weekly">Weekly (every Monday)</option><option value="season">Per season (resets at rollover)</option></select></label>
               <button type="button" class="secondary" onclick="saveQuest()">Add quest</button>
               <span id="quest-save-status" style="font-size:12px; margin-left:8px;"></span>
+            </div>
+          </div>
+        </details>
+
+        <details class="review-section">
+          <summary>Achievements</summary>
+          <div style="padding:10px 0;">
+            <p class="card-sub" style="margin:0 0 10px;">Lifetime milestones (unlike quests, these never reset). Progress is checked against real match/tournament history; players claim the reward once complete, from Settings → My achievements.</p>
+            <div id="achievements-admin-list" style="font-size:13px; margin-bottom:12px;"></div>
+            <div style="border-top:1px solid var(--border); padding-top:10px;">
+              <p style="font-size:13px; font-weight:600; margin:0 0 6px;">Add an achievement</p>
+              <label>Name <input type="text" id="achievement-name" placeholder="Century Club"></label>
+              <label>Milestone
+                <select id="achievement-metric">
+                  <option value="total_matches">Play N matches</option>
+                  <option value="total_wins">Win N matches</option>
+                  <option value="personal_best_streak">Win N matches in a row</option>
+                  <option value="tournament_wins">Win N tournament(s)</option>
+                  <option value="podium_finishes">Reach the podium in N tournament(s)</option>
+                  <option value="undefeated_sessions">Go undefeated in N session(s)</option>
+                </select>
+              </label>
+              <div class="row">
+                <div><label>Target (N) <input type="number" id="achievement-target" min="1" value="100"></label></div>
+                <div><label>Reward XP <input type="number" id="achievement-xp" min="0" step="10" value="0"></label></div>
+                <div><label>Reward coins <input type="number" id="achievement-coins" min="0" step="10" value="0"></label></div>
+              </div>
+              <label>Reward cosmetic (optional, store item id) <input type="text" id="achievement-cosmetic" placeholder="leave blank for none"></label>
+              <button type="button" class="secondary" onclick="saveAchievement()">Add achievement</button>
+              <span id="achievement-save-status" style="font-size:12px; margin-left:8px;"></span>
+            </div>
+            <div style="border-top:1px solid var(--border); margin-top:12px; padding-top:10px;">
+              <p style="font-size:13px; font-weight:600; margin:0 0 4px;">Quick start</p>
+              <p class="card-sub" style="margin:0 0 6px;">Creates 9 ready-made achievements (match-count, win-count/streak, and tournament milestones) plus a matching badge cosmetic for each - generated in the app's own hexagon-badge style, not purchasable in the Store, only earned. Safe to run once; skips any that already exist.</p>
+              <button type="button" class="secondary" onclick="seedStarterAchievements()">Create starter achievements</button>
+              <span id="achievement-seed-status" style="font-size:12px; margin-left:8px;"></span>
             </div>
           </div>
         </details>

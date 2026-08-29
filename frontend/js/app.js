@@ -3032,6 +3032,7 @@ let userPool = null;
       // No linked player means nothing to customise - update-my-card
       // would 403 anyway, so don't offer the controls.
       document.getElementById('settings-cosmetics').style.display = me ? 'block' : 'none';
+      if (me) loadMyAchievements();
       // The approval sections (requests, finance access) moved to the
       // Reviews & Approvals tab, so nothing to load here anymore.
       prefillEditForm();
@@ -3390,6 +3391,218 @@ let userPool = null;
         if (!res.ok) { nwAlert(`Error: ${error}`); return; }
         loadQuestsAdmin();
       } catch (e) { nwAlert(`Failed: ${e.message}`); }
+    }
+
+    // ---------- Achievements ----------
+    // Lifetime milestones (owner-requested 2026-08-28: "if someone achieves
+    // certain things, then they should also be rewarded certain banners or
+    // store items ... it should then get displayed in their settings as
+    // well as part of their achievement earned UI things"). Claim-button
+    // model like Quests (not auto-granted); progress/target/claim state
+    // come from GET /achievements, backed server-side by the same
+    // compute_achievements() numbers already shown on a profile card.
+
+    // One hexagon "metal medal" badge, following docs/BADGE_FORMAT.md's
+    // recipe exactly (vertical 3-stop gradient, thin inner highlight, one
+    // centered glyph) - used to generate this feature's starter cosmetic
+    // images as data-URI SVGs, so achievements ship with real on-brand art
+    // instead of a placeholder to replace later. Anyone with store-admin
+    // access can still swap image_url for hand-made art the same way any
+    // other store item's image gets set.
+    function badgeSvg(tier, glyph) {
+      const PALETTES = {
+        gold:     ['#FFE27A', '#F4B23E', '#8A5A12'],
+        silver:   ['#F2F3F6', '#C7CBD4', '#7C818C'],
+        bronze:   ['#F0B98A', '#CE8A4E', '#7A4A24'],
+        emerald:  ['#8CE0B0', '#37B87C', '#126B45'],
+        sapphire: ['#8FC7FF', '#3E8EF4', '#144F9E'],
+        ruby:     ['#FF9AA6', '#F0475E', '#8A1424'],
+      };
+      const [top, mid, bot] = PALETTES[tier] || PALETTES.sapphire;
+      const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200" viewBox="0 0 100 100">
+        <defs><linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="${top}"/><stop offset="0.55" stop-color="${mid}"/><stop offset="1" stop-color="${bot}"/>
+        </linearGradient></defs>
+        <polygon points="30,6 70,6 94,50 70,94 30,94 6,50" fill="url(#bg)"/>
+        <polygon points="30,6 70,6 94,50 70,94 30,94 6,50" fill="none" stroke="rgba(255,255,255,0.55)" stroke-width="3"/>
+        <text x="50" y="50" dy="0.35em" text-anchor="middle" font-size="42" font-weight="800" fill="#00000088">${glyph}</text>
+      </svg>`;
+      // btoa() only handles Latin1 - the emoji glyphs need a real UTF-8
+      // encode first (unescape/encodeURIComponent is the standard shim for
+      // this exact gap), or badgeSvg throws on every glyph that isn't ASCII.
+      return 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svg)));
+    }
+
+    async function loadMyAchievements() {
+      const el = document.getElementById('my-achievements-list');
+      if (!el) return;
+      el.innerHTML = 'Loading...';
+      try {
+        const { res, data } = await authedFetch(`${API_BASE_URL}/achievements`);
+        if (!res.ok) { el.innerHTML = '<p class="card-sub">Could not load achievements.</p>'; return; }
+        const achievements = data.achievements || [];
+        if (!achievements.length) { el.innerHTML = '<p class="card-sub" style="margin:0;">No achievements set up yet.</p>'; return; }
+        el.innerHTML = achievements.map(a => {
+          const pct = Math.min(100, Math.round((a.progress / a.target) * 100));
+          const rewards = [];
+          if (a.reward_xp) rewards.push(`${a.reward_xp} XP`);
+          if (a.reward_coins) rewards.push(`${a.reward_coins} 🪙`);
+          if (a.reward_cosmetic_id) rewards.push('a cosmetic');
+          let action;
+          if (a.claimed) action = '<span style="color:#2FA968; font-weight:600; font-size:13px;">Claimed ✓</span>';
+          else if (a.complete) action = `<button style="margin:0; padding:4px 12px; font-size:12px;" onclick="claimAchievement('${a.achievement_id}')">Claim ${rewards.join(' + ') || 'reward'}</button>`;
+          else action = `<span style="font-size:12px; opacity:0.6;">${rewards.length ? 'Reward: ' + rewards.join(' + ') : ''}</span>`;
+          return `<div style="padding:10px 0; border-bottom:1px solid var(--border);">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+              <span style="font-weight:600;">${escapeHtml(a.name)}</span>${action}
+            </div>
+            <div class="card-sub" style="margin:0 0 6px;">${escapeHtml(a.description || '')}</div>
+            <div style="display:flex; align-items:center; gap:8px;">
+              <div style="flex:1; height:8px; background:var(--surface-2); border-radius:4px; overflow:hidden;">
+                <div style="height:100%; width:${pct}%; background:linear-gradient(90deg, var(--court), #2FA968);"></div>
+              </div>
+              <span style="font-size:12px; opacity:0.7;">${a.progress}/${a.target}</span>
+            </div>
+          </div>`;
+        }).join('');
+      } catch (e) { el.innerHTML = '<p class="card-sub">Could not load achievements.</p>'; }
+    }
+
+    async function claimAchievement(achievementId) {
+      try {
+        const { res, data, error } = await authedFetch(`${API_BASE_URL}/achievement-claim`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ achievement_id: achievementId })
+        });
+        if (!res.ok) { nwAlert(`Error: ${error}`); return; }
+        const bits = [];
+        if (data.reward_xp) bits.push(`${data.reward_xp} XP`);
+        if (data.reward_coins) bits.push(`${data.reward_coins} coins`);
+        if (data.reward_cosmetic) bits.push('a cosmetic');
+        nwAlert(`Claimed! You earned ${bits.join(' + ') || 'your reward'}.`);
+        await loadPlayers(); updateHeaderCoins(); loadMyAchievements();
+        // A cosmetic reward should be pickable immediately, same as a store
+        // purchase - re-render the avatar/banner/background pickers so it
+        // shows up in the "From the store" strip without a page reload.
+        const me = allPlayers.find(p => p.player_id === myPlayerId());
+        if (me) renderSettingsPickers(me);
+      } catch (e) { nwAlert(`Failed: ${e.message}`); }
+    }
+
+    // Admin achievement management (in Reviews & Approvals)
+    async function loadAchievementsAdmin() {
+      const listEl = document.getElementById('achievements-admin-list');
+      if (!listEl) return;
+      try {
+        const { res, data } = await authedFetch(`${API_BASE_URL}/achievements`);
+        if (!res.ok) { listEl.textContent = 'Could not load.'; return; }
+        const achievements = data.achievements || [];
+        if (!achievements.length) { listEl.innerHTML = '<p class="card-sub" style="margin:0;">No achievements yet.</p>'; return; }
+        listEl.innerHTML = achievements.map(a => {
+          const r = [];
+          if (a.reward_xp) r.push(`${a.reward_xp}XP`);
+          if (a.reward_coins) r.push(`${a.reward_coins}🪙`);
+          if (a.reward_cosmetic_id) r.push('cosmetic');
+          return `<div style="display:flex; justify-content:space-between; align-items:center; padding:6px 0; border-bottom:1px solid var(--border);">
+            <span><strong>${escapeHtml(a.name)}</strong> <span style="opacity:0.6;">(${escapeHtml(a.description || '')}) → ${r.join(' + ') || 'no reward'}</span></span>
+            <button class="secondary" style="margin:0; padding:2px 8px; font-size:11px;" onclick="deleteAchievement('${a.achievement_id}')">Delete</button>
+          </div>`;
+        }).join('');
+      } catch (e) { listEl.textContent = 'Could not load.'; }
+    }
+
+    async function saveAchievement() {
+      const statusEl = document.getElementById('achievement-save-status');
+      const body = {
+        name: document.getElementById('achievement-name').value.trim(),
+        metric: document.getElementById('achievement-metric').value,
+        target: parseInt(document.getElementById('achievement-target').value, 10),
+        reward_xp: parseInt(document.getElementById('achievement-xp').value, 10) || 0,
+        reward_coins: parseInt(document.getElementById('achievement-coins').value, 10) || 0,
+        reward_cosmetic_id: document.getElementById('achievement-cosmetic').value || null,
+      };
+      if (!body.name) { statusEl.textContent = 'Name is required.'; return; }
+      if (isNaN(body.target) || body.target < 1) { statusEl.textContent = 'Target must be at least 1.'; return; }
+      statusEl.textContent = 'Saving...';
+      try {
+        const { res, error } = await authedFetch(`${API_BASE_URL}/achievements`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+        });
+        if (!res.ok) { statusEl.textContent = `Error: ${error}`; return; }
+        statusEl.textContent = 'Saved.';
+        document.getElementById('achievement-name').value = '';
+        document.getElementById('achievement-cosmetic').value = '';
+        loadAchievementsAdmin();
+      } catch (e) { statusEl.textContent = `Failed: ${e.message}`; }
+    }
+
+    async function deleteAchievement(achievementId) {
+      if (!await nwConfirm('Delete this achievement? Players who already claimed it keep their reward.')) return;
+      try {
+        const { res, error } = await authedFetch(`${API_BASE_URL}/achievements`, {
+          method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ achievement_id: achievementId })
+        });
+        if (!res.ok) { nwAlert(`Error: ${error}`); return; }
+        loadAchievementsAdmin();
+      } catch (e) { nwAlert(`Failed: ${e.message}`); }
+    }
+
+    // One-click starter pack: 9 cosmetics (badge-styled banners/avatar
+    // frames, generated via badgeSvg - not purchasable, active:false so
+    // they never appear in the buyable Store grid, only earnable) plus 9
+    // matching achievement definitions across the 3 categories the owner
+    // asked for (match-count, win-count/streak, tournament). Idempotent:
+    // skips any store item or achievement whose name already exists, so
+    // it's safe to click again later (e.g. after deleting one to redo it).
+    const STARTER_ACHIEVEMENTS = [
+      { name: 'Century Club', metric: 'total_matches', target: 100, tier: 'emerald', glyph: '💯', kind: 'banner_image', desc: 'Play 100 matches' },
+      { name: 'Iron Regular', metric: 'total_matches', target: 500, tier: 'sapphire', glyph: '🛡', kind: 'background_image', desc: 'Play 500 matches' },
+      { name: 'Half-Century Wins', metric: 'total_wins', target: 50, tier: 'bronze', glyph: '🏅', kind: 'avatar_frame', desc: 'Win 50 matches' },
+      { name: 'Century Wins', metric: 'total_wins', target: 100, tier: 'gold', glyph: '🏅', kind: 'avatar_frame', desc: 'Win 100 matches' },
+      { name: 'Hot Streak', metric: 'personal_best_streak', target: 5, tier: 'ruby', glyph: '🔥', kind: 'banner_image', desc: 'Win 5 matches in a row' },
+      { name: 'Unstoppable', metric: 'personal_best_streak', target: 10, tier: 'ruby', glyph: '⚡', kind: 'background_image', desc: 'Win 10 matches in a row' },
+      { name: 'Champion', metric: 'tournament_wins', target: 1, tier: 'gold', glyph: '🏆', kind: 'avatar_frame', desc: 'Win a tournament' },
+      { name: 'Serial Champion', metric: 'tournament_wins', target: 5, tier: 'gold', glyph: '👑', kind: 'avatar_frame', desc: 'Win 5 tournaments' },
+      { name: 'Podium Regular', metric: 'podium_finishes', target: 5, tier: 'silver', glyph: '📈', kind: 'banner_image', desc: 'Reach the podium in 5 tournaments' },
+    ];
+    async function seedStarterAchievements() {
+      const statusEl = document.getElementById('achievement-seed-status');
+      statusEl.textContent = 'Creating...';
+      try {
+        const [storeRes, achRes] = await Promise.all([
+          authedFetch(`${API_BASE_URL}/store`), authedFetch(`${API_BASE_URL}/achievements`)
+        ]);
+        const existingStoreNames = new Set((storeRes.data.items || []).map(i => i.name));
+        const existingAchNames = new Set((achRes.data.achievements || []).map(a => a.name));
+        let created = 0, skipped = 0;
+        for (const spec of STARTER_ACHIEVEMENTS) {
+          if (existingAchNames.has(spec.name)) { skipped++; continue; }
+          let cosmeticId = null;
+          const badgeName = `${spec.name} badge`;
+          if (!existingStoreNames.has(badgeName)) {
+            const { res: sres, data: sdata, error: serror } = await authedFetch(`${API_BASE_URL}/store`, {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                name: badgeName, type: 'cosmetic', cost: 0, active: false,
+                image_url: badgeSvg(spec.tier, spec.glyph),
+                effect: { kind: spec.kind, image_url: badgeSvg(spec.tier, spec.glyph) },
+              })
+            });
+            if (!sres.ok) { statusEl.textContent = `Error creating "${badgeName}": ${serror}`; return; }
+            cosmeticId = sdata.item.item_id;
+          }
+          const { res: ares, error: aerror } = await authedFetch(`${API_BASE_URL}/achievements`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              name: spec.name, metric: spec.metric, target: spec.target,
+              description: spec.desc, reward_cosmetic_id: cosmeticId,
+            })
+          });
+          if (!ares.ok) { statusEl.textContent = `Error creating "${spec.name}": ${aerror}`; return; }
+          created++;
+        }
+        statusEl.textContent = `Done - created ${created}, skipped ${skipped} already present.`;
+        loadAchievementsAdmin(); loadStoreAdmin();
+      } catch (e) { statusEl.textContent = `Failed: ${e.message}`; }
     }
 
     // ---------- Store ----------
@@ -11201,6 +11414,7 @@ let userPool = null;
           loadEventsAdmin();
           loadStoreAdmin();
           loadQuestsAdmin();
+          loadAchievementsAdmin();
           if (typeof onStoreTypeChange === 'function') onStoreTypeChange();
         }
       }
