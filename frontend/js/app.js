@@ -468,13 +468,41 @@ let userPool = null;
 
     // ---------- privacy ("cloak") mode (P2) ----------
     let privacyModeEnabled = false;   // from /app-settings; gates all privacy UI
+    let privacyCooldownDays = 7;      // from /app-settings; also doubles as the ranking-probation length below
     function myPlayerRecord() { return allPlayers.find(p => p.player_id === myPlayerId()) || null; }
     function iAmPrivate() { const me = myPlayerRecord(); return privacyModeEnabled && !!(me && me.privacy_private); }
-    /** player_ids to hide from comparative views for the CURRENT viewer.
+    /** player_ids to hide from comparative views for the CURRENT viewer -
+     *  genuinely private players only. Used for "can this person even be
+     *  looked up" (profile/opponent/partner selects): a probationary player
+     *  chose to be public again, so they stay fully visible/selectable here
+     *  - see rankingHiddenIds() below for the separate, narrower rule that
+     *  applies only to rank/leaderboard slots.
      *  Empty when the feature is off or the viewer is a SuperAdmin (sees all). */
     function privateHiddenIds() {
       if (!privacyModeEnabled || isSuperAdmin()) return new Set();
       return new Set(allPlayers.filter(p => p.privacy_private).map(p => p.player_id));
+    }
+    /** player_ids to exclude from RANKING/LEADERBOARD slots specifically
+     *  (added 2026-08-29, owner report: a private top-10 player was leaving
+     *  a gap in the ranking instead of losing their spot). Private players,
+     *  PLUS anyone still on "public probation" - they toggled back to public
+     *  but haven't yet stayed public for a full privacyCooldownDays (the
+     *  same window that already gates how often they can toggle at all), so
+     *  flipping private right before a snapshot and back doesn't let someone
+     *  duck being outranked. Their rating/XP keep updating normally the
+     *  whole time - this only withholds their leaderboard slot. */
+    function rankingHiddenIds() {
+      if (!privacyModeEnabled || isSuperAdmin()) return new Set();
+      const now = Date.now();
+      const cooldownMs = (privacyCooldownDays || 0) * 86400000;
+      return new Set(allPlayers.filter(p => {
+        if (p.privacy_private) return true;
+        if (p.privacy_changed_at && cooldownMs > 0) {
+          const changedAt = new Date(p.privacy_changed_at).getTime();
+          if (!isNaN(changedAt) && (now - changedAt) < cooldownMs) return true;
+        }
+        return false;
+      }).map(p => p.player_id));
     }
     function renderPrivacyControl() {
       const el = document.getElementById('privacy-control');
@@ -484,14 +512,28 @@ let userPool = null;
       const viewingOwn = me && sel && sel.value === me.player_id;
       if (!privacyModeEnabled || !me || !viewingOwn) { el.style.display = 'none'; el.innerHTML = ''; return; }
       const isPriv = !!me.privacy_private;
+      // Public probation (2026-08-29): after switching back to public, a
+      // player doesn't hold a rank/leaderboard slot again until they've
+      // stayed public for a full cooldown - shown here so it's obvious why
+      // someone who just went public still isn't ranked yet.
+      let probationNote = '';
+      if (!isPriv && me.privacy_changed_at && privacyCooldownDays > 0) {
+        const changedAt = new Date(me.privacy_changed_at).getTime();
+        const msLeft = !isNaN(changedAt) ? (changedAt + privacyCooldownDays * 86400000) - Date.now() : 0;
+        if (msLeft > 0) {
+          const daysLeft = Math.ceil(msLeft / 86400000);
+          probationNote = '<p class="card-sub" style="color:var(--smash);">On public probation for ' + daysLeft + ' more day(s) - your rating keeps updating normally, but you won\'t hold a rank or leaderboard spot until probation clears.</p>';
+        }
+      }
       el.style.display = 'block';
       el.innerHTML =
         '<div class="card" style="margin-bottom:12px;">'
         + '<h2 style="margin-top:0;">Visibility: ' + (isPriv ? 'Private' : 'Public') + '</h2>'
         + '<p class="card-sub">' + (isPriv
             ? 'Your stats are hidden from others - and in return the Stats tab and other players\' cards are hidden from you. Only you see your own card.'
-            : 'Your stats show in rankings, Hall of Fame and head-to-heads. Go private to hide them - you\'ll also lose those comparative views yourself while private.')
+            : 'Your stats show in rankings, Hall of Fame and head-to-heads (after a public-probation period once you switch back). Go private to hide them - you\'ll also lose those comparative views yourself while private, and lose your rank immediately rather than just being hidden in place.')
         + '</p>'
+        + probationNote
         + '<button type="button" class="secondary" onclick="toggleMyPrivacy()">' + (isPriv ? 'Go public' : 'Go private') + '</button>'
         + '<div id="privacy-toggle-status" style="font-size:13px;margin-top:8px;"></div>'
         + '</div>';
@@ -2665,8 +2707,8 @@ let userPool = null;
           rankedPlayers = allPlayers;
         }
 
-        const _privHidden = privateHiddenIds();
-        if (_privHidden.size) rankedPlayers = rankedPlayers.filter(p => !_privHidden.has(p.player_id));
+        const _rankHidden = rankingHiddenIds();
+        if (_rankHidden.size) rankedPlayers = rankedPlayers.filter(p => !_rankHidden.has(p.player_id));
 
         if (!rankedPlayers.length) { resultEl.innerHTML = '<p style="font-size:13px;color:var(--text-secondary);">No players to rank.</p>'; return; }
 
@@ -3224,8 +3266,9 @@ let userPool = null;
         privacyModeEnabled = !!data.privacy_mode_enabled;
         const pc = document.getElementById('app-privacy-mode');
         if (pc) pc.checked = privacyModeEnabled;
+        privacyCooldownDays = (data.privacy_cooldown_days != null ? Number(data.privacy_cooldown_days) : 7);
         const pcd = document.getElementById('app-privacy-cooldown');
-        if (pcd) pcd.value = (data.privacy_cooldown_days != null ? data.privacy_cooldown_days : 7);
+        if (pcd) pcd.value = privacyCooldownDays;
         applyVoiceVisibility();
         populateAdminPrivacySelect();
         populateAdminRenameSelect();
@@ -7804,7 +7847,7 @@ let userPool = null;
       // non-admins see levels/coins/store/quests when it's enabled.
       try {
         const asRes = await fetch(`${API_BASE_URL}/app-settings`);
-        if (asRes.ok) { const _as = await asRes.json(); xpPublic = !!_as.xp_public; voiceEnabled = !!_as.voice_enabled; privacyModeEnabled = !!_as.privacy_mode_enabled; seasonsEnabled = !!_as.seasons_enabled; if (typeof applyVoiceVisibility === 'function') applyVoiceVisibility(); }
+        if (asRes.ok) { const _as = await asRes.json(); xpPublic = !!_as.xp_public; voiceEnabled = !!_as.voice_enabled; privacyModeEnabled = !!_as.privacy_mode_enabled; privacyCooldownDays = (_as.privacy_cooldown_days != null ? Number(_as.privacy_cooldown_days) : 7); seasonsEnabled = !!_as.seasons_enabled; if (typeof applyVoiceVisibility === 'function') applyVoiceVisibility(); }
       } catch (_) {}
       if (typeof updateAuthUI === 'function') updateAuthUI();
       // Build B: per-tab data now loads lazily on first open (tab handler

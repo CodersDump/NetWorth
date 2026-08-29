@@ -363,6 +363,41 @@
 
 ## Done
 
+- ✅ 2026-08-29 (v1.75.0) — **Fix: private/probationary players left gaps in rankings instead of losing
+  their spot.** Owner report: "3rd 6th and 7th position players have made their account private but
+  they still hold the ranking" — proposed fix himself: going private should drop your rank outright
+  (not just hide it in place), and add a "public probation" period reusing the existing 7-day
+  toggle-cooldown, so flipping back to public doesn't instantly restore a rank either. Root cause
+  confirmed by reading the code: `compute_season_leaderboard` baked `rank = i+1` into every row
+  BEFORE private players were scrubbed out of the response, so removing a row left the numbers
+  gapped (1,2,4,5,6…) instead of promoting everyone below. Same class of bug in `compute_hall_of_fame`
+  (peak ratings, giant-killer, comeback, etc.): private players were scrubbed AFTER the top-N slice,
+  so a hidden top-10 player just shrank the list to 9 instead of backfilling with the 11th-best.
+  Fixed at the root instead of patching the symptom: `_load_private_ids` (matches lambda) now returns
+  BOTH currently-private players AND anyone still on probation (public again, but `now -
+  privacy_changed_at < privacy_cooldown_days` — the same field/value already used for the toggle
+  cooldown, per the owner's own "reuse it" answer); new `_rerank_visible()` drops hidden players from
+  a rank-ordered leaders list and renumbers the rest contiguously, used at all 3 season-leaderboard
+  response sites in place of the old post-hoc scrub; `compute_hall_of_fame` now takes a `hidden_ids`
+  param and filters through its existing `in_group`/`side_in_group` group-scoping helpers (which
+  already gated nearly every candidate list in that ~300-line function) — one small change,
+  propagates everywhere for free, filtering before the top-N slice so lists correctly backfill.
+  Ratings/XP/coins are untouched throughout — a private/probationary player keeps earning normally,
+  they just don't hold a leaderboard slot. Frontend: split the old single `privateHiddenIds()` into
+  two — it still gates profile/opponent/partner lookup (genuinely-private only, since a probationary
+  player chose to be public again and should stay selectable there), and a new `rankingHiddenIds()`
+  (private + probation) gates only `loadRankings()`, filtering before the sort/rank-index assignment
+  so the Rankings tab was already correct for private players and is now correct for probation too.
+  Settings' "Visibility" card now shows a live "on public probation for N more day(s)" note. Additive
+  fields: `privacy_changed_at` added to `list_players()` (players lambda) and to group member rows
+  (`get_group`, groups lambda — this endpoint hadn't carried ANY privacy fields before, so a
+  group-scoped Rankings view silently skipped privacy filtering entirely; fixed as part of this
+  change). Verified: new `/tmp/test_privacy_ranking_probation.py` (19 checks — probation-window
+  math including the exact boundary, `_rerank_visible`'s gap-closing on the literal reported
+  scenario, `compute_hall_of_fame` backfilling a full top-10 after hiding the top 2); new
+  `/tmp/test_ranking_probation_ui.js` (13 checks — the two hidden-id functions stay correctly scoped
+  to their own purpose, Rankings renders contiguous 1..6 with no gap at the old 3rd/6th slots).
+  Full 37-file backend suite green.
 - ✅ 2026-08-29 (v1.74.0) — **Achievements admin panel: real cosmetic mapping, edit, and claim-revoke.**
   Owner feedback right after v1.73.0 shipped: the "Reward cosmetic" field in the achievements admin
   form was a raw text box asking for a store item id typed blind — no way to actually browse/pick a
