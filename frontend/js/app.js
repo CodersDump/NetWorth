@@ -3489,30 +3489,107 @@ let userPool = null;
     }
 
     // Admin achievement management (in Reviews & Approvals)
+    let _achievementsAdminCache = [];
+    const ACHIEVEMENT_COSMETIC_KIND_LABELS = {
+      avatar_frame: 'Avatar frame', banner_image: 'Banner', background_image: 'Background',
+      card_frame: 'Card frame', profile_effect: 'Profile effect', card_layout: 'Card layout',
+    };
+
     async function loadAchievementsAdmin() {
       const listEl = document.getElementById('achievements-admin-list');
       if (!listEl) return;
       try {
-        const { res, data } = await authedFetch(`${API_BASE_URL}/achievements`);
+        const [{ res, data }, storeData] = await Promise.all([
+          authedFetch(`${API_BASE_URL}/achievements`),
+          fetch(`${API_BASE_URL}/store`).then(r => r.json()).catch(() => ({ items: [] })),
+        ]);
         if (!res.ok) { listEl.textContent = 'Could not load.'; return; }
         const achievements = data.achievements || [];
+        _achievementsAdminCache = achievements;
+        const storeItems = (storeData && storeData.items) || [];
+        const cosmeticById = {};
+        storeItems.filter(i => i.type === 'cosmetic').forEach(i => { cosmeticById[i.item_id] = i; });
+
+        // Keep the "reward cosmetic" picker in the add/edit form in sync with
+        // the real Store catalog, so admins choose an actual banner/avatar/
+        // background by name (with a preview) instead of typing a raw store
+        // item id blind, as the earlier version required.
+        const sel = document.getElementById('achievement-cosmetic');
+        if (sel) {
+          const current = sel.value;
+          sel.innerHTML = '<option value="">No cosmetic reward</option>' + storeItems.filter(i => i.type === 'cosmetic').map(i => {
+            const kind = (i.effect || {}).kind;
+            return `<option value="${i.item_id}">${escapeHtml(i.name)} — ${escapeHtml(ACHIEVEMENT_COSMETIC_KIND_LABELS[kind] || kind || 'cosmetic')}</option>`;
+          }).join('');
+          if (current && cosmeticById[current]) sel.value = current;
+        }
+
         if (!achievements.length) { listEl.innerHTML = '<p class="card-sub" style="margin:0;">No achievements yet.</p>'; return; }
         listEl.innerHTML = achievements.map(a => {
           const r = [];
           if (a.reward_xp) r.push(`${a.reward_xp}XP`);
           if (a.reward_coins) r.push(`${a.reward_coins}🪙`);
-          if (a.reward_cosmetic_id) r.push('cosmetic');
-          return `<div style="display:flex; justify-content:space-between; align-items:center; padding:6px 0; border-bottom:1px solid var(--border);">
-            <span><strong>${escapeHtml(a.name)}</strong> <span style="opacity:0.6;">(${escapeHtml(a.description || '')}) → ${r.join(' + ') || 'no reward'}</span></span>
-            <button class="secondary" style="margin:0; padding:2px 8px; font-size:11px;" onclick="deleteAchievement('${a.achievement_id}')">Delete</button>
+          const cosmetic = a.reward_cosmetic_id ? cosmeticById[a.reward_cosmetic_id] : null;
+          if (a.reward_cosmetic_id) {
+            if (cosmetic) {
+              const kind = (cosmetic.effect || {}).kind;
+              r.push(`${escapeHtml(cosmetic.name)} (${escapeHtml(ACHIEVEMENT_COSMETIC_KIND_LABELS[kind] || kind || 'cosmetic')})`);
+            } else {
+              r.push('a cosmetic (item no longer in store)');
+            }
+          }
+          const thumb = cosmetic && cosmetic.image_url
+            ? `<img src="${imageSrc(cosmetic.image_url)}" alt="" style="width:28px; height:28px; object-fit:cover; border-radius:6px; border:1px solid var(--border); margin-right:6px;">`
+            : '';
+          return `<div style="display:flex; justify-content:space-between; align-items:center; gap:8px; padding:6px 0; border-bottom:1px solid var(--border);">
+            <span style="display:flex; align-items:center;">${thumb}<span><strong>${escapeHtml(a.name)}</strong> <span style="opacity:0.6;">(${escapeHtml(a.description || '')}) → ${r.join(' + ') || 'no reward'}</span></span></span>
+            <span style="display:flex; gap:4px; flex-shrink:0;">
+              <button class="secondary" style="margin:0; padding:2px 8px; font-size:11px;" onclick="editAchievement('${a.achievement_id}')">Edit</button>
+              <button class="secondary" style="margin:0; padding:2px 8px; font-size:11px;" onclick="revokeAchievementClaim('${a.achievement_id}')">Revoke a claim</button>
+              <button class="secondary" style="margin:0; padding:2px 8px; font-size:11px;" onclick="deleteAchievement('${a.achievement_id}')">Delete</button>
+            </span>
           </div>`;
         }).join('');
       } catch (e) { listEl.textContent = 'Could not load.'; }
     }
 
+    function editAchievement(achievementId) {
+      const a = _achievementsAdminCache.find(x => x.achievement_id === achievementId);
+      if (!a) return;
+      document.getElementById('achievement-edit-id').value = a.achievement_id;
+      document.getElementById('achievement-name').value = a.name || '';
+      document.getElementById('achievement-metric').value = a.metric || 'total_matches';
+      document.getElementById('achievement-target').value = a.target || 1;
+      document.getElementById('achievement-xp').value = a.reward_xp || 0;
+      document.getElementById('achievement-coins').value = a.reward_coins || 0;
+      const sel = document.getElementById('achievement-cosmetic');
+      if (sel) sel.value = a.reward_cosmetic_id || '';
+      document.getElementById('achievement-form-title').textContent = `Editing "${a.name}"`;
+      document.getElementById('achievement-save-btn').textContent = 'Save changes';
+      document.getElementById('achievement-cancel-edit-btn').style.display = '';
+      document.getElementById('achievement-name').scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+
+    function cancelAchievementEdit() {
+      document.getElementById('achievement-edit-id').value = '';
+      document.getElementById('achievement-name').value = '';
+      document.getElementById('achievement-metric').value = 'total_matches';
+      document.getElementById('achievement-target').value = 100;
+      document.getElementById('achievement-xp').value = 0;
+      document.getElementById('achievement-coins').value = 0;
+      const sel = document.getElementById('achievement-cosmetic');
+      if (sel) sel.value = '';
+      document.getElementById('achievement-form-title').textContent = 'Add an achievement';
+      document.getElementById('achievement-save-btn').textContent = 'Add achievement';
+      document.getElementById('achievement-cancel-edit-btn').style.display = 'none';
+      document.getElementById('achievement-save-status').textContent = '';
+    }
+
     async function saveAchievement() {
       const statusEl = document.getElementById('achievement-save-status');
+      const editId = document.getElementById('achievement-edit-id').value || undefined;
       const body = {
+        achievement_id: editId,
         name: document.getElementById('achievement-name').value.trim(),
         metric: document.getElementById('achievement-metric').value,
         target: parseInt(document.getElementById('achievement-target').value, 10),
@@ -3528,9 +3605,9 @@ let userPool = null;
           method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
         });
         if (!res.ok) { statusEl.textContent = `Error: ${error}`; return; }
-        statusEl.textContent = 'Saved.';
-        document.getElementById('achievement-name').value = '';
-        document.getElementById('achievement-cosmetic').value = '';
+        const wasEdit = !!editId;
+        cancelAchievementEdit();
+        statusEl.textContent = wasEdit ? 'Changes saved.' : 'Saved.';
         loadAchievementsAdmin();
       } catch (e) { statusEl.textContent = `Failed: ${e.message}`; }
     }
@@ -3543,6 +3620,36 @@ let userPool = null;
         });
         if (!res.ok) { nwAlert(`Error: ${error}`); return; }
         loadAchievementsAdmin();
+      } catch (e) { nwAlert(`Failed: ${e.message}`); }
+    }
+
+    // Corrective admin action: take back a player's claim on an achievement
+    // (its XP/coins/cosmetic) so they can re-claim after the reward's been
+    // fixed/changed - e.g. Adi mapping a real cosmetic onto an achievement
+    // he'd already claimed under an earlier definition (2026-08-29).
+    async function revokeAchievementClaim(achievementId) {
+      const a = _achievementsAdminCache.find(x => x.achievement_id === achievementId);
+      const label = a ? a.name : 'this achievement';
+      const me = allPlayers.find(p => p.player_id === myPlayerId());
+      const nick = await nwPrompt(`Revoke "${label}" from which player? Enter their nickname.`, (me && me.nickname) || '');
+      if (nick === null || !nick.trim()) return;
+      const target = allPlayers.find(p =>
+        (p.nickname || '').toLowerCase() === nick.trim().toLowerCase() ||
+        (p.name || '').toLowerCase() === nick.trim().toLowerCase());
+      if (!target) { nwAlert(`No player found with nickname "${nick}".`); return; }
+      if (!await nwConfirm(`Revoke "${label}" from ${target.nickname || target.name}? This takes back the XP/coins/cosmetic it granted them, and lets them claim it again later.`)) return;
+      try {
+        const { res, error } = await authedFetch(`${API_BASE_URL}/achievement-unclaim`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ achievement_id: achievementId, player_id: target.player_id })
+        });
+        if (!res.ok) { nwAlert(`Error: ${error}`); return; }
+        nwAlert('Claim revoked - they can claim it again once ready.');
+        if (target.player_id === myPlayerId()) {
+          loadMyAchievements();
+          const me2 = allPlayers.find(p => p.player_id === myPlayerId());
+          if (me2) renderSettingsPickers(me2);
+        }
       } catch (e) { nwAlert(`Failed: ${e.message}`); }
     }
 

@@ -363,6 +363,33 @@
 
 ## Done
 
+- ✅ 2026-08-29 (v1.74.0) — **Achievements admin panel: real cosmetic mapping, edit, and claim-revoke.**
+  Owner feedback right after v1.73.0 shipped: the "Reward cosmetic" field in the achievements admin
+  form was a raw text box asking for a store item id typed blind — no way to actually browse/pick a
+  banner, avatar frame, or background, and the admin list only offered Delete, with no way to fix an
+  achievement's reward after creating it. Fixed by turning `#achievement-cosmetic` into a `<select>`
+  populated live from the real Store catalog (name + resolved kind label, e.g. "Champion badge —
+  Avatar frame"), and giving the admin list an **Edit** button (`editAchievement`/
+  `cancelAchievementEdit` in `app.js`) that populates the form — including that select — from the
+  clicked achievement and re-saves in place: `saveAchievement` now sends the existing
+  `achievement_id`, which `save_achievement` (matches lambda) already upserted correctly on — no
+  backend change needed there, since it was already `achievement_id or uuid4()` keyed. The admin
+  list itself now also resolves and shows the actual cosmetic name/kind/thumbnail instead of the
+  word "cosmetic". Also added a **"Revoke a claim"** admin action (new `POST /achievement-unclaim`,
+  `unclaim_achievement` in `backend/lambdas/matches/index.py`, SuperAdmin-only, mirrors
+  `claim_achievement`'s reward math in reverse — clears the `achievement_claims` flag and takes back
+  the XP/coins/cosmetic, clamped at 0, using the achievement's current reward definition) so a claim
+  made before a reward was properly mapped can be reversed and re-claimed cleanly; the frontend
+  resolves a typed nickname to a player via `allPlayers` before calling it. New API Gateway resource
+  `/achievement-unclaim` (mirrors `/achievement-claim`, added to `ApiDeployment` `DependsOn`). Note
+  for the owner: owning a cosmetic (via `owned_items`) makes it *available* to equip, same as a store
+  purchase — it doesn't auto-apply. To actually see/use an earned banner/avatar frame/background,
+  open Settings → card customization and pick it from the "earned" strip there. Verified: backend
+  `/tmp/test_achievements.py` extended to 38 checks (claim → revoke → re-claim cycle, 403/400 gating,
+  coins/cosmetic clamped correctly, unrelated cosmetics untouched); new
+  `/tmp/test_achievements_admin_edit_revoke.js` (14 checks: select is real and store-backed, edit
+  populates + updates in place without duplicating, revoke resolves a nickname and posts the right
+  ids). Full 36-file backend suite green.
 - ✅ 2026-08-28 (v1.73.0) — **New feature: achievements.** Owner request: "if someone achieves certain
   things, then they should also be rewarded certain banners or store items. Like lets say as part of
   achievement, someone won 100 matches, they would win certain banners or profile pic or some

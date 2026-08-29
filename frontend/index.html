@@ -1176,7 +1176,8 @@
             <p class="card-sub" style="margin:0 0 10px;">Lifetime milestones (unlike quests, these never reset). Progress is checked against real match/tournament history; players claim the reward once complete, from Settings → My achievements.</p>
             <div id="achievements-admin-list" style="font-size:13px; margin-bottom:12px;"></div>
             <div style="border-top:1px solid var(--border); padding-top:10px;">
-              <p style="font-size:13px; font-weight:600; margin:0 0 6px;">Add an achievement</p>
+              <p style="font-size:13px; font-weight:600; margin:0 0 6px;" id="achievement-form-title">Add an achievement</p>
+              <input type="hidden" id="achievement-edit-id" value="">
               <label>Name <input type="text" id="achievement-name" placeholder="Century Club"></label>
               <label>Milestone
                 <select id="achievement-metric">
@@ -1193,8 +1194,10 @@
                 <div><label>Reward XP <input type="number" id="achievement-xp" min="0" step="10" value="0"></label></div>
                 <div><label>Reward coins <input type="number" id="achievement-coins" min="0" step="10" value="0"></label></div>
               </div>
-              <label>Reward cosmetic (optional, store item id) <input type="text" id="achievement-cosmetic" placeholder="leave blank for none"></label>
-              <button type="button" class="secondary" onclick="saveAchievement()">Add achievement</button>
+              <label>Reward cosmetic <select id="achievement-cosmetic"><option value="">No cosmetic reward</option></select></label>
+              <p class="card-sub" style="margin:2px 0 8px;">This list is the actual Store cosmetics catalog (banners, avatar frames, backgrounds, etc). To offer a new banner/avatar/background as a reward, first create it under Store catalog below (mark it inactive so it stays earn-only), then pick it here.</p>
+              <button type="button" class="secondary" id="achievement-save-btn" onclick="saveAchievement()">Add achievement</button>
+              <button type="button" class="secondary" id="achievement-cancel-edit-btn" style="display:none;" onclick="cancelAchievementEdit()">Cancel edit</button>
               <span id="achievement-save-status" style="font-size:12px; margin-left:8px;"></span>
             </div>
             <div style="border-top:1px solid var(--border); margin-top:12px; padding-top:10px;">
