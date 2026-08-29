@@ -757,6 +757,55 @@ def claim_achievement(event):
                            'reward_cosmetic': bool(cosmetic), 'coins': new_coins})
 
 
+def unclaim_achievement(event):
+    """SuperAdmin-only corrective action (added 2026-08-29): reverses one
+    player's claim on one achievement - clears their claimed flag and takes
+    back the XP/coins/cosmetic that claim granted, using the achievement's
+    CURRENT reward definition (so if an admin already changed the reward
+    since the claim, this takes back the new definition, not what was
+    actually granted at claim time - acceptable for this low-volume admin
+    tool). Lets a player re-claim cleanly after an admin fixes which
+    cosmetic an achievement grants. Does not delete the achievement or
+    touch any other player's claims."""
+    claims = _caller_claims(event)
+    if not _is_super_admin(claims):
+        return _response(403, {'error': 'only a SuperAdmin can revoke a claim'})
+    body = json.loads(event.get('body') or '{}')
+    aid = body.get('achievement_id')
+    pid = body.get('player_id')
+    if not aid or not pid:
+        return _response(400, {'error': 'achievement_id and player_id are required'})
+
+    achievement = next((a for a in _load_achievements() if a.get('achievement_id') == aid), None)
+    if not achievement:
+        return _response(404, {'error': 'achievement not found'})
+
+    player = players_table.get_item(Key={'player_id': pid}).get('Item') or {}
+    claimed = player.get('achievement_claims') or {}
+    if not claimed.get(aid):
+        return _response(400, {'error': 'this player has not claimed that achievement'})
+
+    reward_xp = int(achievement.get('reward_xp', 0) or 0)
+    reward_coins = int(achievement.get('reward_coins', 0) or 0)
+    cosmetic = achievement.get('reward_cosmetic_id')
+
+    del claimed[aid]
+    new_quest_xp = max(0, int(player.get('quest_xp', 0) or 0) - reward_xp)
+    new_quest_coins = max(0, int(player.get('quest_coins', 0) or 0) - reward_coins)
+    new_coins = max(0, int(player.get('coins', 0) or 0) - reward_coins)
+    owned = player.get('owned_items') or {}
+    if cosmetic and cosmetic in owned:
+        del owned[cosmetic]
+
+    players_table.update_item(
+        Key={'player_id': pid},
+        UpdateExpression='SET achievement_claims = :ac, quest_xp = :qx, quest_coins = :qco, coins = :c, owned_items = :o',
+        ExpressionAttributeValues={':ac': claimed, ':qx': new_quest_xp, ':qco': new_quest_coins,
+                                   ':c': new_coins, ':o': owned}
+    )
+    return _response(200, {'ok': True})
+
+
 def _load_events():
     item = matches_table.get_item(Key={'match_id': _EVENTS_ROW_ID}).get('Item') or {}
     return item.get('events', [])
@@ -997,6 +1046,8 @@ def handler(event, context):
             return delete_achievement(event)
         if event.get('resource') == '/achievement-claim' and method == 'POST':
             return claim_achievement(event)
+        if event.get('resource') == '/achievement-unclaim' and method == 'POST':
+            return unclaim_achievement(event)
 
         # Epic 7 extension: profile viewing is now genuinely restricted -
         # guests can't view any profile at all; logged-in members can only
