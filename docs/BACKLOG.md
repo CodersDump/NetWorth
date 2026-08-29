@@ -277,6 +277,12 @@
   actual backend rule in `groups.py` (`add_player_enforced` / `register_and_join` / `set_role`) that
   blocks or migrates a player already in another group. Needs a decision first: what happens to any
   player currently a real member of 2+ groups today (grandfather them vs. force a pick)?
+  **Update 2026-08-29 (v1.77.0):** Sessions shipped (see Done) as a second, complementary overlay for
+  exactly this "occasional walk-in" case — a temporary named roster ("7-8 PM") any group member can
+  staff with existing or brand-new players, none of whom ever touch the real group's `member_ids`.
+  Between guests (one match) and sessions (a whole evening), the ad-hoc case this item worried about
+  may already be fully covered without ever needing a hard exclusivity rule — still the owner's call
+  whether a backend rule is wanted on top for real memberships specifically.
 
 ## Later / ideas
 
@@ -373,6 +379,50 @@
 ---
 
 ## Done
+
+- ✅ 2026-08-29 (v1.77.0) — **Feature: Sessions — temporary, shareable group rosters ("7-8 PM" /
+  "8-9 PM") that overlay a group without touching its real membership.** Owner idea from early in the
+  Quick-tap design (before v1.76.0 shipped): overlapping evening slots with a mostly-fixed core and a
+  few people who come and go shouldn't require either bloating the real group or re-adding guests one
+  match at a time. Design settled via a short Q&A: a session is **created by the group's owner/admin
+  only** (same bar as `add_player_enforced`), but once it exists **any member of the group** (any
+  role) can edit its roster — add an existing player, or **register a brand-new one on the fly**
+  (name only, exactly like the existing "register a friend" flow) — because vouching someone into an
+  already-created session is the same lower-stakes action `register_and_join` already allows for real
+  groups. Sessions are **auto-visible to the whole group** (no share link/code — anyone looking at
+  that group's Quick tap screen sees every open session for it) and are **manually closed** (soft
+  close, `is_open:false`, never hard-deleted — a closed session stays as history) rather than
+  TTL-expired. While a session is selected, it **replaces the group roster in Quick tap's avatar
+  grid** (`nwTapRosterPool()`) — the one-off single-guest picker still layers on top of whichever pool
+  (group or session) is active, unchanged from v1.76.0. Backend: new `SessionsTable`
+  (`session_id` HASH; `group_id`, `name`, `member_ids`, `is_open`, `created_by`, `created_at`), owned
+  by the groups Lambda (kept out of `GroupsTable` on purpose so every existing group-scan-based
+  listing/membership check stays untouched) — `POST /sessions` (create, owner/admin-gated via the
+  existing `_authorize_group_action`), `GET /group-sessions/{group_id}` (list open sessions,
+  deliberately unauthenticated, same posture as `GET /groups/{group_id}`), `PUT
+  /sessions/{session_id}/close` (creator, or the group's owner/admin, or SuperAdmin), `POST/DELETE
+  /sessions/{session_id}/members[/{player_id}]` (any group member; add accepts `{player_id}` or
+  `{new_player_name}`) — the player is added ONLY to the session's `member_ids`, never the real
+  group's, preserving the same invariant the v1.76.1 guest picker established: the sole path into
+  real group membership stays the owner's explicit action on the Groups tab. `register_and_join`'s
+  player-creation core was factored out into `_create_player_record()` so session registration reuses
+  it verbatim instead of a second copy of the nickname-uniqueness logic. All five new routes are
+  isolated top-level API Gateway resources (`/sessions`, `/group-sessions/{group_id}`) for the same
+  reason `/group-role` already is — a `{group_id}` and a `{session_id}` path param can't be siblings
+  under one parent, which is also why "list a group's sessions" lives under its own prefix instead of
+  nesting under `/sessions/{session_id}/...`. Frontend: a session bar above Quick tap's avatar grid
+  (roster `<select>`, "+ New session" shown only to owner/admin, "Edit roster"/"Close" shown per the
+  same rules the backend enforces) and a small roster-editor panel (member chips with a ×-to-remove,
+  an existing-player picker, a register-new-player field) — `nwLoadGroupSessions()` runs on group
+  change, on switching into Quick tap mode, and (like the v1.76.1 `defaultMatchGroup` fix) explicitly
+  after an auto-picked default group, since `.value =` assignment never fires `change`. Deliberately
+  scoped to Quick tap only per the owner's answer — Voice mode's transcript matching and the classic
+  dropdowns are unaffected this round; extending an active session's roster to those too would be a
+  small, separate follow-up if wanted. Verified: template.yaml's new resource tree checked via a
+  scripted YAML parse (all 7 new Resources + 10 new Methods present, zero duplicate root PathParts,
+  all 10 methods present in the deployment's `DependsOn`); `backend/lambdas/groups/index.py` and the
+  full `frontend/js/app.js` both syntax-checked (`ast.parse` / `new Function`); every new HTML id
+  confirmed unique; `<div>` open/close and CSS brace balance both confirmed even after the edit.
 
 - ✅ 2026-08-29 (v1.76.1) — **Fix: `defaultMatchGroup()` silently fell back to the entire club roster
   instead of the selected group.** Owner report, from the deployed Quick-tap grid: a group with a

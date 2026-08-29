@@ -12,9 +12,32 @@ Routes (via API Gateway {proxy+} on /groups):
     DELETE /groups/{group_id}/players/{player_id} -> remove a player
     PUT    /group-role/{group_id}/{player_id}     -> set a member's role (owner/admin/member) - see note below
 
+Sessions (2026-08-29, owner idea: "7-8 PM"/"8-9 PM" style temporary rosters
+that overlay a real group without touching its actual membership - see
+BACKLOG.md). Each isolated at its own top-level path for the same reason
+/group-role is (API Gateway forbids a named path param as a sibling of
+{proxy+}), and /sessions vs /group-sessions are themselves two separate
+top-level trees because a `{group_id}` and a `{session_id}` path param
+can't be siblings under the same parent either:
+    POST   /sessions                             -> create a session (owner/admin of group_id only)
+    GET    /group-sessions/{group_id}            -> list this group's OPEN sessions (unauthenticated,
+                                                     same posture as GET /groups/{group_id})
+    PUT    /sessions/{session_id}/close          -> close a session (creator, or owner/admin of its
+                                                     group, or SuperAdmin)
+    POST   /sessions/{session_id}/members        -> add a member: body {player_id} for an existing
+                                                     player, or {new_player_name} to register a brand
+                                                     new one on the fly - either way ANY member (any
+                                                     role) of the session's group may do this, not just
+                                                     owner/admin (same lower bar as register_and_join).
+                                                     The new/added player is NEVER written into the
+                                                     real group's member_ids - a session is always a
+                                                     guest-style overlay, never a membership side door.
+    DELETE /sessions/{session_id}/members/{player_id} -> remove a member (same "any member" bar)
+
 Env vars:
-    GROUPS_TABLE  - DynamoDB table name for groups
-    PLAYERS_TABLE - DynamoDB table name for players
+    GROUPS_TABLE   - DynamoDB table name for groups
+    PLAYERS_TABLE  - DynamoDB table name for players
+    SESSIONS_TABLE - DynamoDB table name for temporary session rosters
 
 NOTE on roles (Epic 3 + Epic 4 of the auth backlog): the roles route lives
 at a deliberately separate top-level path, /group-role/{group_id}/{player_id}
@@ -46,6 +69,7 @@ def sanitize_nickname(raw):
     cleaned = re.sub(r'[^a-z0-9_]', '', raw.lower())
     return cleaned or 'player'
 players_table = dynamodb.Table(os.environ['PLAYERS_TABLE'])
+sessions_table = dynamodb.Table(os.environ['SESSIONS_TABLE'])
 
 CONFIRMATION_CODE = os.environ['CONFIRMATION_CODE']  # supplied at deploy time via GitHub Secrets -> CFN parameter, never stored in the repo
 
@@ -104,6 +128,17 @@ def handler(event, context):
             return visible_players_for_caller(event)
         if event.get('resource') == '/register-and-join' and method == 'POST':
             return register_and_join(event)
+        if event.get('resource') == '/sessions' and method == 'POST':
+            return create_session(event)
+        if 'group_id' in path_params and 'session_id' not in path_params and method == 'GET' \
+                and (event.get('resource') or '').startswith('/group-sessions'):
+            return list_group_sessions(path_params['group_id'])
+        if 'session_id' in path_params and 'player_id' not in path_params and method == 'PUT':
+            return close_session(path_params['session_id'], event)
+        if 'session_id' in path_params and 'player_id' not in path_params and method == 'POST':
+            return add_session_member(path_params['session_id'], event)
+        if 'session_id' in path_params and 'player_id' in path_params and method == 'DELETE':
+            return remove_session_member(path_params['session_id'], path_params['player_id'], event)
 
         proxy = path_params.get('proxy', '')
         parts = [p for p in proxy.split('/') if p] if proxy else []
@@ -193,6 +228,50 @@ def _requires_linked_member(claims):
     return None
 
 
+def _create_player_record(name, skill_level, nickname, created_by_email):
+    """Shared 'register a brand-new player row' core, factored out of
+    register_and_join so add_session_member's register-on-the-fly path
+    (2026-08-29) can create a player the exact same way instead of a
+    second copy of the nickname-uniqueness dance. Returns (player_id, None)
+    on success or (None, error_response) on a validation failure - callers
+    do `pid, err = _create_player_record(...); if err: return err`."""
+    name = (name or '').strip()
+    if not name:
+        return None, _response(400, {'error': 'name is required'})
+
+    existing_players = _scan_all(players_table)
+    existing_nicknames = {p.get('nickname', '').strip().lower() for p in existing_players if p.get('nickname')}
+
+    nickname = sanitize_nickname((nickname or '').strip()) if (nickname or '').strip() else ''
+    if not nickname:
+        base = sanitize_nickname(name)
+        nickname = base
+        n = 2
+        while nickname in existing_nicknames:
+            nickname = f"{base}{n}"
+            n += 1
+    elif nickname in existing_nicknames:
+        return None, _response(400, {'error': f'nickname "{nickname}" is already taken - nicknames must be unique'})
+
+    player_id = str(uuid.uuid4())
+    players_table.put_item(Item={
+        'player_id': player_id, 'name': name, 'nickname': nickname,
+        'skill_level': skill_level or 'unrated', 'rating': 1000,
+        # Attribution only - who added this roster entry - matching the
+        # /register route in register_player. This deliberately does NOT set
+        # `email`: a player added through here is almost always someone ELSE
+        # (a teammate/opponent added from the match screen), so writing the
+        # recorder's email marked the new player claimed-by-recorder, hid
+        # them from their own claim picker, and blocked them from ever
+        # claiming themselves. `email` is the claim signal and is set only
+        # when the real person claims (claim_player) or self-creates a
+        # profile (new_profile) - both of which set it to their OWN email.
+        'created_by': created_by_email,
+        'created_at': datetime.now(timezone.utc).isoformat()
+    })
+    return player_id, None
+
+
 def register_and_join(event):
     """Combined 'register a friend' + 'quick-add during match setup'
     capability - one new player record, optionally linked into a group
@@ -217,23 +296,6 @@ def register_and_join(event):
     nickname = (body.get('nickname') or '').strip()
     group_id = body.get('group_id')
 
-    if not name:
-        return _response(400, {'error': 'name is required'})
-
-    existing_players = _scan_all(players_table)
-    existing_nicknames = {p.get('nickname', '').strip().lower() for p in existing_players if p.get('nickname')}
-
-    nickname = sanitize_nickname(nickname) if nickname else ''
-    if not nickname:
-        base = sanitize_nickname(name)
-        nickname = base
-        n = 2
-        while nickname in existing_nicknames:
-            nickname = f"{base}{n}"
-            n += 1
-    elif nickname in existing_nicknames:
-        return _response(400, {'error': f'nickname "{nickname}" is already taken - nicknames must be unique'})
-
     group = None
     if group_id:
         group = groups_table.get_item(Key={'group_id': group_id}).get('Item')
@@ -244,21 +306,9 @@ def register_and_join(event):
         if not (_is_super_admin(claims) or is_member):
             return _response(403, {'error': 'you can only add new players into a group you belong to'})
 
-    player_id = str(uuid.uuid4())
-    players_table.put_item(Item={
-        'player_id': player_id, 'name': name, 'nickname': nickname, 'skill_level': skill_level, 'rating': 1000,
-        # Attribution only - who added this roster entry - matching the
-        # /register route in register_player. This deliberately does NOT set
-        # `email`: a player added through here is almost always someone ELSE
-        # (a teammate/opponent added from the match screen), so writing the
-        # recorder's email marked the new player claimed-by-recorder, hid
-        # them from their own claim picker, and blocked them from ever
-        # claiming themselves. `email` is the claim signal and is set only
-        # when the real person claims (claim_player) or self-creates a
-        # profile (new_profile) - both of which set it to their OWN email.
-        'created_by': claims.get('email'),
-        'created_at': datetime.now(timezone.utc).isoformat()
-    })
+    player_id, err = _create_player_record(name, skill_level, nickname, claims.get('email'))
+    if err:
+        return err
 
     added_to = None
     if group:
@@ -275,6 +325,188 @@ def register_and_join(event):
         added_to = group.get('group_name')
 
     return _response(200, {'player_id': player_id, 'name': name, 'added_to_group': added_to})
+
+
+def _caller_is_group_member(group, claims):
+    """'Any member' bar shared by session editing - a real member (any
+    role) of the group, or SuperAdmin. Same check register_and_join already
+    inlines for its own group_id linking, factored out here so the session
+    routes below don't duplicate it a third time."""
+    if _is_super_admin(claims):
+        return True
+    pid = claims.get('custom:player_id')
+    return bool(pid and pid in group.get('member_ids', []))
+
+
+def _session_view(item):
+    """Shape a session row for the frontend. member_ids only, not resolved
+    player objects - the frontend already has every player's name/nickname
+    loaded (allPlayers) for both real members and past guests, so shipping
+    full objects here would just be a second, redundant copy to keep in
+    sync."""
+    return {
+        'session_id': item['session_id'], 'group_id': item['group_id'],
+        'name': item.get('name'), 'created_by': item.get('created_by'),
+        'member_ids': item.get('member_ids', []),
+        'is_open': bool(item.get('is_open', True)),
+        'created_at': item.get('created_at')
+    }
+
+
+def create_session(event):
+    """POST /sessions - owner/admin of group_id only (or SuperAdmin), same
+    bar as add_player_enforced: creating one of these is closer to managing
+    the group's structure than the lower-stakes 'add a member to it' bar
+    session-editing uses below. Body: {group_id, name}. Starts empty -
+    membership is added afterwards via add_session_member, same as a real
+    group starts with just its creator and grows from there."""
+    claims = _caller_claims(event)
+    body = json.loads(event.get('body') or '{}')
+    group_id = body.get('group_id')
+    name = (body.get('name') or '').strip()
+    if not group_id:
+        return _response(400, {'error': 'group_id is required'})
+    if not name:
+        return _response(400, {'error': 'name is required (e.g. "7-8 PM")'})
+
+    denied = _authorize_group_action(group_id, claims)
+    if denied:
+        return denied
+
+    session_id = str(uuid.uuid4())
+    item = {
+        'session_id': session_id, 'group_id': group_id, 'name': name,
+        'member_ids': [], 'is_open': True,
+        'created_by': claims.get('custom:player_id'),
+        'created_at': datetime.now(timezone.utc).isoformat()
+    }
+    sessions_table.put_item(Item=item)
+    return _response(200, _session_view(item))
+
+
+def list_group_sessions(group_id):
+    """GET /group-sessions/{group_id} - deliberately unauthenticated, same
+    posture as GET /groups/{group_id}: sessions are meant to be
+    auto-visible to everyone looking at this group's Quick-tap screen, not
+    gated behind an extra check the way creating/editing one is. Only
+    still-open sessions are returned - closed ones are kept in the table
+    for history but have no reason to show up in a live picker."""
+    items = _scan_all(sessions_table, FilterExpression='group_id = :g AND is_open = :o',
+                       ExpressionAttributeValues={':g': group_id, ':o': True})
+    return _response(200, {'sessions': [_session_view(i) for i in items]})
+
+
+def _session_and_group(session_id):
+    """Shared lookup for the three session-mutation routes below. Returns
+    (session, group, None) or (None, None, error_response)."""
+    session = sessions_table.get_item(Key={'session_id': session_id}).get('Item')
+    if not session:
+        return None, None, _response(404, {'error': 'session not found'})
+    group = groups_table.get_item(Key={'group_id': session['group_id']}).get('Item')
+    if not group:
+        return None, None, _response(404, {'error': "this session's group no longer exists"})
+    return session, group, None
+
+
+def close_session(session_id, event):
+    """PUT /sessions/{session_id}/close - the creator, or an owner/admin of
+    the session's group (in case the creator's unreachable), or SuperAdmin.
+    Soft-close (is_open: False) rather than deleting the row, so a closed
+    session still shows up if anything ever needs to look back at who
+    played in it - same reasoning as delete_group leaving player records
+    alone."""
+    claims = _caller_claims(event)
+    session, group, err = _session_and_group(session_id)
+    if err:
+        return err
+
+    pid = claims.get('custom:player_id')
+    is_creator = bool(pid) and session.get('created_by') == pid
+    caller_role = group.get('roles', {}).get(pid) if pid else None
+    if not (_is_super_admin(claims) or is_creator or caller_role in ('owner', 'admin')):
+        return _response(403, {'error': 'only the session creator or a group owner/admin can close it'})
+
+    sessions_table.update_item(
+        Key={'session_id': session_id},
+        UpdateExpression='SET is_open = :f',
+        ExpressionAttributeValues={':f': False}
+    )
+    return _response(200, {'session_id': session_id, 'is_open': False})
+
+
+def add_session_member(session_id, event):
+    """POST /sessions/{session_id}/members - any member (any role) of the
+    session's group may edit its roster, not just owner/admin (the owner
+    already had the higher bar to CREATE the session; once it exists,
+    vouching people into it is the same lower-stakes action register_and_join
+    already allows for real groups).
+
+    Body is either:
+      {player_id}                                  - add an existing player
+      {new_player_name, skill_level?, nickname?}    - register a brand-new
+                                                       player and add them
+
+    Either way the player is added ONLY to this session's member_ids -
+    never to the real group's member_ids. That's the whole point: a
+    session is a guest-style overlay so an ad-hoc/walk-in player (someone
+    else's group's player, or a fresh unregistered name) can be tapped into
+    a match without becoming a real member of THIS group."""
+    claims = _caller_claims(event)
+    if not claims:
+        return _response(403, {'error': 'log in to edit a session'})
+    session, group, err = _session_and_group(session_id)
+    if err:
+        return err
+    if not session.get('is_open', True):
+        return _response(400, {'error': 'this session is closed'})
+    if not _caller_is_group_member(group, claims):
+        return _response(403, {'error': "you must be a member of this session's group to edit it"})
+
+    body = json.loads(event.get('body') or '{}')
+    player_id = body.get('player_id')
+    new_name = (body.get('new_player_name') or '').strip()
+
+    if not player_id and not new_name:
+        return _response(400, {'error': 'player_id or new_player_name is required'})
+
+    if new_name:
+        player_id, create_err = _create_player_record(
+            new_name, body.get('skill_level'), body.get('nickname'), claims.get('email'))
+        if create_err:
+            return create_err
+    elif not players_table.get_item(Key={'player_id': player_id}).get('Item'):
+        return _response(404, {'error': 'player not found'})
+
+    member_ids = list(dict.fromkeys([*session.get('member_ids', []), player_id]))  # de-dupe, preserve order
+    sessions_table.update_item(
+        Key={'session_id': session_id},
+        UpdateExpression='SET member_ids = :m',
+        ExpressionAttributeValues={':m': member_ids}
+    )
+    return _response(200, {'session_id': session_id, 'member_ids': member_ids, 'added': player_id})
+
+
+def remove_session_member(session_id, player_id, event):
+    """DELETE /sessions/{session_id}/members/{player_id} - same 'any
+    member of the group' bar as adding one. Only ever touches this
+    session's own member_ids - a removed guest is never a real-group
+    removal, so this needs none of remove_player's CONFIRMATION_CODE gate."""
+    claims = _caller_claims(event)
+    if not claims:
+        return _response(403, {'error': 'log in to edit a session'})
+    session, group, err = _session_and_group(session_id)
+    if err:
+        return err
+    if not _caller_is_group_member(group, claims):
+        return _response(403, {'error': "you must be a member of this session's group to edit it"})
+
+    member_ids = [m for m in session.get('member_ids', []) if m != player_id]
+    sessions_table.update_item(
+        Key={'session_id': session_id},
+        UpdateExpression='SET member_ids = :m',
+        ExpressionAttributeValues={':m': member_ids}
+    )
+    return _response(200, {'session_id': session_id, 'member_ids': member_ids, 'removed': player_id})
 
 
 def add_player_enforced(group_id, event):
