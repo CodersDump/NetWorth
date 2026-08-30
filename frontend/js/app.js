@@ -1196,6 +1196,30 @@ let userPool = null;
       applyMatchTypeVisibility();
     });
 
+    // ---------- Segmented "slider" controls for match type / points-to-win
+    // (2026-08-30): visually replace the two <select> elements above with
+    // tap-friendly button rows, without touching anything that already
+    // reads match_type_select/points_to_win_select's .value or listens for
+    // their 'change' event - the selects stay in the DOM (hidden via
+    // .nw-seg-native) and remain the single source of truth. ----------
+    function nwSyncSegFromSelect(selectId, segId) {
+      const val = document.getElementById(selectId).value;
+      document.querySelectorAll(`#${segId} .nw-seg-btn`).forEach(b => {
+        b.classList.toggle('active', b.dataset.segValue === val);
+      });
+    }
+    [['match_type_select', 'match-type-seg'], ['points_to_win_select', 'points-seg']].forEach(([selectId, segId]) => {
+      document.querySelectorAll(`#${segId} .nw-seg-btn`).forEach(btn => {
+        btn.addEventListener('click', () => {
+          const sel = document.getElementById(selectId);
+          if (sel.value === btn.dataset.segValue) return;
+          sel.value = btn.dataset.segValue;
+          sel.dispatchEvent(new Event('change'));
+          nwSyncSegFromSelect(selectId, segId);
+        });
+      });
+    });
+
     let randomizeTeamsRequestId = 0;
 
     async function updateMatchGroupCache() {
@@ -2210,6 +2234,8 @@ let userPool = null;
       document.getElementById('tap-mode-panel').style.display = mode === 'tap' ? '' : 'none';
       document.getElementById('voice-mode-panel').style.display = mode === 'voice' ? '' : 'none';
       if (mode === 'tap') {
+        nwSyncSegFromSelect('match_type_select', 'match-type-seg');
+        nwSyncSegFromSelect('points_to_win_select', 'points-seg');
         if (typeof nwLoadGroupSessions === 'function') nwLoadGroupSessions();
         else nwTapRefreshAvatarGrid();
       }
@@ -2238,6 +2264,12 @@ let userPool = null;
     // top of whichever pool is active, same as it always has. ----------
     let nwGroupSessions = [];   // this group's currently-open sessions (from GET /group-sessions/{id})
     let nwActiveSessionId = ''; // '' = no session selected, use the full group roster
+    // Whether the "On court" avatar grid is currently in roster-edit mode
+    // for the active session (× to remove, "+" tile to add) - 2026-08-30,
+    // replacing the separate edit-panel card that used to live above the
+    // grid. Never true when no session is active: the full group roster
+    // isn't editable from here, that's still the Groups tab's job.
+    let nwSessionEditing = false;
 
     function nwTapRosterPool() {
       const session = nwGroupSessions.find(s => s.session_id === nwActiveSessionId);
@@ -2274,47 +2306,78 @@ let userPool = null;
       if (!groupId) {
         bar.style.display = 'none';
         document.getElementById('tap-session-new-row').style.display = 'none';
-        document.getElementById('tap-session-edit-panel').style.display = 'none';
+        document.getElementById('tap-session-add-panel').style.display = 'none';
+        nwSessionEditing = false;
         return;
       }
       bar.style.display = '';
 
-      const sel = document.getElementById('tap-session-select');
-      const prevValue = nwActiveSessionId;
-      sel.innerHTML = '<option value="">Full group roster</option>' +
-        nwGroupSessions.map(s => `<option value="${s.session_id}">${escapeHtml(s.name)} (${s.member_ids.length})</option>`).join('');
-      sel.value = prevValue;
-
       const myRole = (currentMatchGroupRoles || {})[myPlayerId()];
       const canCreate = isSuperAdmin() || myRole === 'owner' || myRole === 'admin';
-      document.getElementById('tap-session-new-btn').style.display = canCreate ? '' : 'none';
+      const atMax = nwGroupSessions.length >= 2;
 
-      const active = nwGroupSessions.find(s => s.session_id === nwActiveSessionId);
-      document.getElementById('tap-session-edit-btn').style.display = (active && isLoggedIn()) ? '' : 'none';
-      const canClose = !!active && (isSuperAdmin() || active.created_by === myPlayerId() || myRole === 'owner' || myRole === 'admin');
-      document.getElementById('tap-session-close-btn').style.display = canClose ? '' : 'none';
-      if (!active) document.getElementById('tap-session-edit-panel').style.display = 'none';
+      // Rebuilt fresh every time, same pattern as the avatar grid below -
+      // "Full roster" first, then whichever sessions are open, then a
+      // "+ New" segment that greys out once 2 are already open.
+      const seg = document.getElementById('tap-session-seg');
+      seg.innerHTML = `<button type="button" class="nw-seg-btn${nwActiveSessionId === '' ? ' active' : ''}" data-session-value="">Full roster</button>` +
+        nwGroupSessions.map(s => `<button type="button" class="nw-seg-btn${s.session_id === nwActiveSessionId ? ' active' : ''}" data-session-value="${s.session_id}">${escapeHtml(s.name)} (${s.member_ids.length})</button>`).join('') +
+        (canCreate ? `<button type="button" class="nw-seg-btn" data-session-value="__new"${atMax ? ' disabled title="Max 2 open sessions"' : ''}>+ New</button>` : '');
+      seg.querySelectorAll('[data-session-value]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          if (btn.disabled) return;
+          const val = btn.getAttribute('data-session-value');
+          if (val === '__new') {
+            document.getElementById('tap-session-new-error').style.display = 'none';
+            document.getElementById('tap-session-new-row').style.display = '';
+            const input = document.getElementById('tap-session-new-name');
+            input.value = '';
+            input.focus();
+            return;
+          }
+          nwActiveSessionId = val;
+          nwSessionEditing = false;
+          // Switching rosters mid-pick would leave stale selections
+          // pointing at people no longer in the active pool - same
+          // reasoning as switching groups already clears these.
+          nwTapGuestIds = [];
+          nwTapTeamA = []; nwTapTeamB = [];
+          document.getElementById('tap-session-new-row').style.display = 'none';
+          document.getElementById('tap-session-add-panel').style.display = 'none';
+          nwRenderSessionBar();
+          nwTapRefreshAvatarGrid();
+        });
+      });
+
+      nwRenderOnCourtActions();
     }
 
-    document.getElementById('tap-session-select').addEventListener('change', (e) => {
-      nwActiveSessionId = e.target.value;
-      // Switching rosters mid-pick would leave stale selections pointing
-      // at people no longer in the active pool - same reasoning as
-      // switching groups already clears these.
-      nwTapGuestIds = [];
-      nwTapTeamA = []; nwTapTeamB = [];
-      document.getElementById('tap-session-edit-panel').style.display = 'none';
-      nwRenderSessionBar();
-      nwTapRefreshAvatarGrid();
-    });
+    // The Edit/Close buttons sit beside "On court" itself now rather than
+    // in the session bar - this just keeps their visibility/label current;
+    // it's called from nwRenderSessionBar and from the Edit toggle itself.
+    function nwRenderOnCourtActions() {
+      const label = document.getElementById('tap-oncourt-label');
+      const active = nwGroupSessions.find(s => s.session_id === nwActiveSessionId);
+      if (label) label.textContent = active ? `${active.name} session` : 'full group roster';
 
-    document.getElementById('tap-session-new-btn').addEventListener('click', () => {
-      document.getElementById('tap-session-new-error').style.display = 'none';
-      document.getElementById('tap-session-new-row').style.display = '';
-      const input = document.getElementById('tap-session-new-name');
-      input.value = '';
-      input.focus();
-    });
+      const editBtn = document.getElementById('tap-session-edit-btn');
+      const closeBtn = document.getElementById('tap-session-close-btn');
+      if (!active) {
+        // No editing the real group roster from here - that stays the
+        // Groups tab's job. Only a session's own overlay roster can be
+        // edited in place.
+        editBtn.style.display = 'none';
+        closeBtn.style.display = 'none';
+        nwSessionEditing = false;
+        return;
+      }
+      editBtn.style.display = isLoggedIn() ? '' : 'none';
+      editBtn.textContent = nwSessionEditing ? 'Done' : 'Edit';
+      const myRole = (currentMatchGroupRoles || {})[myPlayerId()];
+      const canClose = isSuperAdmin() || active.created_by === myPlayerId() || myRole === 'owner' || myRole === 'admin';
+      closeBtn.style.display = canClose ? '' : 'none';
+    }
+
     document.getElementById('tap-session-new-cancel').addEventListener('click', () => {
       document.getElementById('tap-session-new-row').style.display = 'none';
     });
@@ -2340,6 +2403,17 @@ let userPool = null;
       nwTapRefreshAvatarGrid();
     });
 
+    // Edit toggle: turns the SAME avatar grid used for team-tapping into an
+    // edit surface (× on each avatar, a "+" tile to add) instead of opening
+    // a separate card - see nwTapRefreshAvatarGrid below.
+    document.getElementById('tap-session-edit-btn').addEventListener('click', () => {
+      nwSessionEditing = !nwSessionEditing;
+      if (!nwSessionEditing) document.getElementById('tap-session-add-panel').style.display = 'none';
+      document.getElementById('tap-session-edit-error').style.display = 'none';
+      nwRenderOnCourtActions();
+      nwTapRefreshAvatarGrid();
+    });
+
     document.getElementById('tap-session-close-btn').addEventListener('click', async () => {
       if (!nwActiveSessionId) return;
       const errEl = document.getElementById('tap-session-new-error');
@@ -2353,40 +2427,27 @@ let userPool = null;
         return;
       }
       nwActiveSessionId = '';
+      nwSessionEditing = false;
       await nwLoadGroupSessions();
       nwRenderSessionBar();
       nwTapRefreshAvatarGrid();
     });
 
-    function nwRenderSessionEditPanel() {
+    // Populates the inline "add an existing player / register someone new"
+    // panel and reveals it - opened from the "+" tile the avatar grid grows
+    // at the end of its own list while editing (nwTapRefreshAvatarGrid).
+    function nwOpenSessionAddPanel() {
       const session = nwGroupSessions.find(s => s.session_id === nwActiveSessionId);
-      const membersEl = document.getElementById('tap-session-edit-members');
-      if (!session) { membersEl.innerHTML = ''; return; }
-      membersEl.innerHTML = session.member_ids.map(id => {
-        const p = allPlayers.find(pl => pl.player_id === id);
-        const label = p ? (p.nickname || p.name) : id;
-        return `<span class="nw-session-member-chip">${escapeHtml(label)}<button type="button" data-remove-session-member="${id}" title="remove">&times;</button></span>`;
-      }).join('') || '<span class="nw-tap-hint">No one added yet.</span>';
-      membersEl.querySelectorAll('[data-remove-session-member]').forEach(btn => {
-        btn.addEventListener('click', () => nwSessionRemoveMember(btn.getAttribute('data-remove-session-member')));
-      });
-
+      if (!session) return;
+      document.getElementById('tap-session-edit-error').style.display = 'none';
       const addSel = document.getElementById('tap-session-add-existing');
       const memberSet = new Set(session.member_ids);
       const candidates = allPlayers.filter(p => !memberSet.has(p.player_id))
         .sort((a, b) => String(a.name).localeCompare(String(b.name)));
       addSel.innerHTML = '<option value="">+ add an existing player…</option>' +
         candidates.map(p => `<option value="${p.player_id}">${escapeHtml(p.nickname || p.name)}</option>`).join('');
+      document.getElementById('tap-session-add-panel').style.display = '';
     }
-
-    document.getElementById('tap-session-edit-btn').addEventListener('click', () => {
-      document.getElementById('tap-session-edit-error').style.display = 'none';
-      document.getElementById('tap-session-edit-panel').style.display = '';
-      nwRenderSessionEditPanel();
-    });
-    document.getElementById('tap-session-edit-done').addEventListener('click', () => {
-      document.getElementById('tap-session-edit-panel').style.display = 'none';
-    });
 
     async function nwSessionAddMember(body) {
       const errEl = document.getElementById('tap-session-edit-error');
@@ -2405,7 +2466,7 @@ let userPool = null;
       // keeps every other picker (classic dropdowns, guest list) in sync
       // too, not just this one panel.
       if (body.new_player_name) await loadPlayers();
-      nwRenderSessionEditPanel();
+      nwOpenSessionAddPanel(); // refresh candidates - the one just added must drop off the list
       nwRenderSessionBar();
       nwTapRefreshAvatarGrid();
     }
@@ -2436,9 +2497,14 @@ let userPool = null;
       }
       const session = nwGroupSessions.find(s => s.session_id === nwActiveSessionId);
       if (session) session.member_ids = data.member_ids;
-      nwRenderSessionEditPanel();
+      // They might already be sitting in a team slot - drop them from that
+      // too, or a removed player would stay picked for the match.
+      nwTapTeamA = nwTapTeamA.filter(id => id !== playerId);
+      nwTapTeamB = nwTapTeamB.filter(id => id !== playerId);
       nwRenderSessionBar();
       nwTapRefreshAvatarGrid();
+      const addPanel = document.getElementById('tap-session-add-panel');
+      if (addPanel.style.display !== 'none') nwOpenSessionAddPanel();
     }
 
     function nwTapSlotsPerTeam() {
@@ -2453,8 +2519,12 @@ let userPool = null;
       const memberIds = new Set(memberPool.map(p => p.player_id));
       const guestPlayers = nwTapGuestIds.map(id => allPlayers.find(p => p.player_id === id)).filter(Boolean);
       const pool = [...memberPool, ...guestPlayers.filter(p => !memberIds.has(p.player_id))];
+      // Editing only ever applies to a session's own overlay roster, never
+      // the real group roster - see nwRenderOnCourtActions.
+      const editingNow = nwSessionEditing && nwGroupSessions.some(s => s.session_id === nwActiveSessionId);
 
       document.getElementById('tap-slots-hint').textContent = nwTapSlotsPerTeam();
+      grid.classList.toggle('editing', editingNow);
       grid.innerHTML = '';
       pool.forEach(p => {
         const isGuest = !memberIds.has(p.player_id);
@@ -2463,20 +2533,43 @@ let userPool = null;
         if (nwTapTeamA.includes(p.player_id)) el.classList.add('sel-a');
         if (nwTapTeamB.includes(p.player_id)) el.classList.add('sel-b');
         const initials = (p.name || '?').trim().split(/\s+/).map(w => w[0]).join('').slice(0, 2).toUpperCase();
-        el.innerHTML = `<div class="nw-avatar-circ">${initials}</div><div class="nw-avatar-lbl">${escapeHtml(p.nickname || p.name)}</div>` +
+        // While editing, a real session member gets a × to drop them from
+        // this session (tapping the avatar itself does nothing - only the
+        // × removes, so a stray tap can't quietly change team picks that
+        // are hidden behind the edit view anyway). Guests were never part
+        // of the session's roster, so they don't get one.
+        const removeX = (editingNow && !isGuest)
+          ? `<div class="nw-avatar-remove-x" data-remove-session-member="${p.player_id}" title="Remove from this session">&times;</div>` : '';
+        el.innerHTML = removeX + `<div class="nw-avatar-circ">${initials}</div><div class="nw-avatar-lbl">${escapeHtml(p.nickname || p.name)}</div>` +
           (isGuest ? '<div class="nw-avatar-guest-tag">guest</div>' : '');
-        el.addEventListener('click', () => nwTapToggleAvatar(p.player_id));
+        if (editingNow) {
+          const xEl = el.querySelector('[data-remove-session-member]');
+          if (xEl) xEl.addEventListener('click', (e) => { e.stopPropagation(); nwSessionRemoveMember(p.player_id); });
+        } else {
+          el.addEventListener('click', () => nwTapToggleAvatar(p.player_id));
+        }
         grid.appendChild(el);
       });
-      document.getElementById('tap-recall-btn').style.display = nwLastTapMatch ? '' : 'none';
+      if (editingNow) {
+        const addTile = document.createElement('div');
+        addTile.className = 'nw-avatar add-tile';
+        addTile.innerHTML = '<div class="nw-avatar-circ">+</div><div class="nw-avatar-lbl">Add</div>';
+        addTile.addEventListener('click', () => nwOpenSessionAddPanel());
+        grid.appendChild(addTile);
+      } else {
+        document.getElementById('tap-session-add-panel').style.display = 'none';
+      }
+      document.getElementById('tap-recall-btn').style.display = (nwLastTapMatch && !editingNow) ? '' : 'none';
 
       // The guest picker only makes sense once a specific group is actually
       // selected AND its member list has resolved - with no group (or the
       // "None" ungrouped case), the pool IS the whole club already, so
-      // there's no meaningful "not in this group" left to add.
+      // there's no meaningful "not in this group" left to add. It's also
+      // beside the point while editing a session's roster, so it's hidden
+      // then too rather than competing with the add-tile above.
       const guestRow = document.getElementById('tap-guest-row');
       const guestSelect = document.getElementById('tap-guest-select');
-      if (groupId && currentMatchGroupMembers) {
+      if (groupId && currentMatchGroupMembers && !editingNow) {
         guestRow.style.display = '';
         const candidates = allPlayers
           .filter(p => !memberIds.has(p.player_id) && !nwTapGuestIds.includes(p.player_id))
@@ -2817,6 +2910,8 @@ let userPool = null;
       document.getElementById('match_type_select').value = item.match_type || 'doubles';
       if (item.points_to_win) document.getElementById('points_to_win_select').value = item.points_to_win;
       applyMatchTypeVisibility();
+      nwSyncSegFromSelect('match_type_select', 'match-type-seg');
+      nwSyncSegFromSelect('points_to_win_select', 'points-seg');
       updateMatchGroupCache().then(() => {
         nwTapTeamA = [...item.team_a]; nwTapTeamB = [...item.team_b];
         // Anyone on the item who isn't a member of the (re-selected) group

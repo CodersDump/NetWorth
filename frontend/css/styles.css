@@ -508,10 +508,24 @@
   cursor: pointer; border: none; background: transparent; color: var(--text-secondary); }
 .nw-mode-btn.active { background: var(--surface); color: var(--court); box-shadow: 0 1px 3px rgba(0,0,0,.12); }
 
-.nw-tap-section-label { font-size: 13px; font-weight: 700; margin-bottom: 8px; }
+/* ---------- Segmented "slider" controls (match type / points-to-win /
+   session picker). Each replaces the look of a <select> only - the real
+   <select> stays in the DOM (see .nw-seg-native) so every existing .value
+   read and 'change' listener elsewhere keeps working untouched. 2026-08-30 */
+.nw-seg { display: flex; gap: 4px; background: var(--surface-2); padding: 4px; border-radius: 12px; margin-top: 4px; }
+.nw-seg-btn { flex: 1; border: none; background: transparent; color: var(--text-secondary); font-size: 13px; font-weight: 700;
+  padding: 8px 4px; border-radius: 9px; cursor: pointer; white-space: nowrap; margin-top: 0; }
+.nw-seg-btn.active { background: var(--surface); color: var(--court); box-shadow: 0 1px 3px rgba(0,0,0,.12); }
+.nw-seg-btn:disabled { opacity: .35; cursor: not-allowed; }
+.nw-seg.session-seg .nw-seg-btn { font-size: 11.5px; padding: 7px 2px; }
+.nw-seg-native { display: none; }
+
+.nw-tap-section-label { font-size: 13px; font-weight: 700; margin-bottom: 8px; display: flex; align-items: center; flex-wrap: wrap; gap: 4px 10px; }
 .nw-tap-hint { font-weight: 400; font-size: 11.5px; color: var(--text-secondary); }
+.nw-oncourt-actions { margin-left: auto; display: flex; gap: 6px; }
+button.tiny { margin-top: 0; padding: 5px 10px; font-size: 11px; border-radius: 8px; }
 .nw-avatar-grid { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 12px; }
-.nw-avatar { width: 58px; text-align: center; cursor: pointer; user-select: none; }
+.nw-avatar { width: 58px; text-align: center; cursor: pointer; user-select: none; position: relative; }
 .nw-avatar .nw-avatar-circ { width: 46px; height: 46px; margin: 0 auto 4px; border-radius: 50%; background: var(--surface-2);
   display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 14px; color: var(--court-dark);
   border: 2px solid transparent; transition: .12s; }
@@ -521,22 +535,25 @@
 .nw-avatar:active .nw-avatar-circ { transform: scale(.92); }
 .nw-avatar.guest .nw-avatar-circ { border-style: dashed; border-color: var(--text-secondary); }
 .nw-avatar-guest-tag { font-size: 9px; color: var(--text-secondary); font-style: italic; }
+.nw-avatar-grid.editing .nw-avatar:not(.add-tile) .nw-avatar-circ { opacity: .55; }
+.nw-avatar-remove-x { position: absolute; top: -3px; right: 6px; width: 17px; height: 17px; border-radius: 50%;
+  background: var(--smash); color: #fff; font-size: 11px; line-height: 17px; text-align: center; cursor: pointer; z-index: 1; }
+.nw-avatar.add-tile { cursor: pointer; }
+.nw-avatar.add-tile .nw-avatar-circ { border: 2px dashed var(--court); color: var(--court); font-size: 20px; font-weight: 400; background: transparent; }
+.nw-avatar.add-tile .nw-avatar-lbl { color: var(--court); font-weight: 700; }
 
-/* ---------- Sessions: temporary group rosters ("7-8 PM"), 2026-08-29 -
-   see app.js "quick record" block and BACKLOG.md ---------- */
+/* ---------- Sessions: temporary group rosters ("7-8 PM"), 2026-08-29.
+   The roster editing UI itself now lives on the avatar grid above (the
+   .nw-avatar-remove-x / .add-tile rules) - this is just the bar that
+   switches which session is active, plus the inline add-existing/register
+   panel that the grid's "+" tile opens. See app.js "quick record" block
+   and BACKLOG.md. ---------- */
 .nw-session-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 10px; }
-.nw-session-bar select { font-size: 12.5px; padding: 6px 8px; border-radius: 8px; flex: 1 1 auto; min-width: 140px; }
-.nw-session-bar button { font-size: 12px; padding: 6px 10px; white-space: nowrap; }
 .nw-session-new-row { display: flex; flex-wrap: wrap; gap: 6px; margin: -4px 0 10px; }
 .nw-session-new-row input { flex: 1 1 auto; min-width: 140px; font-size: 12.5px; padding: 6px 8px; border-radius: 8px; }
 .nw-session-new-row button { font-size: 12px; padding: 6px 10px; }
-.nw-session-edit-panel { background: var(--surface-2); border-radius: var(--radius); padding: 10px 12px; margin-bottom: 12px; }
-.nw-session-edit-members { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
-.nw-session-member-chip { display: inline-flex; align-items: center; gap: 5px; background: var(--surface); border: 1px solid var(--border);
-  border-radius: 999px; padding: 4px 6px 4px 10px; font-size: 12px; }
-.nw-session-member-chip button { border: none; background: transparent; color: var(--text-secondary); cursor: pointer;
-  font-size: 13px; line-height: 1; padding: 2px 4px; }
-.nw-session-edit-add { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.nw-session-edit-add { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; background: var(--surface-2);
+  border-radius: var(--radius); padding: 10px 12px 12px; }
 .nw-session-edit-add select { font-size: 12.5px; padding: 6px 8px; border-radius: 8px; flex: 1 1 100%; }
 .nw-session-edit-newplayer { display: flex; gap: 6px; flex: 1 1 100%; }
 .nw-session-edit-newplayer input { flex: 1 1 auto; font-size: 12.5px; padding: 6px 8px; border-radius: 8px; }

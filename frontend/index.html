@@ -433,15 +433,24 @@
           </div>
           <div>
             <label>Match type
-              <select id="match_type_select">
-                <option value="doubles">Doubles</option>
+              <div class="nw-seg" id="match-type-seg" role="group" aria-label="Match type">
+                <button type="button" class="nw-seg-btn" data-seg-value="singles">Singles</button>
+                <button type="button" class="nw-seg-btn active" data-seg-value="doubles">Doubles</button>
+              </div>
+              <select id="match_type_select" class="nw-seg-native">
+                <option value="doubles" selected>Doubles</option>
                 <option value="singles">Singles</option>
               </select>
             </label>
           </div>
           <div>
             <label>Points to win
-              <select id="points_to_win_select">
+              <div class="nw-seg" id="points-seg" role="group" aria-label="Points to win">
+                <button type="button" class="nw-seg-btn" data-seg-value="11">11</button>
+                <button type="button" class="nw-seg-btn" data-seg-value="15">15</button>
+                <button type="button" class="nw-seg-btn active" data-seg-value="21">21</button>
+              </div>
+              <select id="points_to_win_select" class="nw-seg-native">
                 <option value="21" selected>21</option>
                 <option value="15">15</option>
                 <option value="11">11</option>
@@ -511,12 +520,7 @@
         <!-- ===================== QUICK TAP MODE ===================== -->
         <div id="tap-mode-panel" style="display:none;">
           <div class="nw-session-bar" id="tap-session-bar" style="display:none;">
-            <select id="tap-session-select">
-              <option value="">Full group roster</option>
-            </select>
-            <button type="button" class="secondary" id="tap-session-new-btn" style="display:none;">+ New session</button>
-            <button type="button" class="secondary" id="tap-session-edit-btn" style="display:none;">Edit roster</button>
-            <button type="button" class="secondary" id="tap-session-close-btn" style="display:none;">Close</button>
+            <div class="nw-seg session-seg" id="tap-session-seg" role="group" aria-label="Session"></div>
           </div>
           <div class="nw-session-new-row" id="tap-session-new-row" style="display:none;">
             <input type="text" id="tap-session-new-name" placeholder='Session name, e.g. "7-8 PM"' maxlength="40">
@@ -524,23 +528,33 @@
             <button type="button" class="secondary" id="tap-session-new-cancel">Cancel</button>
           </div>
           <div id="tap-session-new-error" class="nw-inline-error" style="display:none;"></div>
-          <div class="nw-session-edit-panel" id="tap-session-edit-panel" style="display:none;">
-            <div class="nw-tap-hint" style="margin-bottom:6px;">This session's roster — anyone in the group can add or remove people here; it never changes the real group.</div>
-            <div id="tap-session-edit-members"></div>
-            <div class="nw-session-edit-add">
-              <select id="tap-session-add-existing">
-                <option value="">+ add an existing player…</option>
-              </select>
-              <div class="nw-session-edit-newplayer">
-                <input type="text" id="tap-session-new-player-name" placeholder="…or register someone new" maxlength="60">
-                <button type="button" id="tap-session-new-player-add">Add</button>
-              </div>
-            </div>
-            <button type="button" class="secondary" id="tap-session-edit-done">Done editing</button>
-            <div id="tap-session-edit-error" class="nw-inline-error" style="display:none;"></div>
+
+          <!-- Editing a session's roster used to live in its own card below
+               this bar. It now happens right here instead - an Edit toggle
+               beside "On court" turns the SAME avatar grid used to tap teams
+               into an edit surface (× on each avatar, a "+" tile to add),
+               so there's one roster on screen, not two, and less to scroll
+               past. 2026-08-30. -->
+          <div class="nw-tap-section-label">
+            <span>On court — showing: <span id="tap-oncourt-label" style="color:var(--court);">full group roster</span></span>
+            <span class="nw-tap-hint">tap up to <span id="tap-slots-hint">2</span> for each team</span>
+            <span class="nw-oncourt-actions">
+              <button type="button" class="secondary tiny" id="tap-session-edit-btn" style="display:none;">Edit</button>
+              <button type="button" class="danger tiny" id="tap-session-close-btn" style="display:none;">Close</button>
+            </span>
           </div>
-          <div class="nw-tap-section-label">On court <span class="nw-tap-hint">tap up to <span id="tap-slots-hint">2</span> for each team</span></div>
+          <div id="tap-session-edit-error" class="nw-inline-error" style="display:none;"></div>
           <div class="nw-avatar-grid" id="tap-avatar-grid"></div>
+          <div class="nw-session-edit-add" id="tap-session-add-panel" style="display:none;">
+            <div class="nw-tap-hint" style="flex:1 1 100%; margin:-2px 0 2px;">This session's roster — anyone in the group can add or remove people here; it never changes the real group.</div>
+            <select id="tap-session-add-existing">
+              <option value="">+ add an existing player…</option>
+            </select>
+            <div class="nw-session-edit-newplayer">
+              <input type="text" id="tap-session-new-player-name" placeholder="…or register someone new" maxlength="60">
+              <button type="button" id="tap-session-new-player-add">Add</button>
+            </div>
+          </div>
           <div id="tap-guest-row" style="display:none; margin:-4px 0 12px;">
             <select id="tap-guest-select" style="font-size:12px; padding:5px 8px; border-radius:8px;">
               <option value="">+ Add someone not in this group (guest, this match only)</option>

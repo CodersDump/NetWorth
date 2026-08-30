@@ -380,6 +380,40 @@
 
 ## Done
 
+- ✅ 2026-08-30 (v1.78.0) — **UI: Quick tap redesign — segmented controls + roster editing merged into
+  the "On court" grid itself, to cut down on scrolling.** Follow-up to v1.77.0's Sessions feature, driven
+  by mockup review (`quick_record_mockup_v2.html`, iterated to v4 before sign-off — see BACKLOG entry
+  below for that history). Three changes, all frontend-only, no backend/infra touched: **(1)** Match
+  type and points-to-win are now tap-friendly segmented button rows instead of `<select>` dropdowns
+  (Singles | Doubles, default Doubles; 11 | 15 | 21, default 21 — same left-to-right order as before).
+  The underlying `<select id="match_type_select">`/`<select id="points_to_win_select">` elements stay in
+  the DOM (hidden via `.nw-seg-native`) as the single source of truth, so every existing `.value` read
+  and `change` listener (Classic mode's doubles-only field toggling, the tap-slots-per-team calc, the
+  queue's edit-a-queued-item flow, etc.) needed zero changes — the new buttons just set the select's
+  value and dispatch `change`; `nwSyncSegFromSelect()` keeps the buttons' `.active` state in sync with
+  the one remaining place that sets `.value` programmatically (`nwQueueEditItem`). **(2)** The session
+  picker (was a `<select>` inside the session bar) is now a segmented row too: `Full roster | <session
+  1> | <session 2> | + New`, "+ New" greyed out once 2 sessions are open — `nwRenderSessionBar()`
+  rebuilds it from scratch on every render, same pattern as the avatar grid. **(3)** The biggest change:
+  session roster editing no longer lives in its own card (`tap-session-edit-panel` — member chips, a
+  second `<select>` to add, a register-new field, a "Done editing" button — all removed). It now happens
+  directly on the "On court" avatar grid: an "Edit"/"Done" toggle sits beside the "On court — showing: X"
+  label (`tap-session-edit-btn`, only shown for a real session, never for the full group roster — editing
+  that stays the Groups tab's job), and flipping it re-renders the SAME grid used for team-tapping with a
+  small × on each avatar (removes them from the session; a guest never gets one) plus a dashed "+" tile
+  appended at the end that reveals a small inline panel below the grid (the same add-existing-player
+  `<select>` and register-new-player field, just relocated) — `nwOpenSessionAddPanel()` /
+  `nwSessionAddMember()` / `nwSessionRemoveMember()` are the same backend calls as before, just wired to
+  the grid instead of a chip list. Tapping an avatar while editing does nothing (only the × removes it),
+  so a stray tap can't change team picks that are hidden behind the edit view anyway; the one-off guest
+  picker and "same as last match" recall are both hidden while editing, since neither means anything for
+  a roster you're mid-edit on. Verified: `<div>`/`<button>` tag balance (395/395, 142/142) and no
+  duplicate ids across `index.html`; CSS brace balance; `app.js` syntax (`node -c`); grepped for every
+  removed id/function (`tap-session-select`, `tap-session-new-btn`, `tap-session-edit-panel`,
+  `tap-session-edit-members`, `tap-session-edit-done`, `nwRenderSessionEditPanel`) to confirm nothing
+  else still referenced them. `tools/generate_codebase_map.py`'s `JS_SECTIONS` re-derived from the file's
+  own banner comments after the edit shifted everything past line ~1200 (see that script's comment).
+
 - ✅ 2026-08-29 (v1.77.0) — **Feature: Sessions — temporary, shareable group rosters ("7-8 PM" /
   "8-9 PM") that overlay a group without touching its real membership.** Owner idea from early in the
   Quick-tap design (before v1.76.0 shipped): overlapping evening slots with a mostly-fixed core and a
