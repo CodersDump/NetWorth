@@ -421,8 +421,20 @@
       <div class="card" id="record-match-card">
         <h2>Record a match</h2>
 
+        <!-- Entry mode switch, up top so it's the first choice made, before
+             group/type/points below it - "Classic" is byte-identical to the
+             old form and stays the default for everyone until they pick
+             something else; the choice is remembered locally per browser.
+             2026-08-30: moved above the shared-context row per the original
+             spec (it had drifted below it). -->
+        <div class="nw-mode-switch" id="nw-mode-switch">
+          <button type="button" class="nw-mode-btn active" data-mode="classic">Classic</button>
+          <button type="button" class="nw-mode-btn" data-mode="tap">⚡ Quick tap</button>
+          <button type="button" class="nw-mode-btn" data-mode="voice">🎤 Voice</button>
+        </div>
+
         <!-- Shared context: group / match type / points-to-win apply no
-             matter which entry mode below is active, so they live outside
+             matter which entry mode above is active, so they live outside
              all three and are read straight off these three elements by id. -->
         <div class="row">
           <div>
@@ -457,15 +469,6 @@
               </select>
             </label>
           </div>
-        </div>
-
-        <!-- Entry mode switch. "Classic" is byte-identical to the old form
-             and stays the default for everyone until they pick something
-             else - the choice is remembered locally per browser. -->
-        <div class="nw-mode-switch" id="nw-mode-switch">
-          <button type="button" class="nw-mode-btn active" data-mode="classic">Classic</button>
-          <button type="button" class="nw-mode-btn" data-mode="tap">⚡ Quick tap</button>
-          <button type="button" class="nw-mode-btn" data-mode="voice">🎤 Voice</button>
         </div>
 
         <!-- ===================== CLASSIC MODE (unchanged) ===================== -->
@@ -546,13 +549,15 @@
           <div id="tap-session-edit-error" class="nw-inline-error" style="display:none;"></div>
           <div class="nw-avatar-grid" id="tap-avatar-grid"></div>
           <div class="nw-session-edit-add" id="tap-session-add-panel" style="display:none;">
-            <div class="nw-tap-hint" style="flex:1 1 100%; margin:-2px 0 2px;">This session's roster — anyone in the group can add or remove people here; it never changes the real group.</div>
-            <select id="tap-session-add-existing">
-              <option value="">+ add an existing player…</option>
-            </select>
+            <div class="nw-tap-hint" style="flex:1 1 100%; margin:-2px 0 2px;">This session's roster — anyone in the group can add or remove people here; it never changes the real group. Tick as many as you like, then add them together.</div>
+            <div class="nw-session-add-list" id="tap-session-add-list"></div>
             <div class="nw-session-edit-newplayer">
               <input type="text" id="tap-session-new-player-name" placeholder="…or register someone new" maxlength="60">
               <button type="button" id="tap-session-new-player-add">Add</button>
+            </div>
+            <div class="nw-session-add-actions">
+              <button type="button" class="secondary" id="tap-session-add-cancel">Cancel</button>
+              <button type="button" id="tap-session-add-selected-btn">Add 0 selected</button>
             </div>
           </div>
           <div id="tap-guest-row" style="display:none; margin:-4px 0 12px;">

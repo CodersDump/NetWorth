@@ -2436,19 +2436,36 @@ let userPool = null;
     // Populates the inline "add an existing player / register someone new"
     // panel and reveals it - opened from the "+" tile the avatar grid grows
     // at the end of its own list while editing (nwTapRefreshAvatarGrid).
+    // Bulk add: a scrollable checkbox list instead of a one-at-a-time
+    // <select> - tick as many candidates as you like, then a single "Add N
+    // selected" fires one API call per person (there's no bulk endpoint,
+    // just a bulk *picker*). 2026-08-30, replacing the original
+    // one-player-per-pick dropdown.
     function nwOpenSessionAddPanel() {
       const session = nwGroupSessions.find(s => s.session_id === nwActiveSessionId);
       if (!session) return;
       document.getElementById('tap-session-edit-error').style.display = 'none';
-      const addSel = document.getElementById('tap-session-add-existing');
+      const listEl = document.getElementById('tap-session-add-list');
       const memberSet = new Set(session.member_ids);
       const candidates = allPlayers.filter(p => !memberSet.has(p.player_id))
         .sort((a, b) => String(a.name).localeCompare(String(b.name)));
-      addSel.innerHTML = '<option value="">+ add an existing player…</option>' +
-        candidates.map(p => `<option value="${p.player_id}">${escapeHtml(p.nickname || p.name)}</option>`).join('');
+      listEl.innerHTML = candidates.length
+        ? candidates.map(p => `<label class="nw-session-add-row"><input type="checkbox" value="${p.player_id}"><span>${escapeHtml(p.nickname || p.name)}</span></label>`).join('')
+        : '<span class="nw-tap-hint">Everyone in the club is already in this session.</span>';
+      listEl.querySelectorAll('input[type="checkbox"]').forEach(cb => cb.addEventListener('change', nwUpdateSessionAddCount));
+      nwUpdateSessionAddCount();
       document.getElementById('tap-session-add-panel').style.display = '';
     }
 
+    function nwUpdateSessionAddCount() {
+      const n = document.querySelectorAll('#tap-session-add-list input:checked').length;
+      document.getElementById('tap-session-add-selected-btn').textContent = `Add ${n} selected`;
+    }
+
+    // Adds ONE player and reports success/failure - callers (the bulk-add
+    // button below, and the register-new-player field) decide when to
+    // refresh the panel/grid, since bulk-adding several people would
+    // otherwise re-render between every single one.
     async function nwSessionAddMember(body) {
       const errEl = document.getElementById('tap-session-edit-error');
       errEl.style.display = 'none';
@@ -2458,7 +2475,7 @@ let userPool = null;
       if (!res.ok) {
         errEl.textContent = error || (data && data.error) || 'Could not add that player to the session.';
         errEl.style.display = '';
-        return;
+        return false;
       }
       const session = nwGroupSessions.find(s => s.session_id === nwActiveSessionId);
       if (session) session.member_ids = data.member_ids;
@@ -2466,23 +2483,36 @@ let userPool = null;
       // keeps every other picker (classic dropdowns, guest list) in sync
       // too, not just this one panel.
       if (body.new_player_name) await loadPlayers();
-      nwOpenSessionAddPanel(); // refresh candidates - the one just added must drop off the list
-      nwRenderSessionBar();
-      nwTapRefreshAvatarGrid();
+      return true;
     }
 
-    document.getElementById('tap-session-add-existing').addEventListener('change', (e) => {
-      const id = e.target.value;
-      if (!id) return;
-      e.target.value = '';
-      nwSessionAddMember({ player_id: id });
+    document.getElementById('tap-session-add-cancel').addEventListener('click', () => {
+      document.getElementById('tap-session-add-panel').style.display = 'none';
     });
-    document.getElementById('tap-session-new-player-add').addEventListener('click', () => {
+    document.getElementById('tap-session-add-selected-btn').addEventListener('click', async () => {
+      const boxes = Array.from(document.querySelectorAll('#tap-session-add-list input:checked'));
+      if (!boxes.length) return;
+      const btn = document.getElementById('tap-session-add-selected-btn');
+      btn.disabled = true;
+      for (const cb of boxes) {
+        await nwSessionAddMember({ player_id: cb.value }); // sequential: each PUTs the session's full member_ids, so overlapping calls could race and clobber each other
+      }
+      btn.disabled = false;
+      nwOpenSessionAddPanel(); // refresh candidates - everyone just added must drop off the list
+      nwRenderSessionBar();
+      nwTapRefreshAvatarGrid();
+    });
+    document.getElementById('tap-session-new-player-add').addEventListener('click', async () => {
       const input = document.getElementById('tap-session-new-player-name');
       const name = input.value.trim();
       if (!name) return;
       input.value = '';
-      nwSessionAddMember({ new_player_name: name });
+      const ok = await nwSessionAddMember({ new_player_name: name });
+      if (ok) {
+        nwOpenSessionAddPanel();
+        nwRenderSessionBar();
+        nwTapRefreshAvatarGrid();
+      }
     });
 
     async function nwSessionRemoveMember(playerId) {
@@ -2521,27 +2551,41 @@ let userPool = null;
       const pool = [...memberPool, ...guestPlayers.filter(p => !memberIds.has(p.player_id))];
       // Editing only ever applies to a session's own overlay roster, never
       // the real group roster - see nwRenderOnCourtActions.
-      const editingNow = nwSessionEditing && nwGroupSessions.some(s => s.session_id === nwActiveSessionId);
+      const activeSessionObj = nwGroupSessions.find(s => s.session_id === nwActiveSessionId);
+      const editingNow = nwSessionEditing && !!activeSessionObj;
+      // A session can include people vouched in who aren't actually members
+      // of the real group (that's the point of sessions) - unlike them,
+      // those never got a visual marker at all, so there was no way to
+      // tell apart from a real group member at a glance. 2026-08-30.
+      const realGroupMemberIds = new Set((currentMatchGroupMembers || []).map(p => p.player_id));
 
       document.getElementById('tap-slots-hint').textContent = nwTapSlotsPerTeam();
       grid.classList.toggle('editing', editingNow);
       grid.innerHTML = '';
       pool.forEach(p => {
-        const isGuest = !memberIds.has(p.player_id);
+        // A one-off guest (added via the picker below, never part of the
+        // active pool itself) vs. a standing session member who just isn't
+        // in the real group - both get the same dashed ring, but only the
+        // one-off guest gets the "guest" text tag and skips the × (they
+        // were never in session.member_ids to remove from).
+        const isOneOffGuest = !memberIds.has(p.player_id);
+        const isNonGroupMember = !isOneOffGuest && !!activeSessionObj && !realGroupMemberIds.has(p.player_id);
+        const dashed = isOneOffGuest || isNonGroupMember;
         const el = document.createElement('div');
-        el.className = 'nw-avatar' + (isGuest ? ' guest' : '');
+        el.className = 'nw-avatar' + (dashed ? ' guest' : '');
+        if (isNonGroupMember) el.title = 'In this session, not a member of the group itself';
         if (nwTapTeamA.includes(p.player_id)) el.classList.add('sel-a');
         if (nwTapTeamB.includes(p.player_id)) el.classList.add('sel-b');
         const initials = (p.name || '?').trim().split(/\s+/).map(w => w[0]).join('').slice(0, 2).toUpperCase();
         // While editing, a real session member gets a × to drop them from
         // this session (tapping the avatar itself does nothing - only the
         // × removes, so a stray tap can't quietly change team picks that
-        // are hidden behind the edit view anyway). Guests were never part
-        // of the session's roster, so they don't get one.
-        const removeX = (editingNow && !isGuest)
+        // are hidden behind the edit view anyway). A one-off guest was
+        // never part of the session's roster, so they don't get one.
+        const removeX = (editingNow && !isOneOffGuest)
           ? `<div class="nw-avatar-remove-x" data-remove-session-member="${p.player_id}" title="Remove from this session">&times;</div>` : '';
         el.innerHTML = removeX + `<div class="nw-avatar-circ">${initials}</div><div class="nw-avatar-lbl">${escapeHtml(p.nickname || p.name)}</div>` +
-          (isGuest ? '<div class="nw-avatar-guest-tag">guest</div>' : '');
+          (isOneOffGuest ? '<div class="nw-avatar-guest-tag">guest</div>' : '');
         if (editingNow) {
           const xEl = el.querySelector('[data-remove-session-member]');
           if (xEl) xEl.addEventListener('click', (e) => { e.stopPropagation(); nwSessionRemoveMember(p.player_id); });

@@ -380,6 +380,32 @@
 
 ## Done
 
+- ✅ 2026-08-30 (v1.78.1) — **Fixes to v1.78.0, from reviewing it live on staging.** **(1)** The entry
+  mode switch (Classic/Quick tap/Voice) had drifted below the group/match-type/points row instead of
+  being the first choice made — moved back above it, matching the original spec. **(2)** Its three
+  buttons could look uneven because `.nw-mode-btn` had no internal centering for the icon+text pair and
+  no explicit `flex-basis` — added `display:flex; align-items:center; justify-content:center;
+  white-space:nowrap;` and pinned `flex: 1 1 0`. **(3)** The session segmented picker (`Full roster |
+  <sessions> | + New`) was rendering cramped against the left edge with dead space after it — its
+  container `#tap-session-seg` sits inside `.nw-session-bar`, itself a flex row, and without an explicit
+  basis a flex child shrinks to its own content width rather than filling the row; fixed with `flex: 1 1
+  100%; width: 100%` on `.nw-seg.session-seg`. **(4)** The inline "add to session" panel only let you add
+  one person at a time (a `<select>` that posted immediately on each pick) — replaced with a scrollable
+  checkbox list (`tap-session-add-list` / `.nw-session-add-row`) plus an "Add N selected" button, so
+  several people can be ticked and added together; `nwSessionAddMember()` now just reports success/failure
+  instead of re-rendering after every single call, so the bulk-add loop only refreshes once at the end
+  (each add is still a separate `POST .../members` call — there's no bulk endpoint, just a bulk *picker*).
+  Register-a-new-player stays a single field since creating one person at a time is inherent to that flow.
+  **(5)** A session can include people who were vouched in but aren't actually members of the real group
+  underneath it (that's the whole point of Sessions) — until now they looked identical to real group
+  members in the "On court" tap-to-select grid, with no way to tell them apart. They now get the same
+  dashed ring as a one-off match guest (`nwTapRefreshAvatarGrid`'s `isNonGroupMember` check, against
+  `currentMatchGroupMembers`) — but keep their × in edit mode and skip the "guest" text tag, since unlike
+  a one-off guest they're real, removable session members. Verified the same way as v1.78.0: `<div>`/
+  `<button>` balance (397/397, 144/144), no duplicate ids, CSS brace balance, `app.js` syntax, grepped for
+  the removed `tap-session-add-existing` id. `JS_SECTIONS` re-derived again (both banner comment styles
+  this time — `// ====` and `// ----------` — after this edit shifted everything past line ~2200 by +44).
+
 - ✅ 2026-08-30 (v1.78.0) — **UI: Quick tap redesign — segmented controls + roster editing merged into
   the "On court" grid itself, to cut down on scrolling.** Follow-up to v1.77.0's Sessions feature, driven
   by mockup review (`quick_record_mockup_v2.html`, iterated to v4 before sign-off — see BACKLOG entry
