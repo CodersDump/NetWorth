@@ -530,12 +530,16 @@
 .nw-tap-hint { font-weight: 400; font-size: 11.5px; color: var(--text-secondary); }
 .nw-oncourt-actions { margin-left: auto; display: flex; gap: 6px; }
 button.tiny { margin-top: 0; padding: 5px 10px; font-size: 11px; border-radius: 8px; }
-.nw-avatar-grid { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 12px; }
-.nw-avatar { width: 58px; text-align: center; cursor: pointer; user-select: none; position: relative; }
+/* Fixed 4-per-row grid, not flex-wrap - flex-wrap fit 4 or 5 depending on
+   viewport width and avatar-label length, which is exactly what made names
+   get cut off. A real grid keeps it at 4 regardless of screen size.
+   2026-08-30. */
+.nw-avatar-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px 6px; margin-bottom: 12px; }
+.nw-avatar { text-align: center; cursor: pointer; user-select: none; position: relative; }
 .nw-avatar .nw-avatar-circ { width: 46px; height: 46px; margin: 0 auto 4px; border-radius: 50%; background: var(--surface-2);
   display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 14px; color: var(--court-dark);
   border: 2px solid transparent; transition: .12s; }
-.nw-avatar .nw-avatar-lbl { font-size: 10.5px; color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nw-avatar .nw-avatar-lbl { font-size: 10.5px; color: var(--text-secondary); white-space: normal; word-break: break-word; line-height: 1.2; }
 .nw-avatar.sel-a .nw-avatar-circ { border-color: var(--rally); background: rgba(0,180,216,.15); color: var(--rally); }
 .nw-avatar.sel-b .nw-avatar-circ { border-color: var(--smash); background: rgba(255,71,87,.15); color: var(--smash); }
 .nw-avatar:active .nw-avatar-circ { transform: scale(.92); }

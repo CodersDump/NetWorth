@@ -361,6 +361,14 @@ Resources:
           UPLOADS_BUCKET: !Ref WebsiteBucket
           CONFIRMATION_CODE: !Ref ConfirmationCode
           MATCHES_FUNCTION: !Sub '${AppName}-matches'
+          # Added for merge_players() only - the shared LambdaExecutionRole
+          # already grants this function full CRUD on every table below,
+          # so these four env vars are the entire IAM footprint of the
+          # merge-duplicate-profiles feature. No policy changes needed.
+          MATCHES_TABLE: !Ref MatchesTable
+          SESSIONS_TABLE: !Ref SessionsTable
+          FINANCE_TABLE: !Ref FinanceTable
+          TOURNAMENTS_TABLE: !Ref TournamentsTable
       Code: ../backend/lambdas/players
 
   GroupsFunction:
@@ -603,6 +611,56 @@ Resources:
             ResponseParameters:
               method.response.header.Access-Control-Allow-Headers: "'Content-Type,Authorization'"
               method.response.header.Access-Control-Allow-Methods: "'OPTIONS,GET'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+            method.response.header.Access-Control-Allow-Origin: true
+
+  # Sibling of PlayerIdResource under PlayersResource, not a child of it -
+  # "merge" is a literal path segment here, not a player_id value, so it
+  # needs its own resource rather than colliding with the {player_id}
+  # greedy-looking-but-actually-exact-match path. API Gateway resolves an
+  # exact literal segment ahead of a {param} sibling, so /players/merge
+  # never gets swallowed by /players/{player_id}.
+  PlayersMergeResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref RestApi
+      ParentId: !Ref PlayersResource
+      PathPart: merge
+
+  MergePlayersMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RestApi
+      ResourceId: !Ref PlayersMergeResource
+      HttpMethod: POST
+      AuthorizationType: COGNITO_USER_POOLS
+      AuthorizerId: !Ref CognitoAuthorizer
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${PlayersFunction.Arn}/invocations'
+
+  PlayersMergeOptionsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RestApi
+      ResourceId: !Ref PlayersMergeResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,Authorization'"
+              method.response.header.Access-Control-Allow-Methods: "'OPTIONS,POST'"
               method.response.header.Access-Control-Allow-Origin: "'*'"
         RequestTemplates:
           application/json: '{"statusCode": 200}'
@@ -3419,6 +3477,8 @@ Resources:
       - StorePurchaseOptionsMethod
       - ListPlayersMethod
       - PlayersOptionsMethod
+      - MergePlayersMethod
+      - PlayersMergeOptionsMethod
       - DeletePlayerMethod
       - UpdatePlayerMethod
       - PlayerIdOptionsMethod

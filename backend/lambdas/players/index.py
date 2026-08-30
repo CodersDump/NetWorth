@@ -4,13 +4,16 @@ NetWorth - players Lambda (list all, update one, delete one)
 Mirrors the inline code in infrastructure/template.yaml (PlayersFunction).
 Edit here, then paste into the template's ZipFile block before redeploying.
 
-Routes:
+Routes (not exhaustive - see handler() for the full dispatch list):
     GET    /players              -> list all players
     PUT    /players/{player_id}  -> update a player's name and/or skill_level
     DELETE /players/{player_id}  -> delete one player
+    POST   /players/merge        -> merge a duplicate profile into another (SuperAdmin)
 
 Env vars:
     PLAYERS_TABLE - DynamoDB table name for players
+    MATCHES_TABLE, SESSIONS_TABLE, FINANCE_TABLE, TOURNAMENTS_TABLE - all
+        optional, all read+write, all used only by merge_players()
 """
 import json
 import os
@@ -35,6 +38,19 @@ claim_requests_table = dynamodb.Table(CLAIM_REQUESTS_TABLE) if CLAIM_REQUESTS_TA
 # only the env var is new. Optional so older stacks still import.
 GROUPS_TABLE = os.environ.get('GROUPS_TABLE')
 groups_table = dynamodb.Table(GROUPS_TABLE) if GROUPS_TABLE else None
+
+# Read+write here, all four added for one reason: merge_players(). The
+# shared LambdaExecutionRole already grants full CRUD on every table in the
+# app, so reaching these from the players Lambda needs nothing but the env
+# var - no IAM policy change. All optional so older stacks still import.
+MATCHES_TABLE = os.environ.get('MATCHES_TABLE')
+matches_table = dynamodb.Table(MATCHES_TABLE) if MATCHES_TABLE else None
+SESSIONS_TABLE = os.environ.get('SESSIONS_TABLE')
+sessions_table = dynamodb.Table(SESSIONS_TABLE) if SESSIONS_TABLE else None
+FINANCE_TABLE = os.environ.get('FINANCE_TABLE')
+finance_table = dynamodb.Table(FINANCE_TABLE) if FINANCE_TABLE else None
+TOURNAMENTS_TABLE = os.environ.get('TOURNAMENTS_TABLE')
+tournaments_table = dynamodb.Table(TOURNAMENTS_TABLE) if TOURNAMENTS_TABLE else None
 
 
 def sanitize_nickname(raw):
@@ -90,6 +106,8 @@ def handler(event, context):
             return delete_store_item(event)
         if event.get('resource') == '/store-purchase' and method == 'POST':
             return purchase_store_item(event)
+        if event.get('resource') == '/players/merge' and method == 'POST':
+            return merge_players(event)
         if method == 'GET' and not player_id:
             return list_players()
         elif method == 'PUT' and player_id:
@@ -1840,6 +1858,223 @@ def update_player(player_id, event):
 
     table.update_item(**kwargs)
     return _response(200, {'player_id': player_id, 'updated': True})
+
+
+def _contains_id(obj, target_id):
+    """Recursively searches an arbitrarily nested structure for target_id,
+    matching either a dict value or a dict key. Written for tournament
+    records specifically: fixtures/brackets/entities/standings/pools/draft/
+    squads vary in shape and some key maps BY player_id rather than just
+    storing it as a value, so a targeted field-by-field check would be a
+    constant source of missed cases. Deliberately over-matches rather than
+    under-matches, since this only gates merge_players' preflight refusal -
+    a false positive just means "resolve this one by hand", while a false
+    negative would silently corrupt a live tournament.
+    """
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            if k == target_id or _contains_id(v, target_id):
+                return True
+        return False
+    if isinstance(obj, list):
+        return any(_contains_id(v, target_id) for v in obj)
+    return obj == target_id
+
+
+def merge_players(event):
+    """SuperAdmin tool to fix duplicate player registrations - e.g. someone
+    got registered a second (or third) time because their first profile had
+    no group, so their matches were invisible on the group's roster and
+    looked like a no-show (see defaultRegisterGroup() for the frontend fix
+    that stops new duplicates from being created this same way). This
+    reassigns the LOSER's match/group/session history onto the WINNER, then
+    deletes the LOSER.
+
+    Deliberately narrow, not a general-purpose merge tool:
+      - Refuses the WHOLE merge, with no partial writes, if either profile
+        appears ANYWHERE in tournament data or has ANY finance record.
+        Tournament brackets/standings and money records are exactly the
+        places a silent id-swap could quietly corrupt something nobody
+        would notice until much later - out of scope for a first version.
+        (Also refuses if both profiles already have their own separate
+        linked login - see below - since that's a real conflict, not
+        something this tool should resolve by guessing.)
+      - The caller always names both player_id's explicitly. This never
+        guesses which of two duplicates is the "real" one (e.g. by match
+        count) - that's a judgment call only a human should make.
+      - If only the LOSER has a linked Cognito login, it's re-pointed to
+        the WINNER (custom:player_id) so that person doesn't lose access;
+        the email moves onto the winner's player record too.
+
+    Deliberately does NOT touch ratings_after, xp, coins, or level on the
+    reassigned matches - recompute_all_ratings() (the existing "Recompute
+    all ratings & XP" maintenance action) fully rebuilds all of those from
+    team_a/team_b, so patching them here would just be redundant work this
+    function could get subtly wrong. Also does not touch point_log, which
+    only ever holds team letters ("A"/"B"), never player ids.
+    """
+    claims = _caller_claims(event)
+    if not claims:
+        return _response(403, {'error': 'log in to merge players'})
+    if not _is_super_admin(claims):
+        return _response(403, {'error': 'only a SuperAdmin can merge player profiles'})
+
+    body = json.loads(event.get('body') or '{}')
+    if body.get('confirm') != CONFIRMATION_CODE:
+        return _response(400, {'error': 'confirmation code is missing or incorrect'})
+
+    winner_id = body.get('winner_id')
+    loser_id = body.get('loser_id')
+    if not winner_id or not loser_id:
+        return _response(400, {'error': 'winner_id and loser_id are both required'})
+    if winner_id == loser_id:
+        return _response(400, {'error': 'winner_id and loser_id must be different profiles'})
+
+    winner = table.get_item(Key={'player_id': winner_id}).get('Item')
+    loser = table.get_item(Key={'player_id': loser_id}).get('Item')
+    if not winner:
+        return _response(404, {'error': 'winner profile not found'})
+    if not loser:
+        return _response(404, {'error': 'loser profile not found'})
+
+    # ---- preflight: refuse the WHOLE merge, no partial writes, the moment
+    # either profile touches something out of scope for this tool ----
+    if tournaments_table:
+        tournaments = _scan_all(tournaments_table)
+        blocking = [t.get('tournament_id', t.get('name', '?')) for t in tournaments
+                    if _contains_id(t, winner_id) or _contains_id(t, loser_id)]
+        if blocking:
+            return _response(400, {
+                'error': 'cannot merge - one or both profiles appear in tournament data',
+                'blocking_tournaments': blocking
+            })
+    if finance_table:
+        finance_records = _scan_all(finance_table)
+        blocking = [f.get('record_id') for f in finance_records
+                    if f.get('player_id') in (winner_id, loser_id)]
+        if blocking:
+            return _response(400, {
+                'error': 'cannot merge - one or both profiles have finance records',
+                'blocking_finance_records': blocking
+            })
+    if winner.get('email') and loser.get('email') and winner['email'] != loser['email']:
+        return _response(400, {
+            'error': 'both profiles already have their own separate linked login - resolve that manually first'
+        })
+
+    # ---- reassign match history: rewrite the id lists and their
+    # positionally-aligned name-snapshot siblings, leave everything else on
+    # the match record alone ----
+    matches_reassigned = 0
+    if matches_table:
+        for m in _scan_all(matches_table):
+            team_a = list(m.get('team_a', []))
+            team_b = list(m.get('team_b', []))
+            if loser_id not in team_a and loser_id not in team_b:
+                continue
+            team_a_names = list(m.get('team_a_names', []))
+            team_b_names = list(m.get('team_b_names', []))
+            for ids, names in ((team_a, team_a_names), (team_b, team_b_names)):
+                for i, pid in enumerate(ids):
+                    if pid == loser_id:
+                        ids[i] = winner_id
+                        if i < len(names):
+                            names[i] = winner.get('name', names[i])
+            matches_table.update_item(
+                Key={'match_id': m['match_id']},
+                UpdateExpression='SET team_a = :a, team_b = :b, team_a_names = :an, team_b_names = :bn',
+                ExpressionAttributeValues={':a': team_a, ':b': team_b, ':an': team_a_names, ':bn': team_b_names}
+            )
+            matches_reassigned += 1
+
+    # ---- reassign group membership + roles ----
+    groups_updated = 0
+    if groups_table:
+        for g in _scan_all(groups_table):
+            member_ids = g.get('member_ids', [])
+            if loser_id not in member_ids:
+                continue
+            new_members = list(dict.fromkeys(
+                [winner_id if pid == loser_id else pid for pid in member_ids]))
+            roles = dict(g.get('roles', {}))
+            loser_role = roles.pop(loser_id, None)
+            if loser_role and winner_id not in roles:
+                roles[winner_id] = loser_role
+            groups_table.update_item(
+                Key={'group_id': g['group_id']},
+                UpdateExpression='SET member_ids = :m, #r = :r',
+                ExpressionAttributeNames={'#r': 'roles'},
+                ExpressionAttributeValues={':m': new_members, ':r': roles}
+            )
+            groups_updated += 1
+
+    # ---- reassign open session rosters. Sessions are ephemeral, but a
+    # stale id here would show a phantom duplicate on someone's active
+    # session right after the merge - exactly the kind of thing that
+    # prompts a "why do I see two of them" report all over again ----
+    sessions_updated = 0
+    if sessions_table:
+        for s in _scan_all(sessions_table):
+            member_ids = s.get('member_ids', [])
+            created_by_changed = s.get('created_by') == loser_id
+            if loser_id not in member_ids and not created_by_changed:
+                continue
+            new_members = list(dict.fromkeys(
+                [winner_id if pid == loser_id else pid for pid in member_ids]))
+            update_expr = 'SET member_ids = :m'
+            values = {':m': new_members}
+            if created_by_changed:
+                update_expr += ', created_by = :c'
+                values[':c'] = winner_id
+            sessions_table.update_item(
+                Key={'session_id': s['session_id']}, UpdateExpression=update_expr,
+                ExpressionAttributeValues=values
+            )
+            sessions_updated += 1
+
+    # ---- re-point login, only when the winner doesn't already have one ----
+    cognito_repointed = None
+    loser_email = loser.get('email')
+    if loser_email and not winner.get('email') and USER_POOL_ID:
+        try:
+            cognito = boto3.client('cognito-idp')
+            username = _cognito_username_for_email(cognito, loser_email)
+            if username:
+                cognito.admin_update_user_attributes(
+                    UserPoolId=USER_POOL_ID, Username=username,
+                    UserAttributes=[{'Name': 'custom:player_id', 'Value': winner_id}]
+                )
+                table.update_item(
+                    Key={'player_id': winner_id},
+                    UpdateExpression='SET email = :e',
+                    ExpressionAttributeValues={':e': loser_email}
+                )
+                cognito_repointed = loser_email
+        except Exception as e:
+            # Merge already reassigned data at this point - failing the
+            # whole call here would be misleading. Surfaced, not silent.
+            print(json.dumps({'warn': 'cognito repoint failed during merge',
+                               'email': loser_email, 'detail': str(e)}))
+
+    # ---- delete the now-empty loser profile last, once every reference to
+    # it elsewhere has already been moved ----
+    table.delete_item(Key={'player_id': loser_id})
+
+    print(json.dumps({
+        'action': 'merge_players', 'winner_id': winner_id, 'loser_id': loser_id,
+        'loser_name': loser.get('name'), 'matches_reassigned': matches_reassigned,
+        'groups_updated': groups_updated, 'sessions_updated': sessions_updated,
+        'cognito_repointed': cognito_repointed, 'by': claims.get('email')
+    }))
+
+    return _response(200, {
+        'merged': loser_id, 'into': winner_id,
+        'matches_reassigned': matches_reassigned,
+        'groups_updated': groups_updated,
+        'sessions_updated': sessions_updated,
+        'cognito_repointed': cognito_repointed,
+        'note': 'run "Recompute all ratings & XP" now to rebuild ratings/XP/coins/levels from the corrected match history'
+    })
 
 
 def delete_player(player_id, event):

@@ -380,6 +380,56 @@
 
 ## Done
 
+- ✅ 2026-08-30 (v1.79.0) — **Quick-tap grid/nickname fixes from a real mobile screenshot, the
+  duplicate-registration root cause, and a new admin merge-duplicate-profiles tool.** **(1)** The "On
+  court" avatar grid was `display:flex; flex-wrap:wrap` with a fixed `.nw-avatar { width: 58px }`, so it
+  showed 4 or 5 per row depending on viewport/label length instead of the originally-approved fixed
+  4-per-row layout — switched to `display:grid; grid-template-columns: repeat(4, 1fr)`, removed the fixed
+  avatar width, and changed `.nw-avatar-lbl` from ellipsis-truncation to word-wrap so longer names wrap
+  onto 2 lines instead of being cut off. **(2)** The grid never respected the app's existing global
+  nickname/name display toggle (`formatPlayerLabel`/`toggleDisplayMode`, previously wired to
+  rankings/Hall-of-Fame/etc. but not this grid) — hardcoded `p.nickname || p.name` in 4 places (add-list
+  checkboxes, avatar label, guest-select options, `nwTapPlayerName`) all routed through
+  `formatPlayerLabel` instead; added the grid to `toggleDisplayMode`'s re-render list; added an
+  always-visible "Names: nicknames/full names" toggle link right in the "On court" header
+  (`tap-name-toggle-link`) so it's reachable mid-selection, not just buried in the hamburger menu — owner
+  ask: "Not everyone would remember that I'm sneakshot [sic]." **(3)** Root-caused a real duplicate-profile
+  bug report (one person ending up with 2, another with 3, separate profiles — matches split 1/1/5 across
+  them): `register_group_id`/`bulk_register_group_id` defaulted to "Don't add to a group yet", so a
+  player registered with no group was invisible on other members' group-scoped rosters, prompting a
+  second (and third) duplicate registration of the same person. Fixed going forward with a new
+  `defaultRegisterGroup()` (mirrors the existing `defaultMatchGroup()` pattern) that pre-selects the
+  registering user's own first group; removed the old post-submit reset-to-blank line since `loadGroups()`
+  already re-defaults via this. **(4)** Added an admin **merge duplicate profiles** tool to fix the
+  duplicates that already exist: `POST /players/merge` (`merge_players` in `players/index.py`, SuperAdmin +
+  `CONFIRMATION_CODE`-gated like `delete_player`) reassigns the merged-away profile's `team_a`/`team_b` +
+  `team_a_names`/`team_b_names` on every match, its group `member_ids`/`roles`, and its open session
+  `member_ids`/`created_by`, onto the kept profile, re-points its Cognito login (`custom:player_id`) if
+  only it has one, then deletes it. Refuses the WHOLE merge with no partial writes if either profile
+  appears anywhere in tournament data (new `_contains_id` recursive helper — tournament shapes vary and
+  some key by player_id, not just store it as a value) or has any finance record, or if both profiles
+  already have their own separate login — all three need a human to resolve by hand, out of scope for a
+  first version (matches the owner's actual cases: "these are only with just profiles, not claimed yet,
+  and no tournament was played by them"). Never guesses which duplicate to keep — the admin always names
+  both explicitly. Reached the `MATCHES_TABLE`/`SESSIONS_TABLE`/`FINANCE_TABLE`/`TOURNAMENTS_TABLE` tables
+  from the players Lambda by adding 4 env vars only — the shared `LambdaExecutionRole` already grants full
+  CRUD on every table to every Lambda, so no IAM policy change was needed. New API Gateway resource
+  `PlayersMergeResource` (`PathPart: merge`, sibling of `PlayerIdResource` under `PlayersResource`, so the
+  literal `/players/merge` segment resolves ahead of `/players/{player_id}` rather than colliding with
+  it) + `MergePlayersMethod`/`PlayersMergeOptionsMethod`, both added to `ApiDeployment`'s `DependsOn`.
+  Deliberately does NOT touch `ratings_after`/xp/coins/level on reassigned matches, and does not touch
+  `point_log` (confirmed to only ever hold team letters "A"/"B", never player ids) — the existing
+  "Recompute all ratings & XP" maintenance action already fully rebuilds all of those from
+  `team_a`/`team_b`, so the admin runs that once after a merge. New admin UI: "Merge duplicate profiles"
+  section in Settings → Access Reviews & Approvals, showing each player's live match count next to their
+  name in the two pickers so the admin can tell which duplicate is worth keeping; on refusal, surfaces the
+  blocking tournament/finance record ids in the result panel. Verified: `ast.parse` on both backend files,
+  a scripted YAML parse of the template (no duplicate `PathPart`/`DependsOn` entries, all new resources
+  present), `node -c app.js`, `<div>`/`<button>`/`<span>`/`<details>`/`<summary>`/`<select>`/`<label>`
+  balance (400/400, 145/145, 92/92, 13/13, 13/13, 82/82, 169/169). `JS_SECTIONS` re-derived again from
+  both banner styles after this round's edits shifted everything past line ~200 by +70-ish (frontend edits
+  landed early in the file, in the display-toggle and avatar-grid sections).
+
 - ✅ 2026-08-30 (v1.78.1) — **Fixes to v1.78.0, from reviewing it live on staging.** **(1)** The entry
   mode switch (Classic/Quick tap/Voice) had drifted below the group/match-type/points row instead of
   being the first choice made — moved back above it, matching the original spec. **(2)** Its three
