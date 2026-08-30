@@ -541,6 +541,7 @@
           <div class="nw-tap-section-label">
             <span>On court — showing: <span id="tap-oncourt-label" style="color:var(--court);">full group roster</span></span>
             <span class="nw-tap-hint">tap up to <span id="tap-slots-hint">2</span> for each team</span>
+            <span class="nw-textlink" id="tap-name-toggle-link" style="margin-top:0;" title="Switch how names show up in the avatars below - same setting as the header menu's display toggle">Names: nicknames</span>
             <span class="nw-oncourt-actions">
               <button type="button" class="secondary tiny" id="tap-session-edit-btn" style="display:none;">Edit</button>
               <button type="button" class="danger tiny" id="tap-session-close-btn" style="display:none;">Close</button>
@@ -1191,6 +1192,25 @@
             <button class="secondary" type="button" style="margin:0 0 8px; padding:4px 10px; font-size:12px;" onclick="loadClaimAudit()">Refresh</button>
             <p class="card-sub" style="margin:0 0 10px;">Which account is linked to which player. Broken links are flagged at the top &mdash; re-link or unlink to fix (the user must log out and back in afterwards).</p>
             <div id="claim-audit-result" style="font-size:13px;"></div>
+          </div>
+        </details>
+
+        <details class="review-section">
+          <summary>Merge duplicate profiles</summary>
+          <div style="padding:10px 0;">
+            <p class="card-sub" style="margin:0 0 10px;">Fixes the same person having 2+ separate profiles (usually from a registration with no group, so their matches were invisible on the roster they actually played in - fixed going forward, but existing duplicates still need merging by hand). Picks one profile to keep; the other's matches, group memberships, and open sessions all move onto it, then the merged-away profile is deleted. If it has a linked login and the kept profile doesn't, the login moves too.</p>
+            <p class="card-sub" style="margin:0 0 10px;">Refuses automatically if either profile has played in a tournament or has a finance record, or if both already have their own separate login - those need to be resolved by hand first.</p>
+            <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end;">
+              <label style="font-size:13px;">Keep this one<br>
+                <select id="merge-winner-player" style="max-width:280px;"></select>
+              </label>
+              <label style="font-size:13px;">Merge away (deleted after)<br>
+                <select id="merge-loser-player" style="max-width:280px;"></select>
+              </label>
+              <button type="button" class="secondary" onclick="mergePlayersAdmin()">Merge</button>
+            </div>
+            <span id="merge-players-status" style="font-size:12px; display:block; margin-top:8px;"></span>
+            <div id="merge-players-detail" style="font-size:12px; margin-top:6px;"></div>
           </div>
         </details>
 

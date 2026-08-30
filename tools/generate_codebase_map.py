@@ -26,27 +26,28 @@ LAMBDA_ORDER = ["whoami", "register_player", "players", "groups",
                 "matches", "tournaments", "finance", "progress_scheduler"]
 
 # Curated app.js section banners: line -> title. Update if you add sections.
-# Re-derived 2026-08-30 straight from the file's own "---------- X ----------"
-# banner comments (grep '^\s*//\s*-{5,}') plus a couple of named-function
-# anchors (loadProfileBundle) where no banner exists - see BACKLOG.md's
+# Re-derived 2026-08-30 (v1.79.0) straight from the file's own
+# "---------- X ----------" / "========= X =========" banner comments
+# (grep '^\s*//\s*-{5,}' and '^\s*//\s*={5,}') plus one named-function
+# anchor (loadProfileBundle) where no banner exists - see BACKLOG.md's
 # v1.78.0 entry. Do this same grep again next time these drift rather than
 # hand-nudging line numbers, since inserted code shifts everything after it.
 JS_SECTIONS = {
     14: "Token freshness & authedFetch", 205: "Nickname/name display toggle",
-    342: "Data-load helpers", 1199: "Segmented controls (match type / points-to-win)",
-    1279: "Live point-by-point scoring",
-    1360: "Split-screen live scoring", 1480: "Player registration",
-    1588: "Delete / edit player", 1662: "Groups", 1791: "Matches (record/list/game-log)",
-    1860: "Voice match entry", 2108: "Team pairing preview",
-    2204: "Quick record: tap mode + Sessions + voice stack + shared queue",
-    3170: "Unsaved-match safety net", 3256: "Game log & CSV export",
-    3753: "Profile card customization", 4229: "Quests", 4341: "Achievements",
-    4660: "Store & events admin", 5195: "Image uploads",
-    5539: "Profile bundle / cards / charts",
-    6495: "UPI payment card", 6553: "Finance tab (view-key + role gated)",
-    7895: "Auth UI (Cognito login/signup/session)",
-    7905: "Match review & reorder (SuperAdmin)", 8742: "Init & session restore",
-    8761: "Tournaments", 12308: "Live scoring inside tournaments",
+    347: "Data-load helpers", 1269: "Segmented controls (match type / points-to-win)",
+    1349: "Live point-by-point scoring",
+    1430: "Split-screen live scoring", 1550: "Player registration",
+    1661: "Delete / edit player", 1735: "Groups", 1864: "Matches (record/list/game-log)",
+    1953: "Voice match entry", 2201: "Team pairing preview",
+    2297: "Quick record: tap mode + Sessions + voice stack + shared queue",
+    3263: "Unsaved-match safety net", 3349: "Game log & CSV export",
+    3846: "Profile card customization", 4323: "Quests", 4435: "Achievements",
+    4754: "Store & events admin", 5289: "Image uploads",
+    5633: "Profile bundle / cards / charts",
+    6589: "UPI payment card", 6647: "Finance tab (view-key + role gated)",
+    7989: "Auth UI (Cognito login/signup/session)",
+    7999: "Match review & reorder (SuperAdmin)", 8836: "Init & session restore",
+    8855: "Tournaments", 12402: "Live scoring inside tournaments",
 }
 
 

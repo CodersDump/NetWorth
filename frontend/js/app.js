@@ -225,6 +225,8 @@ let userPool = null;
       showNicknameFirst = !showNicknameFirst;
       localStorage.setItem('nw_display_mode', showNicknameFirst ? 'nickname' : 'name');
       document.getElementById('display-mode-toggle-btn').textContent = showNicknameFirst ? 'Show: Nickname only' : 'Show: Nickname + Name';
+      const nameToggleLink = document.getElementById('tap-name-toggle-link');
+      if (nameToggleLink) nameToggleLink.textContent = showNicknameFirst ? 'Names: nicknames' : 'Names: full names';
       // Re-render everything toggle-aware, unconditionally - not just
       // "if a group happens to be selected right now" or "if you're on
       // that tab" - loadGroupMembers/loadVisiblePlayers already no-op
@@ -240,6 +242,9 @@ let userPool = null;
       const groupSel = document.getElementById('group_select');
       if (groupSel && typeof loadGroupMembers === 'function') loadGroupMembers(groupSel.value);
       if (typeof loadVisiblePlayers === 'function') loadVisiblePlayers();
+      // Quick tap's avatar grid shows player labels too (2026-08-30) - not
+      // everyone recognizes everyone else's nickname when picking teams.
+      if (typeof nwTapRefreshAvatarGrid === 'function') nwTapRefreshAvatarGrid();
       // The Player Card's name label is toggle-aware too, but it was left
       // out here - so the banner kept the old format until a manual
       // reload. Re-render it in place from the currently-selected player.
@@ -662,6 +667,70 @@ let userPool = null;
         if (statusEl) statusEl.textContent = 'Done - renamed to "' + newName + '". Nickname is unchanged.';
       } catch (e) { if (statusEl) statusEl.textContent = 'Failed: ' + e.message; }
     }
+    /* Admin "merge duplicate profiles" - fixes the same person ending up
+     * with 2+ player records (root cause was registering with no group
+     * selected, now fixed by defaultRegisterGroup(); this is the cleanup
+     * tool for duplicates that already exist). Shows games_played next to
+     * each name so the admin can tell which profile actually has the
+     * match history worth keeping before picking. */
+    function populateMergePlayerSelects() {
+      const winnerSel = document.getElementById('merge-winner-player');
+      const loserSel = document.getElementById('merge-loser-player');
+      if (!winnerSel || !loserSel) return;
+      const curWinner = winnerSel.value, curLoser = loserSel.value;
+      const optionsHtml = allPlayers
+        .filter(p => p && p.player_id && !String(p.player_id).startsWith('__'))
+        .slice().sort((a, b) => (a.name || '').localeCompare(b.name || ''))
+        .map(p => `<option value="${p.player_id}">${escapeHtml(p.name)} (${escapeHtml(p.nickname || '')}) - ${p.games_played || 0} matches</option>`)
+        .join('');
+      winnerSel.innerHTML = optionsHtml;
+      loserSel.innerHTML = optionsHtml;
+      if (curWinner) winnerSel.value = curWinner;
+      if (curLoser) loserSel.value = curLoser;
+    }
+    async function mergePlayersAdmin() {
+      const winnerSel = document.getElementById('merge-winner-player');
+      const loserSel = document.getElementById('merge-loser-player');
+      const statusEl = document.getElementById('merge-players-status');
+      const detailEl = document.getElementById('merge-players-detail');
+      const winnerId = winnerSel && winnerSel.value;
+      const loserId = loserSel && loserSel.value;
+      if (detailEl) detailEl.innerHTML = '';
+      if (!winnerId || !loserId) { if (statusEl) statusEl.textContent = 'Pick both profiles first.'; return; }
+      if (winnerId === loserId) { if (statusEl) statusEl.textContent = 'Pick two different profiles - one to keep, one to merge away.'; return; }
+      const winnerLabel = winnerSel.options[winnerSel.selectedIndex].textContent;
+      const loserLabel = loserSel.options[loserSel.selectedIndex].textContent;
+      const ok = await nwConfirm(`Merge away "${loserLabel}" into "${winnerLabel}"?\n\nThe merged-away profile will be deleted. This can't be undone.`);
+      if (!ok) return;
+      const code = await nwPrompt('Enter the confirmation code to merge these profiles:');
+      if (!code) return;
+      if (statusEl) statusEl.textContent = 'Merging...';
+      try {
+        const { res, data, error } = await authedFetch(`${API_BASE_URL}/players/merge`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ winner_id: winnerId, loser_id: loserId, confirm: code })
+        });
+        if (!res || !res.ok) {
+          if (statusEl) statusEl.textContent = 'Error: ' + (error || (data && data.error) || 'could not merge');
+          if (detailEl && data) {
+            const blocking = data.blocking_tournaments || data.blocking_finance_records;
+            if (blocking && blocking.length) {
+              detailEl.textContent = 'Blocked by: ' + blocking.join(', ');
+            }
+          }
+          return;
+        }
+        await loadPlayers();
+        populateMergePlayerSelects();
+        populateAdminRenameSelect();
+        populateAdminPrivacySelect();
+        if (statusEl) {
+          statusEl.textContent = `Done - merged. ${data.matches_reassigned || 0} match(es), ${data.groups_updated || 0} group(s), ${data.sessions_updated || 0} open session(s) updated.` +
+            (data.cognito_repointed ? ` Login for ${data.cognito_repointed} moved to the kept profile.` : '');
+        }
+        if (detailEl) detailEl.textContent = 'Next: run "Recompute all ratings & XP" below under Feature settings to rebuild ratings, XP, coins and levels from the corrected match history.';
+      } catch (e) { if (statusEl) statusEl.textContent = 'Failed: ' + e.message; }
+    }
     // ---------- seasons (frontend, C2) ----------
     let seasonsEnabled = false, seasonResetK = 0.3, seasonsList = [], currentSeasonId = null;
     /** Clean Apple-Fitness-style medallion for a top-3 finisher. */
@@ -865,6 +934,7 @@ let userPool = null;
       populateSelect(document.getElementById('bulk_register_group_id'), allGroups, 'group_id', 'group_name', "Don't add to a group yet");
       populateSelect(document.getElementById('match_group_select'), allGroups, 'group_id', 'group_name', 'None');
       defaultMatchGroup();  // pre-pick the recorder's group once groups are loaded
+      defaultRegisterGroup();  // ditto for the two register forms - see its own comment
       // Every group-scoped STATS/HISTORY filter below offers "all groups you
       // can see" rather than the full club roster of groups: a SuperAdmin
       // still gets everything (unchanged); everyone else only gets groups
@@ -1501,7 +1571,10 @@ let userPool = null;
           resultEl.textContent = data.added_to_group
             ? `Registered! Added to ${data.added_to_group}.`
             : `Registered! Player ID: ${data.player_id}`;
-          document.getElementById('register_group_id').value = '';
+          // loadGroups() below repopulates this select from scratch and
+          // re-applies defaultRegisterGroup() itself, so it lands back on
+          // the registrar's own group rather than blank - blank is what let
+          // a registration silently end up in no group at all.
           loadPlayers();
           loadGroups();
         } else {
@@ -1855,6 +1928,26 @@ let userPool = null;
         // a default-picked group needs the same explicit nudge.
         if (typeof nwLoadGroupSessions === 'function') nwLoadGroupSessions();
       }
+    }
+
+    /** Same idea as defaultMatchGroup(), for the two "Register a player"
+     *  forms (Players tab standalone form + bulk register) - both used to
+     *  default their group picker to "Don't add to a group yet", which is
+     *  exactly how a real duplicate-profile bug happened (2026-08-30, owner
+     *  report): someone registered a new player with no group selected, the
+     *  rest of the group never saw them on the group-scoped roster, so
+     *  someone else registered the SAME person again - twice more, in one
+     *  case. Defaulting to the registrar's own group doesn't stop someone
+     *  from deliberately choosing "no group" (that option still exists,
+     *  first in the list), it just stops it from being the silent default
+     *  for the common case of "I'm adding a new member of MY group". */
+    function defaultRegisterGroup() {
+      const mine = myGroups();
+      if (!mine.length) return;
+      const sel = document.getElementById('register_group_id');
+      if (sel && !sel.value) sel.value = mine[0].group_id;
+      const bulkSel = document.getElementById('bulk_register_group_id');
+      if (bulkSel && !bulkSel.value) bulkSel.value = mine[0].group_id;
     }
 
     // ================= Voice match entry =================
@@ -2450,7 +2543,7 @@ let userPool = null;
       const candidates = allPlayers.filter(p => !memberSet.has(p.player_id))
         .sort((a, b) => String(a.name).localeCompare(String(b.name)));
       listEl.innerHTML = candidates.length
-        ? candidates.map(p => `<label class="nw-session-add-row"><input type="checkbox" value="${p.player_id}"><span>${escapeHtml(p.nickname || p.name)}</span></label>`).join('')
+        ? candidates.map(p => `<label class="nw-session-add-row"><input type="checkbox" value="${p.player_id}"><span>${escapeHtml(formatPlayerLabel(p.name, p.nickname))}</span></label>`).join('')
         : '<span class="nw-tap-hint">Everyone in the club is already in this session.</span>';
       listEl.querySelectorAll('input[type="checkbox"]').forEach(cb => cb.addEventListener('change', nwUpdateSessionAddCount));
       nwUpdateSessionAddCount();
@@ -2584,7 +2677,7 @@ let userPool = null;
         // never part of the session's roster, so they don't get one.
         const removeX = (editingNow && !isOneOffGuest)
           ? `<div class="nw-avatar-remove-x" data-remove-session-member="${p.player_id}" title="Remove from this session">&times;</div>` : '';
-        el.innerHTML = removeX + `<div class="nw-avatar-circ">${initials}</div><div class="nw-avatar-lbl">${escapeHtml(p.nickname || p.name)}</div>` +
+        el.innerHTML = removeX + `<div class="nw-avatar-circ">${initials}</div><div class="nw-avatar-lbl">${escapeHtml(formatPlayerLabel(p.name, p.nickname))}</div>` +
           (isOneOffGuest ? '<div class="nw-avatar-guest-tag">guest</div>' : '');
         if (editingNow) {
           const xEl = el.querySelector('[data-remove-session-member]');
@@ -2619,7 +2712,7 @@ let userPool = null;
           .filter(p => !memberIds.has(p.player_id) && !nwTapGuestIds.includes(p.player_id))
           .sort((a, b) => String(a.name).localeCompare(String(b.name)));
         guestSelect.innerHTML = '<option value="">+ Add someone not in this group (guest, this match only)</option>' +
-          candidates.map(p => `<option value="${p.player_id}">${escapeHtml(p.nickname || p.name)}</option>`).join('');
+          candidates.map(p => `<option value="${p.player_id}">${escapeHtml(formatPlayerLabel(p.name, p.nickname))}</option>`).join('');
       } else {
         guestRow.style.display = 'none';
       }
@@ -2646,7 +2739,7 @@ let userPool = null;
 
     function nwTapPlayerName(id) {
       const p = allPlayers.find(pl => pl.player_id === id);
-      return p ? (p.nickname || p.name) : id;
+      return p ? formatPlayerLabel(p.name, p.nickname) : id;
     }
 
     function nwTapRenderTeams() {
@@ -4174,6 +4267,7 @@ let userPool = null;
         applyVoiceVisibility();
         populateAdminPrivacySelect();
         populateAdminRenameSelect();
+        populateMergePlayerSelects();
         seasonsEnabled = !!data.seasons_enabled;
         const sec = document.getElementById('app-seasons-enabled'); if (sec) sec.checked = seasonsEnabled;
         seasonResetK = parseFloat(data.season_reset_k != null ? data.season_reset_k : 0.3);
@@ -12532,6 +12626,11 @@ let userPool = null;
 
     document.getElementById('display-mode-toggle-btn').textContent = showNicknameFirst ? 'Show: Nickname only' : 'Show: Nickname + Name';
     document.getElementById('display-mode-toggle-btn').addEventListener('click', toggleDisplayMode);
+    // Same toggle, reachable right where Quick tap's on-court selection
+    // happens instead of only inside the header menu - not everyone
+    // recognizes everyone else's nickname when picking teams. 2026-08-30.
+    document.getElementById('tap-name-toggle-link').textContent = showNicknameFirst ? 'Names: nicknames' : 'Names: full names';
+    document.getElementById('tap-name-toggle-link').addEventListener('click', toggleDisplayMode);
 
     document.getElementById('theme-toggle-btn').addEventListener('click', () => {
       const current = document.documentElement.getAttribute('data-theme');
