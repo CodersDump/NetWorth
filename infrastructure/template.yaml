@@ -137,6 +137,30 @@ Resources:
         - AttributeName: session_id
           KeyType: HASH
 
+  # Shared quick-tap/voice match queue, 2026-08-30 - previously each
+  # browser kept its own not-yet-sent queue purely in localStorage,
+  # invisible to anyone else recording the same session, which is exactly
+  # how the same match ended up queued twice by two different people.
+  # TimeToLiveSpecification auto-expires an abandoned item (someone queues
+  # a match, then never taps "Send all" and closes the tab) without a
+  # cleanup job - DynamoDB does the sweep for free. The Lambda ALSO filters
+  # on expires_at defensively at read time (list_queue), since TTL deletes
+  # are background/eventually-consistent and can lag by hours.
+  QueueTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub '${AppName}-queue'
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: queue_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: queue_id
+          KeyType: HASH
+      TimeToLiveSpecification:
+        AttributeName: expires_at
+        Enabled: true
+
   # ---------- IAM Role for Lambda ----------
 
   LambdaExecutionRole:
@@ -184,6 +208,7 @@ Resources:
                   - !GetAtt ProgressHistoryTable.Arn
                   - !GetAtt FinanceTable.Arn
                   - !GetAtt ClaimRequestsTable.Arn
+                  - !GetAtt QueueTable.Arn
               # Approving a claim has to write custom:player_id onto the
               # REQUESTER'S account, which only an admin API can do - the
               # self-service updateAttributes call needs their session.
@@ -445,6 +470,7 @@ Resources:
           GROUPS_TABLE: !Ref GroupsTable
           PROGRESS_HISTORY_TABLE: !Ref ProgressHistoryTable
           CONFIRMATION_CODE: !Ref ConfirmationCode
+          QUEUE_TABLE: !Ref QueueTable
       Code: ../backend/lambdas/matches
 
   ProgressSchedulerFunction:
@@ -2086,6 +2112,118 @@ Resources:
   # (defined earlier) already grants apigateway.amazonaws.com invoke
   # access via a '/*/*' wildcard covering every method/path on this API.
 
+  # Shared quick-tap/voice match queue (2026-08-30) - was purely a
+  # per-browser localStorage array until now, invisible to anyone else
+  # recording the same session, which is exactly how the same match ended
+  # up queued twice by two different people. POST adds an item (any group
+  # member); GET lists a group's current queue (polled by the frontend
+  # only while the Record tab is open and visible - same defensive pattern
+  # already used for tournament schedule/auction polling); DELETE removes
+  # one item (sent successfully, or someone decided not to add it - any
+  # group member may remove any item, same "anyone in the group can add
+  # or remove" trust level Sessions already established). See
+  # list_queue/create_queue_item/delete_queue_item in matches/index.py.
+  QueueResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref RestApi
+      ParentId: !GetAtt RestApi.RootResourceId
+      PathPart: queue
+
+  QueueGetMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RestApi
+      ResourceId: !Ref QueueResource
+      HttpMethod: GET
+      AuthorizationType: COGNITO_USER_POOLS
+      AuthorizerId: !Ref CognitoAuthorizer
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${MatchesFunction.Arn}/invocations'
+
+  QueuePostMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RestApi
+      ResourceId: !Ref QueueResource
+      HttpMethod: POST
+      AuthorizationType: COGNITO_USER_POOLS
+      AuthorizerId: !Ref CognitoAuthorizer
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${MatchesFunction.Arn}/invocations'
+
+  QueueOptionsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RestApi
+      ResourceId: !Ref QueueResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,Authorization'"
+              method.response.header.Access-Control-Allow-Methods: "'OPTIONS,GET,POST'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+            method.response.header.Access-Control-Allow-Origin: true
+
+  QueueIdResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref RestApi
+      ParentId: !Ref QueueResource
+      PathPart: '{queue_id}'
+
+  QueueDeleteMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RestApi
+      ResourceId: !Ref QueueIdResource
+      HttpMethod: DELETE
+      AuthorizationType: COGNITO_USER_POOLS
+      AuthorizerId: !Ref CognitoAuthorizer
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${MatchesFunction.Arn}/invocations'
+
+  QueueIdOptionsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RestApi
+      ResourceId: !Ref QueueIdResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,Authorization'"
+              method.response.header.Access-Control-Allow-Methods: "'OPTIONS,DELETE'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+            method.response.header.Access-Control-Allow-Origin: true
+
   # Epic 7 extension: profile viewing, genuinely restricted (guest ->
   # rejected; logged-in member -> only shares-a-group players + self;
   # SuperAdmin -> everyone). One catch-all covers every profile-related
@@ -3527,6 +3665,11 @@ Resources:
       - GroupAddPlayerOptionsMethod
       - RecordMatchMethod
       - RecordMatchOptionsMethod
+      - QueueGetMethod
+      - QueuePostMethod
+      - QueueOptionsMethod
+      - QueueDeleteMethod
+      - QueueIdOptionsMethod
       - CreateTournamentMethod
       - CreateTournamentOptionsMethod
       - ProfileSecureAnyMethod

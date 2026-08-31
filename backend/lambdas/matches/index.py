@@ -43,6 +43,13 @@ players_table = dynamodb.Table(os.environ['PLAYERS_TABLE'])
 tournaments_table = dynamodb.Table(os.environ['TOURNAMENTS_TABLE'])
 groups_table = dynamodb.Table(os.environ['GROUPS_TABLE'])
 history_table = dynamodb.Table(os.environ['PROGRESS_HISTORY_TABLE'])
+# Shared quick-tap/voice queue (2026-08-30) - optional so older stacks
+# still import; see QueueTable's comment in template.yaml for why this
+# exists (was purely per-browser localStorage before, invisible to anyone
+# else recording the same session).
+QUEUE_TABLE = os.environ.get('QUEUE_TABLE')
+queue_table = dynamodb.Table(QUEUE_TABLE) if QUEUE_TABLE else None
+QUEUE_ITEM_TTL_SECONDS = 12 * 60 * 60  # abandoned queue items auto-expire after 12h
 
 K_FACTOR = 32
 
@@ -1012,6 +1019,138 @@ def record_match_enforced(event):
     return record_match(event)
 
 
+def _queue_item_out(item):
+    """Shapes one queue row for the API response - the frontend's shared-
+    queue render expects the same field names it used to keep in its own
+    localStorage item shape, plus created_by/created_by_name (new: this is
+    the whole point of the queue now being server-side and shared)."""
+    def _int_or_none(v):
+        return int(v) if v is not None else None
+    return {
+        'queue_id': item.get('queue_id'), 'group_id': item.get('group_id'),
+        'created_by': item.get('created_by'), 'created_by_name': item.get('created_by_name'),
+        'created_at': item.get('created_at'),
+        'source': item.get('source'), 'status': item.get('status'),
+        'reviewReason': item.get('review_reason'),
+        'match_type': item.get('match_type'),
+        'points_to_win': _int_or_none(item.get('points_to_win')),
+        'team_a': item.get('team_a', []), 'team_b': item.get('team_b', []),
+        'team_a_label': item.get('team_a_label'), 'team_b_label': item.get('team_b_label'),
+        'score_a': _int_or_none(item.get('score_a')), 'score_b': _int_or_none(item.get('score_b')),
+        'rawTranscript': item.get('raw_transcript'),
+    }
+
+
+def create_queue_item(event):
+    """Adds one not-yet-submitted match to its group's SHARED queue -
+    2026-08-30, replacing what used to live only in the recording device's
+    own localStorage (invisible to anyone else, which is exactly how the
+    same match ended up queued twice by two different people on the same
+    session). Any real member of the group may add to it; nothing here
+    touches ratings/history - that only happens once an item is actually
+    sent via the existing /record-match, same as before."""
+    claims = _caller_claims(event)
+    if not claims:
+        return _response(403, {'error': 'log in to queue a match'})
+    not_member = _requires_linked_member(claims)
+    if not_member:
+        return not_member
+    if not queue_table:
+        return _response(500, {'error': 'the shared queue is not configured on this stack'})
+
+    body = json.loads(event.get('body') or '{}')
+    group_id = body.get('group_id')
+    if not group_id:
+        return _response(400, {'error': 'group_id is required'})
+    caller_player_id = claims.get('custom:player_id')
+    if not _is_super_admin(claims) and caller_player_id not in get_group_member_ids(group_id):
+        return _response(403, {'error': 'you can only queue matches for a group you belong to'})
+
+    # Snapshot the adder's name onto the item itself (like team_a_names
+    # elsewhere) rather than resolving created_by -> name fresh on every
+    # GET - one lookup now instead of one per poll per viewer.
+    caller_name = None
+    if caller_player_id:
+        p = players_table.get_item(Key={'player_id': caller_player_id}).get('Item')
+        caller_name = p.get('name') if p else None
+    caller_name = caller_name or claims.get('email') or 'SuperAdmin'
+
+    now = datetime.now(timezone.utc)
+    item = {
+        'queue_id': str(uuid.uuid4()), 'group_id': group_id,
+        'created_by': caller_player_id, 'created_by_name': caller_name,
+        'created_at': now.isoformat(),
+        'expires_at': int(now.timestamp()) + QUEUE_ITEM_TTL_SECONDS,
+        'source': body.get('source') or 'tap', 'status': body.get('status') or 'ok',
+        'review_reason': body.get('reviewReason'),
+        'match_type': body.get('match_type'), 'points_to_win': body.get('points_to_win'),
+        'team_a': body.get('team_a') or [], 'team_b': body.get('team_b') or [],
+        'team_a_label': body.get('team_a_label'), 'team_b_label': body.get('team_b_label'),
+        'score_a': body.get('score_a'), 'score_b': body.get('score_b'),
+        'raw_transcript': body.get('rawTranscript'),
+    }
+    item = {k: v for k, v in item.items() if v is not None}  # keep it lean; boto3 rejects None as a value type anyway
+    queue_table.put_item(Item=item)
+    return _response(200, _queue_item_out(item))
+
+
+def list_queue(event):
+    """Every member of the group sees the SAME pending queue - polled by
+    the frontend only while the Record tab is open and visible (same
+    defensive pattern as the existing tournament schedule/auction pollers:
+    pause when hidden, skip re-render when nothing changed). The point is
+    letting someone notice a match a teammate already queued before
+    queuing it again themselves."""
+    claims = _caller_claims(event)
+    if not claims:
+        return _response(403, {'error': 'log in to view the queue'})
+    params = event.get('queryStringParameters') or {}
+    group_id = params.get('group_id')
+    if not group_id:
+        return _response(400, {'error': 'group_id is required'})
+    if not _is_super_admin(claims) and claims.get('custom:player_id') not in get_group_member_ids(group_id):
+        return _response(403, {'error': 'you can only view the queue for a group you belong to'})
+    if not queue_table:
+        return _response(200, {'items': []})
+
+    # Defensive expiry filter: DynamoDB TTL deletes are a background sweep
+    # and can lag by hours, so an abandoned item could still physically be
+    # in the table well past its expiry - don't trust TTL alone to keep it
+    # out of what people see.
+    now_epoch = int(datetime.now(timezone.utc).timestamp())
+    items = _scan_all(queue_table, FilterExpression='group_id = :g',
+                       ExpressionAttributeValues={':g': group_id})
+    items = [i for i in items if int(i.get('expires_at', 0)) > now_epoch]
+    items.sort(key=lambda i: i.get('created_at', ''))
+    return _response(200, {'items': [_queue_item_out(i) for i in items]})
+
+
+def delete_queue_item(queue_id, event):
+    """Removes one queued item - either because it was just sent
+    successfully (the frontend calls this right after a successful
+    /record-match POST for that item), or because someone decided not to
+    add it after all. Any member of the item's own group may remove it,
+    not just whoever added it - matches the trust level Sessions already
+    established ('anyone in the group can add or remove people here')."""
+    claims = _caller_claims(event)
+    if not claims:
+        return _response(403, {'error': 'log in to remove a queued match'})
+    if not queue_table:
+        return _response(500, {'error': 'the shared queue is not configured on this stack'})
+    if not queue_id:
+        return _response(400, {'error': 'queue_id is required'})
+    item = queue_table.get_item(Key={'queue_id': queue_id}).get('Item')
+    if not item:
+        # Already gone (sent, expired, or removed by someone else just now)
+        # - the end state the caller wanted already holds, so this isn't
+        # an error worth surfacing.
+        return _response(200, {'deleted': queue_id})
+    if not _is_super_admin(claims) and claims.get('custom:player_id') not in get_group_member_ids(item.get('group_id')):
+        return _response(403, {'error': 'you can only remove queued matches for a group you belong to'})
+    queue_table.delete_item(Key={'queue_id': queue_id})
+    return _response(200, {'deleted': queue_id})
+
+
 def profile_view_enforced(event):
     """Entry point for the isolated /profile-secure/{proxy+} catch-all.
     Determines which player's profile is being requested from whichever
@@ -1050,6 +1189,16 @@ def handler(event, context):
         # path can't sit alongside {proxy+}/ANY at the same parent).
         if event.get('resource') == '/record-match' and method == 'POST':
             return record_match_enforced(event)
+
+        # Shared quick-tap/voice queue - isolated top-level routes for the
+        # same platform reason as /record-match (a specific path can't sit
+        # alongside {proxy+}/ANY at the same parent).
+        if event.get('resource') == '/queue' and method == 'GET':
+            return list_queue(event)
+        if event.get('resource') == '/queue' and method == 'POST':
+            return create_queue_item(event)
+        if event.get('resource') == '/queue/{queue_id}' and method == 'DELETE':
+            return delete_queue_item((event.get('pathParameters') or {}).get('queue_id'), event)
 
         # Reorder a single day's matches by swapping their timestamps, then
         # replay ratings. SuperAdmin only - it rewrites history.

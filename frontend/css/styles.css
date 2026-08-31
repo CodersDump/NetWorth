@@ -528,6 +528,29 @@
 
 .nw-tap-section-label { font-size: 13px; font-weight: 700; margin-bottom: 8px; display: flex; align-items: center; flex-wrap: wrap; gap: 4px 10px; }
 .nw-tap-hint { font-weight: 400; font-size: 11.5px; color: var(--text-secondary); }
+/* Was a tiny 12px native <select> with no visual weight - just a blank-
+   value placeholder option easy to miss below the avatar grid. Restyled
+   as a real call-to-action button, matching the dashed "+" tile look used
+   elsewhere (.nw-avatar.add-tile) rather than inventing a new visual
+   language for "add something new". It now only toggles a small panel
+   open/closed (existing-player select, or a new-player name field) -
+   2026-08-31, so an all-new person can be added as a guest too, not just
+   someone already registered elsewhere in the club. */
+#tap-guest-toggle-btn {
+  display: block;
+  width: 100%;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  padding: 11px 14px;
+  border-radius: 10px;
+  border: 2px dashed var(--court);
+  color: var(--court);
+  background: var(--surface-2);
+  text-align: left;
+  cursor: pointer;
+}
+#tap-guest-select { width: 100%; }
 .nw-oncourt-actions { margin-left: auto; display: flex; gap: 6px; }
 button.tiny { margin-top: 0; padding: 5px 10px; font-size: 11px; border-radius: 8px; }
 /* Fixed 4-per-row grid, not flex-wrap - flex-wrap fit 4 or 5 depending on
@@ -635,3 +658,9 @@ button.tiny { margin-top: 0; padding: 5px 10px; font-size: 11px; border-radius: 
 .nw-queue-actions { display: flex; gap: 10px; white-space: nowrap; }
 .nw-queue-actions a { font-size: 11.5px; color: var(--rally); cursor: pointer; font-weight: 600; }
 .nw-queue-actions a.danger { color: var(--smash); }
+/* Queue is now shared (2026-08-30) - a teammate's own pending match needs
+   to visually stand out from your own, so nobody double-queues the same
+   result without noticing it's already there. Text-only emphasis (not a
+   second border/background layer) so it never fights with the existing
+   ok/warn left-border status colour above. */
+.nw-queue-by-other { color: var(--rally); font-weight: 700; }

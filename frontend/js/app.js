@@ -131,6 +131,10 @@ let userPool = null;
       if (document.visibilityState === 'visible' && typeof schedulePollTournamentId !== 'undefined' && schedulePollTournamentId) {
         schedulePollTick(schedulePollTournamentId);
       }
+      // ...and for the shared match queue.
+      if (document.visibilityState === 'visible' && typeof nwQueuePollGroupId !== 'undefined' && nwQueuePollGroupId) {
+        nwQueueFetchTick(nwQueuePollGroupId);
+      }
     });
 
     function describeApiError(res, data) {
@@ -2332,6 +2336,7 @@ let userPool = null;
         if (typeof nwLoadGroupSessions === 'function') nwLoadGroupSessions();
         else nwTapRefreshAvatarGrid();
       }
+      if (typeof nwMaybeStartQueuePolling === 'function') nwMaybeStartQueuePolling(); // only tap/voice actually poll - stops itself otherwise
     }
     document.querySelectorAll('.nw-mode-btn').forEach(b => b.addEventListener('click', () => nwSetRecordMode(b.dataset.mode)));
     document.getElementById('tap-switch-to-classic').addEventListener('click', (e) => { e.preventDefault(); nwSetRecordMode('classic'); });
@@ -2547,8 +2552,27 @@ let userPool = null;
         : '<span class="nw-tap-hint">Everyone in the club is already in this session.</span>';
       listEl.querySelectorAll('input[type="checkbox"]').forEach(cb => cb.addEventListener('change', nwUpdateSessionAddCount));
       nwUpdateSessionAddCount();
+      nwSetSessionAddMode('existing'); // always reopen on the existing-player picker - don't strand the panel in "new player" mode from a previous visit
       document.getElementById('tap-session-add-panel').style.display = '';
     }
+
+    /* Two explicit modes ("Add existing player" / "Add new player") instead
+     * of always showing the roster checkbox list stacked above a bare
+     * "...or register someone new" field - the owner found that combo
+     * confusing ("why is register new player showing up here?"), since the
+     * two do very different things underneath (add to this session vs. a
+     * permanent club-wide registration) but looked like one continuous
+     * form. */
+    function nwSetSessionAddMode(mode) {
+      document.querySelectorAll('#tap-session-add-mode-seg .nw-seg-btn').forEach(b => b.classList.toggle('active', b.dataset.mode === mode));
+      document.getElementById('tap-session-add-existing-block').style.display = mode === 'existing' ? '' : 'none';
+      document.getElementById('tap-session-add-new-block').style.display = mode === 'new' ? '' : 'none';
+      document.getElementById('tap-session-add-selected-btn').style.display = mode === 'existing' ? '' : 'none';
+    }
+    document.getElementById('tap-session-add-mode-seg').addEventListener('click', (e) => {
+      const btn = e.target.closest('.nw-seg-btn');
+      if (btn) nwSetSessionAddMode(btn.dataset.mode);
+    });
 
     function nwUpdateSessionAddCount() {
       const n = document.querySelectorAll('#tap-session-add-list input:checked').length;
@@ -2711,21 +2735,82 @@ let userPool = null;
         const candidates = allPlayers
           .filter(p => !memberIds.has(p.player_id) && !nwTapGuestIds.includes(p.player_id))
           .sort((a, b) => String(a.name).localeCompare(String(b.name)));
-        guestSelect.innerHTML = '<option value="">+ Add someone not in this group (guest, this match only)</option>' +
+        guestSelect.innerHTML = '<option value="">Pick a player…</option>' +
           candidates.map(p => `<option value="${p.player_id}">${escapeHtml(formatPlayerLabel(p.name, p.nickname))}</option>`).join('');
       } else {
         guestRow.style.display = 'none';
+        nwCloseGuestPanel();
       }
 
       nwTapRenderTeams();
     }
 
+    /* Guest add ("this match only") - split into two modes, same reasoning
+     * and same .nw-seg pattern as the session roster's add panel: "Existing
+     * player" (pick from the club roster, added as a one-off guest exactly
+     * like before) vs. "New player" (a real, PERMANENT player record gets
+     * created via the same /register the Players tab uses - just with no
+     * group - and THAT player is then added as a one-off guest here, same
+     * as picking an existing one). Added 2026-08-31: before this, someone
+     * brand new to the club could only be added via an active session's
+     * roster-edit panel - there was no way to bring in a first-timer at
+     * all while just using the full group roster. */
+    function nwCloseGuestPanel() {
+      const panel = document.getElementById('tap-guest-panel');
+      if (panel) panel.style.display = 'none';
+    }
+    function nwSetGuestAddMode(mode) {
+      document.querySelectorAll('#tap-guest-mode-seg .nw-seg-btn').forEach(b => b.classList.toggle('active', b.dataset.mode === mode));
+      document.getElementById('tap-guest-existing-block').style.display = mode === 'existing' ? '' : 'none';
+      document.getElementById('tap-guest-new-block').style.display = mode === 'new' ? '' : 'none';
+      document.getElementById('tap-guest-error').style.display = 'none';
+    }
+    document.getElementById('tap-guest-mode-seg').addEventListener('click', (e) => {
+      const btn = e.target.closest('.nw-seg-btn');
+      if (btn) nwSetGuestAddMode(btn.dataset.mode);
+    });
+    document.getElementById('tap-guest-toggle-btn').addEventListener('click', () => {
+      const panel = document.getElementById('tap-guest-panel');
+      const opening = panel.style.display === 'none';
+      panel.style.display = opening ? '' : 'none';
+      if (opening) nwSetGuestAddMode('existing'); // never reopen stranded on "new player" from a past visit
+    });
     document.getElementById('tap-guest-select').addEventListener('change', (e) => {
       const id = e.target.value;
       if (!id) return;
       nwTapGuestIds.push(id);
       e.target.value = '';
+      nwCloseGuestPanel();
       nwTapRefreshAvatarGrid();
+    });
+    document.getElementById('tap-guest-new-add').addEventListener('click', async () => {
+      const input = document.getElementById('tap-guest-new-name');
+      const errEl = document.getElementById('tap-guest-error');
+      const btn = document.getElementById('tap-guest-new-add');
+      const name = input.value.trim();
+      errEl.style.display = 'none';
+      if (!name) return;
+      btn.disabled = true;
+      try {
+        const { res, data, error } = await authedFetch(`${API_BASE_URL}/register`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name })
+        });
+        if (!res || !res.ok) {
+          errEl.textContent = error || (data && data.error) || 'Could not register that player.';
+          errEl.style.display = '';
+          return;
+        }
+        await loadPlayers(); // the new player isn't in allPlayers yet - every picker (this one included) needs the refreshed list
+        nwTapGuestIds.push(data.player_id);
+        input.value = '';
+        nwCloseGuestPanel();
+        nwTapRefreshAvatarGrid();
+      } catch (e) {
+        errEl.textContent = 'Failed: ' + e.message;
+        errEl.style.display = '';
+      } finally {
+        btn.disabled = false;
+      }
     });
 
     function nwTapToggleAvatar(playerId) {
@@ -2763,6 +2848,7 @@ let userPool = null;
       nwTapTeamA = []; nwTapTeamB = [];
       nwActiveSessionId = '';
       nwLoadGroupSessions();
+      if (typeof nwMaybeStartQueuePolling === 'function') nwMaybeStartQueuePolling(); // shared queue is scoped by group - switching groups means switching what's being watched
     });
 
     document.getElementById('tap-recall-btn').addEventListener('click', () => {
@@ -2864,18 +2950,14 @@ let userPool = null;
       }
 
       const team_a = [...nwTapTeamA], team_b = [...nwTapTeamB];
-      const item = {
-        id: 'q' + Date.now() + Math.random().toString(36).slice(2, 7),
+      nwQueuePushItem({
         source: 'tap', status: 'ok', reviewReason: '',
         group_id, match_type, points_to_win,
         team_a, team_b,
         team_a_label: team_a.map(nwTapPlayerName).join(' & '),
         team_b_label: team_b.map(nwTapPlayerName).join(' & '),
         score_a, score_b
-      };
-      nwMatchQueue.push(item);
-      nwSaveQueue();
-      nwRenderQueue();
+      });
 
       nwLastTapMatch = { team_a, team_b };
       nwTapTeamA = []; nwTapTeamB = [];
@@ -2950,26 +3032,20 @@ let userPool = null;
       const points_to_win = document.getElementById('points_to_win_select').value;
       const parsed = nwParseMatchTranscript(said);
 
-      const base = {
-        id: 'q' + Date.now() + Math.random().toString(36).slice(2, 7),
-        source: 'voice', rawTranscript: said,
-        group_id, points_to_win
-      };
+      const base = { source: 'voice', rawTranscript: said, group_id, points_to_win };
 
       if (parsed.error) {
-        nwMatchQueue.push({ ...base, status: 'warn', reviewReason: parsed.error,
+        nwQueuePushItem({ ...base, status: 'warn', reviewReason: parsed.error,
           match_type: 'doubles', team_a: [], team_b: [],
           team_a_label: '?', team_b_label: '?', score_a: null, score_b: null });
-        nwSaveQueue(); nwRenderQueue();
         return;
       }
       if (!group_id && !isSuperAdmin()) {
-        nwMatchQueue.push({ ...base, status: 'warn', reviewReason: 'No group selected - pick one above, or Edit this row.',
+        nwQueuePushItem({ ...base, status: 'warn', reviewReason: 'No group selected - pick one above, or Edit this row.',
           match_type: parsed.matchType, team_a: [], team_b: [],
           team_a_label: 'heard: ' + parsed.teamA.map(e => e.token).join(' & '),
           team_b_label: 'heard: ' + parsed.teamB.map(e => e.token).join(' & '),
           score_a: parsed.scoreA, score_b: parsed.scoreB });
-        nwSaveQueue(); nwRenderQueue();
         return;
       }
 
@@ -2981,7 +3057,7 @@ let userPool = null;
       if (parsed.scoreA == null || parsed.scoreB == null) reasons.push('no score heard');
       if (new Set([...team_a, ...team_b]).size !== team_a.length + team_b.length) reasons.push('same player heard on both sides');
 
-      nwMatchQueue.push({
+      nwQueuePushItem({
         ...base,
         status: reasons.length ? 'warn' : 'ok',
         reviewReason: reasons.join('; '),
@@ -2990,15 +3066,54 @@ let userPool = null;
         team_b_label: parsed.teamB.map(e => e.player ? nwTapPlayerName(e.player.player_id) : `"${e.token}"?`).join(' & '),
         score_a: parsed.scoreA, score_b: parsed.scoreB
       });
-      nwSaveQueue(); nwRenderQueue();
     }
 
     // ---------- shared queue: render, edit, remove, send all ----------
-    const NW_QUEUE_KEY = 'nw_match_queue';
+    // 2026-08-30: was purely a per-browser localStorage array, invisible to
+    // anyone else recording the same session - which is exactly how the
+    // same match ended up queued twice by two different people. Now it's
+    // backed by a real table (GET/POST /queue, DELETE /queue/{id}) scoped
+    // by group_id, polled every 8s while the Record tab is open, visible,
+    // and in tap/voice mode with a group selected (nwMaybeStartQueuePolling
+    // / nwQueueFetchTick, same defensive pattern as the tournament schedule
+    // /auction pollers: pause when hidden, skip re-render when unchanged).
+    //
+    // A queue item has a `queue_id` once the server knows about it, and
+    // always has an `id` (== queue_id for server items, a locally-generated
+    // one otherwise) so render/edit/remove can address either kind
+    // uniformly. Items stay LOCAL-ONLY (no queue_id, never synced, exactly
+    // like before this feature existed) in the one case there's nothing to
+    // share with: the rare SuperAdmin-only "no group selected" queue entry.
+    // A local add is optimistic - it renders immediately, then the POST
+    // fills in queue_id/created_by_name once it resolves; if the POST
+    // fails (offline, blip), the item just quietly stays local-only rather
+    // than being lost, and can still be sent normally via "Send all".
     let nwMatchQueue = [];
-    try { nwMatchQueue = JSON.parse(localStorage.getItem(NW_QUEUE_KEY) || '[]'); } catch (_) { nwMatchQueue = []; }
-    function nwSaveQueue() {
-      try { localStorage.setItem(NW_QUEUE_KEY, JSON.stringify(nwMatchQueue)); } catch (_) {}
+
+    function nwQueueAddedByLabel(item) {
+      if (!item.queue_id) return 'You'; // not yet synced (or never will be) - can only be something this browser just added
+      if (item.created_by && item.created_by === myPlayerId()) return 'You';
+      return item.created_by_name || 'someone else';
+    }
+
+    async function nwQueuePushItem(fields) {
+      const tempId = 'q' + Date.now() + Math.random().toString(36).slice(2, 7);
+      nwMatchQueue.push({ ...fields, queue_id: null, id: tempId });
+      nwRenderQueue();
+      if (!fields.group_id) return; // nothing to share with - stays local-only, same as always
+      try {
+        const { res, data } = await authedFetch(`${API_BASE_URL}/queue`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(fields)
+        });
+        if (res && res.ok && data) {
+          const idx = nwMatchQueue.findIndex(i => i.id === tempId);
+          if (idx !== -1) nwMatchQueue[idx] = { ...data, id: data.queue_id };
+          nwMaybeStartQueuePolling(); // there's now something worth watching for, if not already running
+          nwRenderQueue();
+        }
+        // Failure (403/500/etc): the item just stays local-only - visible
+        // to nobody else, but not lost, and still sendable.
+      } catch (_) { /* offline/transient - stays local-only */ }
     }
 
     function nwRenderQueue() {
@@ -3009,21 +3124,26 @@ let userPool = null;
       document.getElementById('queue-count').textContent = nwMatchQueue.length;
       const groupName = (gid) => { const g = allGroups.find(x => x.group_id === gid); return g ? g.group_name : (gid ? gid : 'no group'); };
 
-      list.innerHTML = nwMatchQueue.map(item => `
-        <div class="nw-queue-row ${item.status}">
+      list.innerHTML = nwMatchQueue.map(item => {
+        const addedBy = nwQueueAddedByLabel(item);
+        const byOther = addedBy !== 'You';
+        return `
+        <div class="nw-queue-row ${item.status}${byOther ? ' by-other' : ''}">
           <div class="nw-queue-top">
             <span>${escapeHtml(item.team_a_label)} vs ${escapeHtml(item.team_b_label)}</span>
             <span>${item.score_a != null ? item.score_a + '–' + item.score_b : '?'}</span>
           </div>
           <div class="nw-queue-meta">
             ${item.source === 'voice' ? '🎤' : '⚡'} ${groupName(item.group_id)} · ${item.match_type}
+            · added by ${byOther ? `<span class="nw-queue-by-other">${escapeHtml(addedBy)}</span>` : 'you'}
             ${item.status === 'warn' ? `<br><span style="color:#B8860B;font-weight:600;">⚠ ${escapeHtml(item.reviewReason || 'needs review')}</span>` : ''}
           </div>
           <div class="nw-queue-actions" style="margin-top:6px;">
             <a data-edit="${item.id}">✎ Edit</a>
             <a data-remove="${item.id}" class="danger">✕ Remove</a>
           </div>
-        </div>`).join('');
+        </div>`;
+      }).join('');
 
       list.querySelectorAll('[data-edit]').forEach(a => a.addEventListener('click', () => nwQueueEditItem(a.dataset.edit)));
       list.querySelectorAll('[data-remove]').forEach(a => a.addEventListener('click', () => nwQueueRemoveItem(a.dataset.remove)));
@@ -3035,12 +3155,53 @@ let userPool = null;
         : '';
     }
 
+    // Only while the Record tab is open, visible, in tap/voice mode, and a
+    // real group is selected - there's no shared queue to poll otherwise
+    // (nothing group-scoped to fetch). Mirrors startSchedulePolling/
+    // startDraftPolling's shape exactly.
+    let nwQueuePollTimer = null;
+    let nwQueuePollGroupId = null;
+    function stopQueuePolling() {
+      if (nwQueuePollTimer) { clearInterval(nwQueuePollTimer); nwQueuePollTimer = null; }
+      nwQueuePollGroupId = null;
+    }
+    function nwMaybeStartQueuePolling() {
+      const tabPanel = document.getElementById('tab-matches');
+      const activeModeBtn = document.querySelector('.nw-mode-btn.active');
+      const mode = activeModeBtn ? activeModeBtn.dataset.mode : 'classic';
+      const groupId = document.getElementById('match_group_select').value;
+      const shouldRun = tabPanel && tabPanel.classList.contains('active') && (mode === 'tap' || mode === 'voice') && !!groupId;
+      if (!shouldRun) { stopQueuePolling(); return; }
+      if (nwQueuePollGroupId === groupId && nwQueuePollTimer) return; // already polling this group
+      stopQueuePolling();
+      nwQueuePollGroupId = groupId;
+      nwQueueFetchTick(groupId); // immediate fetch, don't make the first paint wait 8s
+      nwQueuePollTimer = setInterval(() => nwQueueFetchTick(groupId), 8000);
+    }
+    async function nwQueueFetchTick(groupId) {
+      if (nwQueuePollGroupId !== groupId) return; // a newer poll target has since replaced this one
+      if (document.visibilityState !== 'visible') return; // paused while the tab/window is hidden
+      const tabPanel = document.getElementById('tab-matches');
+      if (!tabPanel || !tabPanel.classList.contains('active')) return; // paused once we've left the tab
+      try {
+        const { res, data } = await authedFetch(`${API_BASE_URL}/queue?group_id=${encodeURIComponent(groupId)}`);
+        if (!res || !res.ok || !data) return;
+        if (nwQueuePollGroupId !== groupId) return; // stale response - a newer target replaced this mid-flight
+        const localOnly = nwMatchQueue.filter(i => !i.queue_id);
+        const merged = [...(data.items || []).map(i => ({ ...i, id: i.queue_id })), ...localOnly];
+        if (JSON.stringify(merged) === JSON.stringify(nwMatchQueue)) return; // nothing changed - skip the re-render
+        nwMatchQueue = merged;
+        nwRenderQueue();
+      } catch (_) { /* transient network hiccup - just skip this tick */ }
+    }
+
     function nwQueueEditItem(id) {
       const idx = nwMatchQueue.findIndex(i => i.id === id);
       if (idx === -1) return;
       const item = nwMatchQueue[idx];
       nwMatchQueue.splice(idx, 1);
-      nwSaveQueue();
+      nwRenderQueue();
+      if (item.queue_id) authedFetch(`${API_BASE_URL}/queue/${item.queue_id}`, { method: 'DELETE' }).catch(() => {});
 
       nwSetRecordMode('tap');
       document.getElementById('match_group_select').value = item.group_id || '';
@@ -3071,22 +3232,23 @@ let userPool = null;
           }
         }
       });
-      nwRenderQueue();
     }
 
     async function nwQueueRemoveItem(id) {
       if (!await nwConfirm('Remove this match from the queue? It will not be recorded.')) return;
+      const item = nwMatchQueue.find(i => i.id === id);
       nwMatchQueue = nwMatchQueue.filter(i => i.id !== id);
-      nwSaveQueue();
       nwRenderQueue();
+      if (item && item.queue_id) authedFetch(`${API_BASE_URL}/queue/${item.queue_id}`, { method: 'DELETE' }).catch(() => {});
     }
 
     document.getElementById('queue-clear-btn').addEventListener('click', async () => {
       if (!nwMatchQueue.length) return;
       if (!await nwConfirm(`Clear all ${nwMatchQueue.length} pending match(es)? None of them will be recorded.`)) return;
+      const toDelete = nwMatchQueue.filter(i => i.queue_id).map(i => i.queue_id);
       nwMatchQueue = [];
-      nwSaveQueue();
       nwRenderQueue();
+      toDelete.forEach(qid => authedFetch(`${API_BASE_URL}/queue/${qid}`, { method: 'DELETE' }).catch(() => {}));
     });
 
     document.getElementById('queue-send-all-btn').addEventListener('click', async () => {
@@ -3114,13 +3276,12 @@ let userPool = null;
 
         if (outcome.res && outcome.res.ok) {
           nwMatchQueue.shift();
-          nwSaveQueue();
           sent++;
           bumpMatchesRev();
           [...item.team_a, ...item.team_b].forEach(id => touchedPlayers.add(id));
           nwRenderQueue();
+          if (item.queue_id) authedFetch(`${API_BASE_URL}/queue/${item.queue_id}`, { method: 'DELETE' }).catch(() => {});
         } else {
-          nwSaveQueue();
           nwRenderQueue();
           sendBtn.disabled = false;
           progressEl.textContent = '';
@@ -12524,6 +12685,10 @@ let userPool = null;
       // never keeps hitting the API in the background from another tab.
       if (tabName !== 'tournaments' && typeof stopDraftPolling === 'function') stopDraftPolling();
       if (tabName !== 'tournaments' && typeof stopSchedulePolling === 'function') stopSchedulePolling();
+      // Shared match queue polling only makes sense on the Record tab -
+      // stop it the instant we leave, same reasoning as the two above.
+      if (tabName !== 'matches' && typeof stopQueuePolling === 'function') stopQueuePolling();
+      if (tabName === 'matches' && typeof nwMaybeStartQueuePolling === 'function') nwMaybeStartQueuePolling();
       document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
       document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
       btn.classList.add('active');
