@@ -380,6 +380,59 @@
 
 ## Done
 
+- ✅ 2026-08-30 (v1.80.0) — **Shared quick-tap/voice match queue, plus two guest/roster-add UI
+  fixes.** **(1)** The match queue (quick-tap/voice matches waiting for "Send all") was purely a
+  per-browser `localStorage` array — invisible to anyone else recording the same session, which is
+  exactly how the same match ended up queued twice by two different people (owner report). Made it
+  genuinely shared: new `networth-queue` DynamoDB table (TTL-based 12h auto-expiry for abandoned
+  items, no cleanup job needed) + `GET/POST /queue`, `DELETE /queue/{queue_id}` on the matches Lambda
+  (`list_queue`/`create_queue_item`/`delete_queue_item`), scoped by `group_id` — any real member of
+  that group (or SuperAdmin) can add/view/remove any item, same trust level Sessions already
+  established. Frontend polls `GET /queue?group_id=` every 8s, but ONLY while the Record tab is open,
+  visible, in tap/voice mode, and a group is selected (`nwMaybeStartQueuePolling`/`nwQueueFetchTick`) —
+  copies the exact defensive pattern the tournament schedule/auction pollers already use (pause while
+  hidden, skip re-render when nothing changed, instant extra tick on tab-wake via `visibilitychange`).
+  Cost-checked before building this, not assumed: even at a generous 25 concurrent viewers polling
+  every 8s for a full 3-hour session 4x/week, that's under 600K requests/month — about $2/month
+  worst-case with zero free tier, in practice closer to $0 since Lambda's free tier alone covers 1M
+  requests/month. Every queue row now also shows who added it (`created_by`/`created_by_name`,
+  snapshotted at creation like `team_a_names`), with a teammate's own pending item visually called out
+  (bold, accent-coloured "added by NAME" vs. plain "added by you") so a double-queue gets noticed before
+  it happens. A queue item added with no group selected (rare SuperAdmin-only case) stays local-only —
+  nothing to share with — exactly as it always worked before this feature existed; the same fallback
+  also covers a failed/offline POST, so a flaky connection never loses someone's just-recorded result,
+  just leaves it private to their own browser. Add/edit/remove/clear-all/send-all all updated to
+  reconcile with the server (optimistic local render, fire-and-forget `DELETE` on removal/send/edit so
+  the UI never blocks on network round-trips it doesn't need to wait for). **(2)** "+ Add someone not in
+  this group (guest, this match only)" was a plain 12px native `<select>` whose only affordance was its
+  blank placeholder-option text — easy to miss entirely below the avatar grid (owner report, from a
+  screenshot) — AND could only pick someone already registered elsewhere in the club; there was no way
+  to bring in a genuine first-timer as a one-off guest without first opening an active session's
+  roster-edit panel. Reworked into `#tap-guest-toggle-btn`, a full-width bold dashed-border pill
+  (matching the existing "+" add-tile visual language) that opens a small panel with two explicit
+  `.nw-seg` tabs: "Existing player" (the same club-roster `<select>` as before) and "New player" (a name
+  field that calls the same `POST /register` the Players tab's registration card uses — no group, so a
+  real permanent player record is created, but their inclusion in THIS match/session stays a one-off
+  guest exactly like picking an existing player would). `loadPlayers()` refreshes before the new guest
+  is added to `nwTapGuestIds`, so every other picker picks them up too. **(3)** The session roster's add
+  panel used to always show a checkbox list of existing players stacked directly above a bare "…or
+  register someone new" text field — which reads as one continuous form even though the two do very
+  different things underneath (that field also creates a real, permanent player, but ADDS them to the
+  session's roster directly rather than as a one-off guest, and has no skill-level field). Owner report:
+  "why is register new player showing up here?" — clarified in a follow-up round to be about the guest
+  picker above, not this panel, but this panel's own existing/new split (built the same round, before the
+  clarification) reads clearly on its own and was kept. Split into two explicit segmented-control tabs
+  ("Add existing player" / "Add new player", reusing the existing `.nw-seg`/`.nw-seg-btn` styling for
+  consistency with every other segmented control in the app, including the new guest picker above) that
+  show one block or the other, never both at once; `nwOpenSessionAddPanel()` always reopens on the
+  existing-player tab so a past visit's mode never carries over. The two flows stay deliberately distinct:
+  the guest picker's adds are one-off (never touch group/session membership at all), while this panel's
+  adds are permanent SESSION membership (until the session closes or they're removed) — same "existing
+  vs. new" shape, different destination. Verified: `ast.parse` on both backend files, a scripted YAML
+  parse of the template (all new resources present, no duplicate `PathPart`/`DependsOn` entries),
+  `node -c app.js`, no duplicate HTML ids. `JS_SECTIONS` re-derived again from both banner styles. Amended
+  in place before this version was ever deployed, so it stays v1.80.0 rather than bumping again.
+
 - ✅ 2026-08-30 (v1.79.0) — **Quick-tap grid/nickname fixes from a real mobile screenshot, the
   duplicate-registration root cause, and a new admin merge-duplicate-profiles tool.** **(1)** The "On
   court" avatar grid was `display:flex; flex-wrap:wrap` with a fixed `.nw-avatar { width: 58px }`, so it
