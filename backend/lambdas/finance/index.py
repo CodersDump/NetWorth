@@ -540,7 +540,57 @@ def _member_relief(settlement, memberships, ident, month, year, slot=None):
     return round(relief, 2)
 
 
+def _ensure_group_wide_membership_records(group_id, month, year):
+    """Lazily create one slot=GROUP_SLOT membership record per distinct
+    real-slot 'Yes' member for (month, year), so a shared/group-wide
+    expense can be confirmed the same way a per-slot membership already
+    is - via the existing confirm_payment mechanism and the existing
+    Members card UI - without an admin having to add them by hand.
+
+    These records carry no cost math of their own: every loop in
+    _settlement_rows/my_settlement/insights that walks real slot
+    enrollments explicitly skips slot=GROUP_SLOT. They exist purely so
+    there's something to attach payment_confirmed_amount to. Idempotent -
+    only creates what's missing, safe to call on every view.
+    (Owner-reported 2026-09-01: the group-wide expense line in My Dues
+    could never be marked paid, unlike per-slot dues.)"""
+    all_mem = _scan_type('membership', group_id)
+    real_slot_members = {}   # ident -> a representative record this month
+    existing_gw_idents = set()
+    for m in all_mem:
+        if str(m.get('month')) != str(month) or int(_num(m.get('year'))) != int(year):
+            continue
+        ident = m.get('player_id') or f"name:{m.get('display_name')}"
+        if m.get('slot') == GROUP_SLOT:
+            existing_gw_idents.add(ident)
+        elif m.get('status') == 'Yes':
+            real_slot_members[ident] = m
+    for ident, m in real_slot_members.items():
+        if ident in existing_gw_idents:
+            continue
+        item = {
+            'record_id': str(uuid.uuid4()),
+            'record_type': 'membership',
+            'month': str(month), 'year': str(int(year)),
+            'slot': GROUP_SLOT,
+            'display_name': m.get('display_name'),
+            'status': 'Yes',
+        }
+        if m.get('player_id'):
+            item['player_id'] = m['player_id']
+        if group_id:
+            item['group_id'] = group_id
+        finance_table.put_item(Item=item)
+
+
 def list_records(record_type, params, group_id=None, scope_slots=None):
+    if (record_type == 'membership' and params.get('slot') == GROUP_SLOT
+            and params.get('month') and params.get('year')):
+        # Lazily create this month's group-wide confirmation-carrier records
+        # (one per distinct real-slot Yes member) before scanning, so a
+        # first-ever view of the "(whole group)" membership tab already has
+        # something to confirm against - no manual admin setup step.
+        _ensure_group_wide_membership_records(group_id, str(params['month']), int(_num(params['year'])))
     items = _scan_type(record_type, group_id)
     if scope_slots is not None:
         # Stage 4c: narrow a view-only caller to their assigned slot(s) +
@@ -588,17 +638,27 @@ def list_records(record_type, params, group_id=None, scope_slots=None):
             resp['cost_per_head'] = row['cost_per_head']
             resp['estimated_total'] = row['estimated_total']
             cph = row['cost_per_head']
+            is_group_wide = str(params['slot']) == GROUP_SLOT
             # Per-member relief + effective (what they actually pay) so the
             # card and the confirm dialog don't need the Insights tab.
             all_mem = _scan_type('membership', group_id)
             for it in items:
                 ident = it.get('player_id') or f"name:{it.get('display_name')}"
-                relief = _member_relief(settlement, all_mem, ident,
-                                        str(params['month']), int(_num(params['year'])),
-                                        slot=str(params['slot']))
-                it['relief'] = relief
-                if cph is not None:
-                    it['effective'] = round(max(cph - relief, 0), 2)
+                if is_group_wide:
+                    # cost_per_head on this bucket is a flat PER-PORTION
+                    # figure, not this member's own amount - use their
+                    # slot-weighted share instead (see _settlement_rows),
+                    # and skip relief netting (group-wide dues aren't
+                    # carried month-to-month the way slot dues are).
+                    it['relief'] = 0
+                    it['effective'] = round(row.get('expense_shares', {}).get(ident, 0.0), 2)
+                else:
+                    relief = _member_relief(settlement, all_mem, ident,
+                                            str(params['month']), int(_num(params['year'])),
+                                            slot=str(params['slot']))
+                    it['relief'] = relief
+                    if cph is not None:
+                        it['effective'] = round(max(cph - relief, 0), 2)
     return _response(200, resp)
 
 
@@ -641,19 +701,30 @@ def update_record(record_type, record_id, body, group_id=None):
             settlement = _settlement_rows(existing.get('group_id'))
             row = settlement.get((str(existing.get('month')), int(_num(existing.get('year'))),
                                   str(existing.get('slot'))))
-            cph = row['cost_per_head'] if row else None
-            if cph is None:
-                return _response(400, {'error': 'per-head amount is not computable yet (no expenses or no Yes members)'})
-            # Store what they ACTUALLY pay = per-head minus their relief, so the
-            # confirmed amount matches the collected amount (not the pre-relief
-            # figure). Change-detection still works: if cost or relief shifts,
-            # the effective amount shifts and the confirmation shows as stale.
             ident = existing.get('player_id') or f"name:{existing.get('display_name')}"
-            all_mem = _scan_type('membership', existing.get('group_id'))
-            relief = _member_relief(settlement, all_mem, ident,
-                                    str(existing.get('month')), int(_num(existing.get('year'))),
-                                    slot=str(existing.get('slot')))
-            effective = round(max(cph - relief, 0), 2)
+            if str(existing.get('slot')) == GROUP_SLOT:
+                # This record is a group-wide confirmation carrier (see
+                # _ensure_group_wide_membership_records) - its own amount is
+                # this member's slot-weighted expense share, not a flat
+                # per-head figure, and isn't netted against relief the way
+                # slot dues are (Owner-reported 2026-09-01: the group-wide
+                # expense line in My Dues could never be marked paid).
+                if not row or row.get('cost_per_head') is None:
+                    return _response(400, {'error': 'per-head amount is not computable yet (no expenses or no Yes members)'})
+                effective = round(row.get('expense_shares', {}).get(ident, 0.0), 2)
+            else:
+                cph = row['cost_per_head'] if row else None
+                if cph is None:
+                    return _response(400, {'error': 'per-head amount is not computable yet (no expenses or no Yes members)'})
+                # Store what they ACTUALLY pay = per-head minus their relief, so the
+                # confirmed amount matches the collected amount (not the pre-relief
+                # figure). Change-detection still works: if cost or relief shifts,
+                # the effective amount shifts and the confirmation shows as stale.
+                all_mem = _scan_type('membership', existing.get('group_id'))
+                relief = _member_relief(settlement, all_mem, ident,
+                                        str(existing.get('month')), int(_num(existing.get('year'))),
+                                        slot=str(existing.get('slot')))
+                effective = round(max(cph - relief, 0), 2)
             existing['payment_confirmed_amount'] = Decimal(str(effective))
         else:
             existing.pop('payment_confirmed_amount', None)
@@ -817,6 +888,10 @@ def my_settlement(claims, group_id):
     for m in memberships:
         if m.get('player_id') != pid or m.get('status') != 'Yes':
             continue
+        if m.get('slot') == GROUP_SLOT:
+            # Confirmation-carrier record, not a real per-slot enrollment -
+            # handled separately in the group-wide block below.
+            continue
         key = (str(m.get('month')), int(_num(m.get('year'))), str(m.get('slot')))
         b = rows.get(key)
         if not b:
@@ -907,13 +982,26 @@ def my_settlement(claims, group_id):
         # group-wide refund.
         gw_back = (gw.get('expense_residual_shares', {}).get(pid, 0.0) or 0.0) \
             + (gw.get('walkin_shares', {}).get(pid, 0) or 0.0)
-        owe_total += gw_cost
+        # A slot=GROUP_SLOT membership record for this member/month is a
+        # payment-confirmation carrier only (see
+        # _ensure_group_wide_membership_records) - it exists purely so the
+        # group-wide share can be marked paid the same way a per-slot one
+        # is, via the existing confirm_payment mechanism (Owner-reported
+        # 2026-09-01: this line could never be marked paid before).
+        gw_conf = next((mm for mm in memberships
+                        if mm.get('player_id') == pid and mm.get('slot') == GROUP_SLOT
+                        and str(mm.get('month')) == mth and int(_num(mm.get('year'))) == yr), None)
+        confirmed_amt = gw_conf.get('payment_confirmed_amount') if gw_conf else None
+        paid = confirmed_amt is not None and abs(_num(confirmed_amt) - gw_cost) < 0.01
+        owe = 0.0 if paid else gw_cost
+        owe_total += owe
         owed_back_total += gw_back
         lines.append({
             'month': mth, 'year': yr, 'slot': GROUP_SLOT,
             'expected_per_head': gw_cost,
-            'you_paid': False,
-            'you_owe': round(gw_cost, 2),
+            'you_paid': paid,
+            'you_paid_amount': gw_cost if paid else None,
+            'you_owe': round(owe, 2),
             'owed_back_to_you': round(gw_back, 2),
             'collection_status': gw.get('collection_status'),
         })
@@ -1011,6 +1099,15 @@ def _settlement_rows(group_id=None):
         b['items'].append({'item': e.get('item'), 'estimated': est, 'actual': act})
 
     for m in memberships:
+        # A slot=GROUP_SLOT membership record is a payment-confirmation
+        # carrier only (see _ensure_group_wide_membership_records / the
+        # 2026-09-01 group-wide-dues feature) - it plays no part in the
+        # real per-slot cost math, and must NOT be counted as a real slot
+        # enrollment here (that would corrupt member_slot_counts/
+        # distinct_members below, which every real member's group-wide
+        # portion is weighted against).
+        if m.get('slot') == GROUP_SLOT:
+            continue
         if m.get('status') == 'Yes':
             b = bucket(m.get('month'), m.get('year'), m.get('slot'))
             b['player_count'] += 1
@@ -1150,12 +1247,26 @@ def _settlement_rows(group_id=None):
         if not b or b.get('cost_per_head') is None:
             continue
         ident = m.get('player_id') or f"name:{m.get('display_name')}"
-        relief = _member_relief(periods, memberships, ident, b['month'], b['year'], slot=b['slot'])
-        effective = round(max(b['cost_per_head'] - relief, 0), 2)
+        if key[2] == GROUP_SLOT:
+            # This confirmation carries a member's GROUP-WIDE share, not a
+            # per-slot one: b['cost_per_head'] here is a flat PER-PORTION
+            # figure (see the big comment above), so compare against this
+            # member's own slot-weighted expense_shares instead, with no
+            # relief netting (my_settlement's group-wide line doesn't net
+            # against relief either - group-wide dues aren't carried
+            # month-to-month the way slot dues are).
+            effective = round(b.get('expense_shares', {}).get(ident, 0.0), 2)
+        else:
+            relief = _member_relief(periods, memberships, ident, b['month'], b['year'], slot=b['slot'])
+            effective = round(max(b['cost_per_head'] - relief, 0), 2)
         if abs(_num(m.get('payment_confirmed_amount')) - effective) < 0.01:
             matched[key] += 1
     for key, b in periods.items():
-        count = b['player_count']
+        # The group-wide bucket's player_count is total slot-PORTIONS
+        # (see the denominator pass above), not the number of distinct
+        # members who could actually confirm a group-wide share - use
+        # distinct_member_count for that bucket instead.
+        count = b.get('distinct_member_count') if key[2] == GROUP_SLOT else b['player_count']
         if count and b.get('cost_per_head') is not None:
             b['confirmed_count'] = matched.get(key, 0)
             b['collection_status'] = 'settled' if b['confirmed_count'] >= count else 'collecting'
@@ -1414,6 +1525,13 @@ def insights(group_id=None):
     by_member_month = {}
     for mem in memberships:
         if mem.get('status') != 'Yes' or mem.get('month') not in MONTHS:
+            continue
+        if mem.get('slot') == GROUP_SLOT:
+            # Confirmation-carrier record (see
+            # _ensure_group_wide_membership_records) - not a real slot
+            # enrollment. The group-wide share is already folded in below
+            # via expense_shares; counting this slot here too would both
+            # double it and use the wrong (flat per-portion) figure.
             continue
         month, year = str(mem['month']), int(_num(mem.get('year')))
         ident = mem.get('player_id') or f"name:{mem.get('display_name')}"

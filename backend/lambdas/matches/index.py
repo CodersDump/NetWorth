@@ -336,12 +336,22 @@ def _ensure_season_baseline(season, k, items):
     """Freeze, once, each player's lifetime rating as of the season start
     (from stored ratings_after) plus the soft-reset baseline 1000+(r-1000)*k.
     Frozen so edits to OLD matches don't move where a season started you; your
-    in-season movement still recalculates from the baseline. Sentinel row."""
+    in-season movement still recalculates from the baseline. Sentinel row.
+
+    The freeze is only trusted while `frozen_for_start_date` still matches the
+    season's CURRENT start_date. If an admin edits a season's start date after
+    its board has already been viewed once, the old frozen numbers reflect the
+    wrong cutoff (e.g. a "Season 1" first created/tested with an early start
+    date, then retimed to 2026-09-01 - the stale freeze silently kept using
+    whoever's rating existed on the earlier date, understating everyone's real
+    pre-season baseline for the rest of the season). Re-freezing automatically
+    here means that class of bug self-heals on the next read instead of
+    needing a manual DynamoDB fix (2026-09-01 incident, see BACKLOG.md)."""
     row_id = _SEASON_ROW_PREFIX + season['id']
-    existing = matches_table.get_item(Key={'match_id': row_id}).get('Item')
-    if existing and existing.get('baseline'):
-        return existing
     sd = season['start_date']
+    existing = matches_table.get_item(Key={'match_id': row_id}).get('Item')
+    if existing and existing.get('baseline') and existing.get('frozen_for_start_date') == sd:
+        return existing
     per = {}
     for m in items:
         d = m.get('date') or ''
@@ -359,6 +369,7 @@ def _ensure_season_baseline(season, k, items):
         baseline[pid] = int(round(1000 + (r0 - 1000) * k))
     row = {'match_id': row_id, 'season_id': season['id'], 'k': str(k),
            'start_lifetime': start_lifetime, 'baseline': baseline,
+           'frozen_for_start_date': sd,
            'frozen_at': datetime.now(timezone.utc).isoformat()}
     matches_table.put_item(Item=row)
     return row

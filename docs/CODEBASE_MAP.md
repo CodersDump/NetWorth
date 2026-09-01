@@ -280,7 +280,7 @@ _NetWorth - groups Lambda_
 | `set_finance_role` | group_id, player_id, event | 972 | Set a member's per-group FINANCE role (none/view/write/delete) in this |
 | `_response` | status_code, body_dict | 1012 | — |
 
-#### `matches` — 3034 LOC
+#### `matches` — 3045 LOC
 _NetWorth - matches Lambda (singles + doubles)_
 
 **Module constants:** `QUEUE_TABLE`, `QUEUE_ITEM_TTL_SECONDS`, `K_FACTOR`, `XP_PLAYED`, `XP_WIN_BONUS`, `XP_TOURNAMENT_WIN`, `XP_MARGIN_PER_POINTS`, `XP_MARGIN_CAP`, `XP_LEVEL_COEFF`, `COINS_PER_LEVEL`, `_EVENTS_ROW_ID`, `_QUESTS_ROW_ID`, `_ACHIEVEMENTS_ROW_ID`, `_APP_SETTINGS_ID`, `_PRIVATE_ID_KEYS`, `QUEST_TYPES`, `ACHIEVEMENT_METRICS`, `_SEASON_ROW_PREFIX`, `COMEBACK_BONUS_THRESHOLD`, `COMEBACK_BONUS_PER_POINT`, `COMEBACK_BONUS_CAP`
@@ -301,67 +301,67 @@ _NetWorth - matches Lambda (singles + doubles)_
 | `_season_config` |  | 302 | Season definitions + soft-reset k live in the shared app-settings row |
 | `_resolve_season` | resolved, which | 321 | — |
 | `_ensure_season_baseline` | season, k, items | 335 | Freeze, once, each player's lifetime rating as of the season start |
-| `compute_season_leaderboard` | season, items, k, min_games | 366 | Derived climb board: everyone starts the season at a soft-reset baseline |
-| `_season_board_leaders` | season, items, k | 410 | Leaders for a season: sealed (frozen) if it has ended, else live. |
-| `_season_badges_for` | player_id, leaders | 428 | A player's standing + earned badges on one season board. |
-| `compute_player_season_summary` | player_id, items | 451 | Per-season standing + badges for one player, across started seasons. |
-| `_quest_period` | quest | 472 | (bounds, claim_prefix, label) for a quest by scope. Season-scoped quests |
-| `list_quests` | event | 487 | Returns this week's quests with the caller's progress and claim state. |
-| `save_quest` | event | 530 | — |
-| `delete_quest` | event | 560 | — |
-| `claim_quest` | event | 573 | Player claims a completed quest's reward. Verified server-side against |
-| `_load_achievements` |  | 649 | — |
-| `list_achievements` | event | 654 | Every achievement, with the caller's live progress/claim state. |
-| `save_achievement` | event | 702 | — |
-| `delete_achievement` | event | 736 | — |
-| `claim_achievement` | event | 749 | Player claims a completed achievement's reward. Progress is |
-| `unclaim_achievement` | event | 804 | SuperAdmin-only corrective action (added 2026-08-29): reverses one |
-| `_load_events` |  | 853 | — |
-| `event_multiplier_for_date` | date_str, events | 857 | The XP multiplier active on a given match date (default 1.0). Pass a |
-| `display_name` | player_item, fallback | 878 | Single source of truth for name formatting: 'Nickname (Real Name)' |
-| `compute_comeback_bonus` | momentum | 895 | Extra rating-point bonus for the winning side, on top of the |
-| `_is_valid_completed_game` | score_a, score_b, target | 909 | BWF-style badminton scoring: first to `target` points wins, but must lead |
-| `_caller_claims` | event | 926 | Claims API Gateway's Cognito Authorizer attaches to the request. |
-| `_is_super_admin` | claims | 932 | — |
-| `_caller_may_edit_match` | claims, match | 937 | Who may directly edit/delete a match (PUT/DELETE /matches/{id}): |
-| `_can_view_profile` | claims, target_player_id | 969 | SuperAdmin sees everyone. Anyone can view their own profile. A |
-| `_requires_linked_member` | claims | 989 | Signing up is not the same as being a member. Cognito self-signup is |
-| `record_match_enforced` | event | 1012 | — |
-| `_queue_item_out` | item | 1022 | Shapes one queue row for the API response - the frontend's shared- |
-| `create_queue_item` | event | 1044 | Adds one not-yet-submitted match to its group's SHARED queue - |
-| `list_queue` | event | 1097 | Every member of the group sees the SAME pending queue - polled by |
-| `delete_queue_item` | queue_id, event | 1128 | Removes one queued item - either because it was just sent |
-| `profile_view_enforced` | event | 1154 | Entry point for the isolated /profile-secure/{proxy+} catch-all. |
-| `handler` | event, context | 1181 | — |
-| `list_events` | event | 1264 | Public read - the frontend shows an active-event banner to everyone. |
-| `save_event` | event | 1272 | SuperAdmin creates or updates an event (upsert by event_id). |
-| `delete_event` | event | 1302 | — |
-| `recompute_now` | event | 1315 | SuperAdmin-only: replay every match to rebuild ratings, XP, levels |
-| `reorder_matches` | event | 1325 | Reorders a set of matches by reassigning their timestamps. |
-| `record_match` | event | 1393 | — |
-| `update_match` | match_id, event | 1434 | Fix a mis-entered score on an already-recorded standalone match. |
-| `delete_match` | match_id, event | 1494 | Permanently delete a mis-recorded match - e.g. the wrong player was |
-| `recompute_all_ratings` |  | 1514 | Elo is path-dependent - each match's rating change depends on the |
-| `compute_momentum_stats` | point_log, winner | 1638 | Longest scoring streak per team, and how big a deficit the winner overcame. |
-| `compute_adaptive_k` | pairing_count | 1685 | Higher K for a fresh/novel doubles pairing (each match together is |
-| `get_pairing_count` | team_ids, exclude_match_id | 1701 | How many prior doubles matches has this exact 2-player team played |
-| `_play_and_log` | match_type, team_a_ids, team_b_ids, score_a,  | 1721 | — |
-| `list_matches` | event | 1818 | — |
-| `compute_partnerships` | player_id, items | 1978 | For a given player, tally win/loss record with each doubles partner |
-| `get_group_member_ids` | group_id | 2020 | The set of player_ids belonging to a group, used to filter WHO shows |
-| `compute_attendance` | items, group_id_filter | 2031 | Per-player attendance/consistency: total matches, distinct calendar |
-| `compute_hall_of_fame` | items, group_id_filter, hidden_ids | 2099 | Highlight stats computed from full chronological match history: |
-| `compute_achievements` | player_id, matches, tournaments | 2428 | Milestone/tiered achievement progress for one player: total matches |
-| `compute_top_opponents` | player_id, matches, top_n | 2569 | This player's win/loss record against every opponent they've ever |
-| `compute_overall_record` | player_id, matches | 2611 | This player's total win/loss record, split by singles and doubles. |
-| `compute_head_to_head` | player_id, opponent_id, matches | 2640 | One player's win/loss record specifically as an OPPONENT of another |
-| `compute_with_partner` | player_id, partner_id, matches | 2672 | One player's win/loss record when partnered WITH another player on |
-| `compute_recent_form` | player_id, matches, limit | 2723 | A player's last N matches, in chronological order (oldest to |
-| `compute_diversity` | items, group_id_filter | 2780 | For every player: how concentrated their doubles partnerships are. |
-| `compute_progress_history_summary` | scope_label, period_name | 2825 | Reads the permanent, locked-in weekly/monthly/yearly winner history |
-| `compute_progress_badges` | items, group_id_filter | 2902 | For each of the last week/month/year: who improved their rating the |
-| `compute_partner_distribution` | player_id, items, top_n | 2978 | For the radar/spider chart: one player's doubles partners, sorted by |
-| `_response` | status_code, body_dict | 3025 | — |
+| `compute_season_leaderboard` | season, items, k, min_games | 377 | Derived climb board: everyone starts the season at a soft-reset baseline |
+| `_season_board_leaders` | season, items, k | 421 | Leaders for a season: sealed (frozen) if it has ended, else live. |
+| `_season_badges_for` | player_id, leaders | 439 | A player's standing + earned badges on one season board. |
+| `compute_player_season_summary` | player_id, items | 462 | Per-season standing + badges for one player, across started seasons. |
+| `_quest_period` | quest | 483 | (bounds, claim_prefix, label) for a quest by scope. Season-scoped quests |
+| `list_quests` | event | 498 | Returns this week's quests with the caller's progress and claim state. |
+| `save_quest` | event | 541 | — |
+| `delete_quest` | event | 571 | — |
+| `claim_quest` | event | 584 | Player claims a completed quest's reward. Verified server-side against |
+| `_load_achievements` |  | 660 | — |
+| `list_achievements` | event | 665 | Every achievement, with the caller's live progress/claim state. |
+| `save_achievement` | event | 713 | — |
+| `delete_achievement` | event | 747 | — |
+| `claim_achievement` | event | 760 | Player claims a completed achievement's reward. Progress is |
+| `unclaim_achievement` | event | 815 | SuperAdmin-only corrective action (added 2026-08-29): reverses one |
+| `_load_events` |  | 864 | — |
+| `event_multiplier_for_date` | date_str, events | 868 | The XP multiplier active on a given match date (default 1.0). Pass a |
+| `display_name` | player_item, fallback | 889 | Single source of truth for name formatting: 'Nickname (Real Name)' |
+| `compute_comeback_bonus` | momentum | 906 | Extra rating-point bonus for the winning side, on top of the |
+| `_is_valid_completed_game` | score_a, score_b, target | 920 | BWF-style badminton scoring: first to `target` points wins, but must lead |
+| `_caller_claims` | event | 937 | Claims API Gateway's Cognito Authorizer attaches to the request. |
+| `_is_super_admin` | claims | 943 | — |
+| `_caller_may_edit_match` | claims, match | 948 | Who may directly edit/delete a match (PUT/DELETE /matches/{id}): |
+| `_can_view_profile` | claims, target_player_id | 980 | SuperAdmin sees everyone. Anyone can view their own profile. A |
+| `_requires_linked_member` | claims | 1000 | Signing up is not the same as being a member. Cognito self-signup is |
+| `record_match_enforced` | event | 1023 | — |
+| `_queue_item_out` | item | 1033 | Shapes one queue row for the API response - the frontend's shared- |
+| `create_queue_item` | event | 1055 | Adds one not-yet-submitted match to its group's SHARED queue - |
+| `list_queue` | event | 1108 | Every member of the group sees the SAME pending queue - polled by |
+| `delete_queue_item` | queue_id, event | 1139 | Removes one queued item - either because it was just sent |
+| `profile_view_enforced` | event | 1165 | Entry point for the isolated /profile-secure/{proxy+} catch-all. |
+| `handler` | event, context | 1192 | — |
+| `list_events` | event | 1275 | Public read - the frontend shows an active-event banner to everyone. |
+| `save_event` | event | 1283 | SuperAdmin creates or updates an event (upsert by event_id). |
+| `delete_event` | event | 1313 | — |
+| `recompute_now` | event | 1326 | SuperAdmin-only: replay every match to rebuild ratings, XP, levels |
+| `reorder_matches` | event | 1336 | Reorders a set of matches by reassigning their timestamps. |
+| `record_match` | event | 1404 | — |
+| `update_match` | match_id, event | 1445 | Fix a mis-entered score on an already-recorded standalone match. |
+| `delete_match` | match_id, event | 1505 | Permanently delete a mis-recorded match - e.g. the wrong player was |
+| `recompute_all_ratings` |  | 1525 | Elo is path-dependent - each match's rating change depends on the |
+| `compute_momentum_stats` | point_log, winner | 1649 | Longest scoring streak per team, and how big a deficit the winner overcame. |
+| `compute_adaptive_k` | pairing_count | 1696 | Higher K for a fresh/novel doubles pairing (each match together is |
+| `get_pairing_count` | team_ids, exclude_match_id | 1712 | How many prior doubles matches has this exact 2-player team played |
+| `_play_and_log` | match_type, team_a_ids, team_b_ids, score_a,  | 1732 | — |
+| `list_matches` | event | 1829 | — |
+| `compute_partnerships` | player_id, items | 1989 | For a given player, tally win/loss record with each doubles partner |
+| `get_group_member_ids` | group_id | 2031 | The set of player_ids belonging to a group, used to filter WHO shows |
+| `compute_attendance` | items, group_id_filter | 2042 | Per-player attendance/consistency: total matches, distinct calendar |
+| `compute_hall_of_fame` | items, group_id_filter, hidden_ids | 2110 | Highlight stats computed from full chronological match history: |
+| `compute_achievements` | player_id, matches, tournaments | 2439 | Milestone/tiered achievement progress for one player: total matches |
+| `compute_top_opponents` | player_id, matches, top_n | 2580 | This player's win/loss record against every opponent they've ever |
+| `compute_overall_record` | player_id, matches | 2622 | This player's total win/loss record, split by singles and doubles. |
+| `compute_head_to_head` | player_id, opponent_id, matches | 2651 | One player's win/loss record specifically as an OPPONENT of another |
+| `compute_with_partner` | player_id, partner_id, matches | 2683 | One player's win/loss record when partnered WITH another player on |
+| `compute_recent_form` | player_id, matches, limit | 2734 | A player's last N matches, in chronological order (oldest to |
+| `compute_diversity` | items, group_id_filter | 2791 | For every player: how concentrated their doubles partnerships are. |
+| `compute_progress_history_summary` | scope_label, period_name | 2836 | Reads the permanent, locked-in weekly/monthly/yearly winner history |
+| `compute_progress_badges` | items, group_id_filter | 2913 | For each of the last week/month/year: who improved their rating the |
+| `compute_partner_distribution` | player_id, items, top_n | 2989 | For the radar/spider chart: one player's doubles partners, sorted by |
+| `_response` | status_code, body_dict | 3036 | — |
 
 #### `tournaments` — 3735 LOC
 _NetWorth - tournaments Lambda (singles or doubles)_
@@ -468,7 +468,7 @@ _NetWorth - tournaments Lambda (singles or doubles)_
 | `substitute_player` | tournament_id, event | 3633 | Swap a player out of a team for all of that team's FUTURE (unplayed) |
 | `_response` | status_code, body_dict | 3726 | — |
 
-#### `finance` — 1660 LOC
+#### `finance` — 1778 LOC
 _NetWorth - finance Lambda_
 
 **Module constants:** `GROUPS_TABLE`, `DEFAULT_GROUP_NAME`, `GROUP_SLOT`, `VIEW_KEY`, `CONFIRMATION_CODE`, `MONTHS`, `FINANCE_LEVELS`, `ALLOWED_FIELDS`, `NUMERIC_FIELDS`, `REQUIRED_FIELDS`, `DEFAULT_CLUB_UTC_OFFSET_MINUTES`, `AVG_GAMES_PER_SESSION`, `SESSION_RATE`, `ACTIVE_DAYS_THRESHOLD`, `SLOT_GRACE_MINUTES`, `ASSUMED_MINUTES_PER_GAME`, `DEFAULT_ASSUMED_MINUTES_PER_GAME`, `DENSITY_FLAG_RATIO`, `_SLOT_LABEL_RE`
@@ -499,24 +499,25 @@ _NetWorth - finance Lambda_
 | `_prev_period` | month, year | 510 | — |
 | `_next_period` | month, year | 515 | — |
 | `_member_relief` | settlement, memberships, ident, month, year,  | 520 | Relief a member gets in (month, year): the previous month's residual. |
-| `list_records` | record_type, params, group_id, scope_slots | 543 | — |
-| `create_records` | record_type, body, group_id | 605 | — |
-| `update_record` | record_type, record_id, body, group_id | 627 | — |
-| `delete_record_enforced` | record_type, record_id, event | 690 | Triple-gated: SuperAdmin identity + FINANCE_VIEW_KEY + the existing |
-| `delete_record` | record_type, record_id, body, group_id | 713 | — |
-| `get_settings` |  | 730 | — |
-| `put_settings` | body | 758 | — |
-| `public_upi` |  | 787 | The pay card is shown to guests (they pay walk-in fees), so the UPI |
-| `my_settlement` | claims, group_id | 795 | A single member's own dues in a group: for every (month, slot) where |
-| `public_walkins` |  | 936 | — |
-| `_settlement_rows` | group_id | 956 | Per (month, year, slot): the exact math from the Calculations sheet. |
-| `summary` | group_id, scope_slots | 1169 | — |
-| `_parse_slot_window` | label | 1210 | Best-effort parse of a free-form slot label ('7AM-8AM', '19:00-20:00', |
-| `_local_minutes_of_day` | iso_ts, offset_minutes | 1246 | Convert a stored ISO-8601 UTC match timestamp to local minute-of-day |
-| `_minute_in_window` | minute, window, grace_minutes | 1266 | Whether `minute` (local minute-of-day) falls inside `window` (start, |
-| `_timing_checks` | matches, group, offset_minutes, target_ym | 1279 | Best-effort, non-authoritative diagnostics only (see module note |
-| `insights` | group_id | 1359 | Per-member monthly economics, ghosts, and walk-in conversion. |
-| `_response` | status_code, body_dict | 1651 | — |
+| `_ensure_group_wide_membership_records` | group_id, month, year | 543 | Lazily create one slot=GROUP_SLOT membership record per distinct |
+| `list_records` | record_type, params, group_id, scope_slots | 586 | — |
+| `create_records` | record_type, body, group_id | 665 | — |
+| `update_record` | record_type, record_id, body, group_id | 687 | — |
+| `delete_record_enforced` | record_type, record_id, event | 761 | Triple-gated: SuperAdmin identity + FINANCE_VIEW_KEY + the existing |
+| `delete_record` | record_type, record_id, body, group_id | 784 | — |
+| `get_settings` |  | 801 | — |
+| `put_settings` | body | 829 | — |
+| `public_upi` |  | 858 | The pay card is shown to guests (they pay walk-in fees), so the UPI |
+| `my_settlement` | claims, group_id | 866 | A single member's own dues in a group: for every (month, slot) where |
+| `public_walkins` |  | 1024 | — |
+| `_settlement_rows` | group_id | 1044 | Per (month, year, slot): the exact math from the Calculations sheet. |
+| `summary` | group_id, scope_slots | 1280 | — |
+| `_parse_slot_window` | label | 1321 | Best-effort parse of a free-form slot label ('7AM-8AM', '19:00-20:00', |
+| `_local_minutes_of_day` | iso_ts, offset_minutes | 1357 | Convert a stored ISO-8601 UTC match timestamp to local minute-of-day |
+| `_minute_in_window` | minute, window, grace_minutes | 1377 | Whether `minute` (local minute-of-day) falls inside `window` (start, |
+| `_timing_checks` | matches, group, offset_minutes, target_ym | 1390 | Best-effort, non-authoritative diagnostics only (see module note |
+| `insights` | group_id | 1470 | Per-member monthly economics, ghosts, and walk-in conversion. |
+| `_response` | status_code, body_dict | 1769 | — |
 
 #### `progress_scheduler` — 238 LOC
 _NetWorth - progress_scheduler Lambda_
@@ -536,7 +537,7 @@ _NetWorth - progress_scheduler Lambda_
 ## 6. Frontend function reference
 
 <!-- AUTOGEN:FRONTEND START (regenerated by tools/generate_codebase_map.py — do not hand-edit below) -->
-### Frontend (`frontend/js/app.js` — 12810 LOC, flat global script, ~506 functions)
+### Frontend (`frontend/js/app.js` — 12843 LOC, flat global script, ~506 functions)
 
 _Loaded by `index.html` after an inline `<script>` defines the globals `API_BASE_URL`, `COGNITO_USER_POOL_ID`, `COGNITO_CLIENT_ID`, `UPI_ID`, `FINANCE_VIEW_KEY` placeholders. Functions live in global scope (not an IIFE); most are wired to `onclick=` in the HTML._
 
@@ -874,228 +875,230 @@ _Loaded by `index.html` after an inline `<script>` defines the globals `API_BASE
 - `financeBaseUrl()` — L6877
 - `finPost(path, method, bodyObj)` — L6881
 - `populateFinanceSlots(group)` — L6905
-- `_rememberedFinance(key)` — L6928
-- `_rememberFinance(key, val)` — L6932
-- `restoreFinanceMonth()` — L6938
-- `populateFinanceGroups()` — L6947
-- `reloadFinanceForGroup()` — L6975
-- `tryAutoFinanceUnlock()` — L6980
-- `myFinanceGroups()` — L7010
-- `populateMyDuesGroups()` — L7015
-- `loadMyDues(groupId)` — L7033
-- `manageGroupSlots(groupId)` — L7083
-- `assignSlotMembers(groupId, slotEnc)` — L7101
-- `transferGroupOwnership(groupId)` — L7129
-- `setGroupPayee(groupId)` — L7148
-- `requestFinanceAccess()` — L7171
-- `financeUnlock()` — L7188
-- `updateFinanceScopeNote(scopedTo)` — L7243
-- `loadFinanceSummary()` — L7253
-- `loadFinanceExpenses()` — L7293
-- `resetExpenseEdit()` — L7331
-- `addFinanceExpense()` — L7338
-- `loadFinanceMembers()` — L7357
-- `markMembersDirty()` — L7461
-- `recalcMembers()` — L7468
-- `renderBulkRosterList()` — L7480
-- `bulkAddFromRoster()` — L7494
-- `copyPreviousMonthMembers()` — L7509
-- `addFinanceMember()` — L7545
-- `resetWalkinEdit()` — L7571
-- `suggestWalkinSessions()` — L7590
-- `loadFinanceWalkins()` — L7622
-- `addFinanceWalkin()` — L7674
-- `loadFinanceInsights()` — L7707
-- `copyDuesForWhatsApp()` — L7721
-- `pad(s, w)` — L7738
-- `padL(s, w)` — L7739
-- `line(n, o, r, p)` — L7740
-- `done()` — L7750
-- `fallbackCopy(text, cb)` — L7756
-- `copyInsightsTableAsImage()` — L7785
-- `renderInsights()` — L7891
-- `saveFinanceSettings()` — L8026
-- `loadPublicWalkins()` — L8072
+- `_rememberedFinance(key)` — L6935
+- `_rememberFinance(key, val)` — L6939
+- `restoreFinanceMonth()` — L6945
+- `populateFinanceGroups()` — L6954
+- `reloadFinanceForGroup()` — L6982
+- `tryAutoFinanceUnlock()` — L6987
+- `myFinanceGroups()` — L7017
+- `populateMyDuesGroups()` — L7022
+- `loadMyDues(groupId)` — L7040
+- `manageGroupSlots(groupId)` — L7090
+- `assignSlotMembers(groupId, slotEnc)` — L7108
+- `transferGroupOwnership(groupId)` — L7136
+- `setGroupPayee(groupId)` — L7155
+- `requestFinanceAccess()` — L7178
+- `financeUnlock()` — L7195
+- `updateFinanceScopeNote(scopedTo)` — L7250
+- `loadFinanceSummary()` — L7260
+- `loadFinanceExpenses()` — L7300
+- `resetExpenseEdit()` — L7338
+- `addFinanceExpense()` — L7345
+- `loadFinanceMembers()` — L7364
+- `markMembersDirty()` — L7468
+- `recalcMembers()` — L7475
+- `renderBulkRosterList()` — L7487
+- `bulkAddFromRoster()` — L7501
+- `copyPreviousMonthMembers()` — L7516
+- `addFinanceMember()` — L7552
+- `resetWalkinEdit()` — L7578
+- `suggestWalkinSessions()` — L7597
+- `loadFinanceWalkins()` — L7629
+- `addFinanceWalkin()` — L7681
+- `loadFinanceInsights()` — L7714
+- `copyDuesForWhatsApp()` — L7728
+- `pad(s, w)` — L7745
+- `padL(s, w)` — L7746
+- `line(n, o, r, p)` — L7747
+- `done()` — L7757
+- `fallbackCopy(text, cb)` — L7763
+- `copyInsightsTableAsImage()` — L7792
+- `renderInsights()` — L7924
+- `saveFinanceSettings()` — L8059
+- `loadPublicWalkins()` — L8105
 
 **Match review & reorder (SuperAdmin)**  (from L8160)
-- `loadReviewDay()` — L8165
-- `reviewOrderChanged()` — L8209
-- `renderReviewList()` — L8215
-- `applyReviewOrder()` — L8276
-- `updateAuthUI()` — L8304
-- `hiddenNow(id, btn)` — L8332
-- `refreshMySession(statusElId)` — L8417
-- `setStatus(msg)` — L8418
-- `openAchievementsModal()` — L8446
-- `closeAchievementsModal()` — L8455
-- `openAuthModal()` — L8456
-- `closeAuthModal()` — L8457
-- `showAuthView(view)` — L8458
-- `setAuthSession(session, user, opts = {})` — L8466
-- `closeCompleteProfileModal()` — L8486
-- `openCompleteProfileModal()` — L8487
-- `showCompleteProfileMode(mode, preselectPlayerId)` — L8502
-- `populateClaimPicker(preselectPlayerId)` — L8510
-- `submitClaimProfile()` — L8534
-- `closeCompleteProfileModal()` — L8574
-- `sanitizeNickname(raw)` — L8580
-- `editDistance(a, b)` — L8585
-- `checkForExistingPlayer(name, typedNickname, statusEl)` — L8607
-- `submitCompleteProfile()` — L8662
-- `finishRequestAndSignOut(message)` — L8738
-- `doLogin()` — L8744
-- `doNewPassword()` — L8797
-- `doSignup()` — L8808
-- `doConfirmSignup()` — L8825
-- `doResendConfirmCode()` — L8856
-- `doForgotPassword()` — L8867
-- `doConfirmForgotPassword()` — L8882
-- `doLogout()` — L8894
-- `restoreSession()` — L8938
-- `restoreTabFromHash()` — L8982
+- `loadReviewDay()` — L8198
+- `reviewOrderChanged()` — L8242
+- `renderReviewList()` — L8248
+- `applyReviewOrder()` — L8309
+- `updateAuthUI()` — L8337
+- `hiddenNow(id, btn)` — L8365
+- `refreshMySession(statusElId)` — L8450
+- `setStatus(msg)` — L8451
+- `openAchievementsModal()` — L8479
+- `closeAchievementsModal()` — L8488
+- `openAuthModal()` — L8489
+- `closeAuthModal()` — L8490
+- `showAuthView(view)` — L8491
+- `setAuthSession(session, user, opts = {})` — L8499
+- `closeCompleteProfileModal()` — L8519
+- `openCompleteProfileModal()` — L8520
+- `showCompleteProfileMode(mode, preselectPlayerId)` — L8535
+- `populateClaimPicker(preselectPlayerId)` — L8543
+- `submitClaimProfile()` — L8567
+- `closeCompleteProfileModal()` — L8607
+- `sanitizeNickname(raw)` — L8613
+- `editDistance(a, b)` — L8618
+- `checkForExistingPlayer(name, typedNickname, statusEl)` — L8640
+- `submitCompleteProfile()` — L8695
+- `finishRequestAndSignOut(message)` — L8771
+- `doLogin()` — L8777
+- `doNewPassword()` — L8830
+- `doSignup()` — L8841
+- `doConfirmSignup()` — L8858
+- `doResendConfirmCode()` — L8889
+- `doForgotPassword()` — L8900
+- `doConfirmForgotPassword()` — L8915
+- `doLogout()` — L8927
+- `restoreSession()` — L8971
+
+**Init & session restore**  (from L8997)
+- `restoreTabFromHash()` — L9015
 
 **Tournaments**  (from L9016)
-- `addManualTeamRow()` — L9057
-- `collectManualTeams()` — L9093
-- `loadTournamentGroupOptions()` — L9106
-- `loadTournamentParticipantsChecklist()` — L9115
-- `updateParticipantsCount()` — L9145
-- `collectTournamentParticipants()` — L9157
-- `loadTournamentsList()` — L9161
-- `submitTournamentCreation(payload)` — L9168
-- `submitManualDraftCreation(group_id, name)` — L9194
-- `draftPlayerName(pid)` — L9242
-- `draftEveryone(t)` — L9247
-- `renderManualDraftTournament(t)` — L9253
-- `fetchTournamentDetail(tournamentId)` — L9352
-- `fetchAndRenderTournamentDetail(tournamentId)` — L9368
-- `stopSchedulePolling()` — L9399
-- `startSchedulePolling(tournamentId)` — L9404
-- `isSchedulePollingActiveFor(tournamentId)` — L9414
-- `schedulePollTick(tournamentId)` — L9416
-- `renderDraftLeaderPicker(t)` — L9447
-- `saveDraftLeaders(tournamentId)` — L9467
-- `renderDraftPoolBoard(t)` — L9477
-- `chip(pid)` — L9482
-- `draftChipTapped(pid, ev)` — L9529
-- `draftPoolColumnTapped(tournamentId, poolName)` — L9536
-- `draftChipDragStart(ev, pid)` — L9543
-- `draftPoolDragOver(ev)` — L9548
-- `draftPoolDrop(ev, tournamentId, poolName)` — L9553
-- `moveDraftPlayerToPool(tournamentId, poolName, playerId)` — L9562
-- `putDraftPool(tournamentId, poolName, playerIds)` — L9582
-- `addNewDraftPlayer(tournamentId, groupId)` — L9592
-- `removeDraftPlayer(tournamentId, playerId)` — L9618
-- `lockDraftPools(tournamentId)` — L9631
-- `stopDraftPolling()` — L9661
-- `startDraftPolling(tournamentId)` — L9666
-- `isDraftPollingActiveFor(tournamentId)` — L9679
-- `pollDraftStateTick(tournamentId)` — L9681
-- `draftDecidedIds(draft)` — L9692
-- `renderDraftStartAuctionPanel(t)` — L9701
-- `startDraftAuction(tournamentId)` — L9710
-- `renderDraftAuctionRoom(t)` — L9720
-- `draftAssignEligibleLeaders(t, pool)` — L9735
-- `draftAssignLeaderOptionsHtml(t, pool)` — L9745
-- `updateDraftAssignLeaderOptions()` — L9751
-- `renderDraftOrganizerAssignPanel(t)` — L9760
-- `organizerAssignPlayer(tournamentId)` — L9785
-- `renderDraftLiveStatusHtml(tournamentId, draftLike)` — L9806
-- `updateDraftLiveStatus(tournamentId, draftLike)` — L9841
-- `renderDraftQueuePicker(t)` — L9854
-- `openDraftLot(tournamentId, playerId)` — L9881
-- `closeDraftLot(tournamentId)` — L9889
-- `skipDraftLot(tournamentId)` — L9899
-- `renderDraftBidBox()` — L9909
-- `draftBidBump(delta)` — L9922
-- `submitDraftBid(tournamentId)` — L9929
-- `renderDraftSquadsReview(t)` — L9958
-- `renderSetSquadPairsPanel(t)` — L9978
-- `generateCrossSquadGroups(tournamentId, status)` — L10041
-- `saveSquadPairs(tournamentId, squadId, numGroups, slotsP)` — L10058
-- `generateDraftSchedule(tournamentId)` — L10079
-- `renderSquadRosterEditPanel(t, allowMove)` — L10100
-- `renameSquadPrompt(tournamentId, squadId)` — L10166
-- `moveSquadPlayer(tournamentId)` — L10183
-- `toggleSquadSubNewPlayerFields(useNew)` — L10197
-- `substituteSquadPlayer(tournamentId)` — L10214
-- `draftSquadName(t, squadId)` — L10266
-- `toggleDraftGroupOpen(name, detailsEl)` — L10288
-- `toggleDraftSquadSection(key, detailsEl)` — L10301
-- `renderDraftScheduleView(t)` — L10305
-- `renderProjectedKnockout(t)` — L10402
-- `renderRegenerateScheduleGroupPanel(t)` — L10424
-- `regenerateDraftSchedule(tournamentId)` — L10448
-- `renderSquadStandingsTable(standings, projection)` — L10475
-- `computeLeaderboardRows(stats, t)` — L10514
-- `tallyPair(side)` — L10551
-- `squadSideField(tie, sid)` — L10613
-- `decidingPairKey(tie, sid)` — L10614
-- `podiumRank(row)` — L10672
-- `renderPlayerTournamentStatsTable(stats, t)` — L10688
-- `rowHtml(row)` — L10696
-- `renderTieSection(title, ties, t, stageKind)` — L10741
-- `renderTieCard(tie, t, stageKind)` — L10748
-- `renderTieMatchRow(tie, m, idx, t, stageKind, iLeadA, iLead)` — L10780
-- `draftTieMatchAdminControlsHtml(tournamentId, tieId, idx, stageKind, sid)` — L10966
-- `cancelDraftTieMatch(tournamentId, tieId, matchIndex, stageKi)` — L10974
-- `forfeitDraftTieMatch(tournamentId, tieId, matchIndex, stageKi)` — L10985
-- `draftPlayerPickerHtml(tournamentId, tieId, matchIndex, members)` — L10996
-- `opts(selected)` — L11002
-- `pickTiePlayer(tournamentId, tieId, matchIndex, playerI)` — L11022
-- `pickTiePlayerPair(tournamentId, tieId, matchIndex, squadId)` — L11034
-- `submitDraftTieScore(tournamentId, tieId, matchIndex, stageKi)` — L11050
-- `submitDraftTieScoreDirect(tournamentId, tieId, matchIndex, stageKi)` — L11067
-- `collectAllEntities(t)` — L11233
-- `getAllTeamEntities(t)` — L11249
-- `renderTeamCompositionBars(t, containerId)` — L11267
-- `populateSubstitutionSection(t)` — L11302
-- `updateSubOldPlayerOptions()` — L11313
-- `formatGames(games)` — L11402
-- `applyTournamentViewMode()` — L11409
-- `matchTotals(match)` — L11425
-- `truncateBracketName(name, maxChars = 22)` — L11433
-- `renderBracketView(t)` — L11438
-- `renderDraftBracketGroupsPanel(t)` — L11566
-- `renderDraftBracketView(t)` — L11602
-- `renderTournament(t)` — L11733
-- `generateTournamentRecap(t)` — L11908
-- `downloadTournamentImage()` — L11940
-- `loadImg(src)` — L11967
-- `sideVisuals(side)` — L11977
-- `drawCard(x, y, w, match, isFinal)` — L11984
-- `drawAvatars(ctx, x, y, side, isWinner)` — L12030
-- `paintTeam(ctx, x, y, w, h, side, fallback)` — L12049
-- `roundRect(ctx, x, y, w, h, r)` — L12077
-- `downloadDraftShareImage()` — L12093
-- `loadImg(src)` — L12100
-- `sideAvatars(squadId)` — L12149
-- `drawSide(side, sx, sy, isWinner)` — L12230
-- `downloadDraftLeaderboardImage()` — L12311
-- `loadImg(src)` — L12320
-- `presetKeyFor(bannerCss)` — L12329
-- `copyTournamentRecap()` — L12439
-- `item_has_third_place(t)` — L12450
-- `submitGroupScore(tournamentId, subgroup, fixtureId)` — L12454
-- `submitGroupScoreDirect(tournamentId, subgroup, fixtureId, score)` — L12460
-- `submitKnockoutScore(tournamentId, roundIndex, matchIndex)` — L12497
-- `submitKnockoutScoreDirect(tournamentId, roundIndex, matchIndex, sc)` — L12503
-- `submitThirdPlaceScore(tournamentId)` — L12530
-- `submitThirdPlaceScoreDirect(tournamentId, score_a, score_b, override)` — L12536
+- `addManualTeamRow()` — L9090
+- `collectManualTeams()` — L9126
+- `loadTournamentGroupOptions()` — L9139
+- `loadTournamentParticipantsChecklist()` — L9148
+- `updateParticipantsCount()` — L9178
+- `collectTournamentParticipants()` — L9190
+- `loadTournamentsList()` — L9194
+- `submitTournamentCreation(payload)` — L9201
+- `submitManualDraftCreation(group_id, name)` — L9227
+- `draftPlayerName(pid)` — L9275
+- `draftEveryone(t)` — L9280
+- `renderManualDraftTournament(t)` — L9286
+- `fetchTournamentDetail(tournamentId)` — L9385
+- `fetchAndRenderTournamentDetail(tournamentId)` — L9401
+- `stopSchedulePolling()` — L9432
+- `startSchedulePolling(tournamentId)` — L9437
+- `isSchedulePollingActiveFor(tournamentId)` — L9447
+- `schedulePollTick(tournamentId)` — L9449
+- `renderDraftLeaderPicker(t)` — L9480
+- `saveDraftLeaders(tournamentId)` — L9500
+- `renderDraftPoolBoard(t)` — L9510
+- `chip(pid)` — L9515
+- `draftChipTapped(pid, ev)` — L9562
+- `draftPoolColumnTapped(tournamentId, poolName)` — L9569
+- `draftChipDragStart(ev, pid)` — L9576
+- `draftPoolDragOver(ev)` — L9581
+- `draftPoolDrop(ev, tournamentId, poolName)` — L9586
+- `moveDraftPlayerToPool(tournamentId, poolName, playerId)` — L9595
+- `putDraftPool(tournamentId, poolName, playerIds)` — L9615
+- `addNewDraftPlayer(tournamentId, groupId)` — L9625
+- `removeDraftPlayer(tournamentId, playerId)` — L9651
+- `lockDraftPools(tournamentId)` — L9664
+- `stopDraftPolling()` — L9694
+- `startDraftPolling(tournamentId)` — L9699
+- `isDraftPollingActiveFor(tournamentId)` — L9712
+- `pollDraftStateTick(tournamentId)` — L9714
+- `draftDecidedIds(draft)` — L9725
+- `renderDraftStartAuctionPanel(t)` — L9734
+- `startDraftAuction(tournamentId)` — L9743
+- `renderDraftAuctionRoom(t)` — L9753
+- `draftAssignEligibleLeaders(t, pool)` — L9768
+- `draftAssignLeaderOptionsHtml(t, pool)` — L9778
+- `updateDraftAssignLeaderOptions()` — L9784
+- `renderDraftOrganizerAssignPanel(t)` — L9793
+- `organizerAssignPlayer(tournamentId)` — L9818
+- `renderDraftLiveStatusHtml(tournamentId, draftLike)` — L9839
+- `updateDraftLiveStatus(tournamentId, draftLike)` — L9874
+- `renderDraftQueuePicker(t)` — L9887
+- `openDraftLot(tournamentId, playerId)` — L9914
+- `closeDraftLot(tournamentId)` — L9922
+- `skipDraftLot(tournamentId)` — L9932
+- `renderDraftBidBox()` — L9942
+- `draftBidBump(delta)` — L9955
+- `submitDraftBid(tournamentId)` — L9962
+- `renderDraftSquadsReview(t)` — L9991
+- `renderSetSquadPairsPanel(t)` — L10011
+- `generateCrossSquadGroups(tournamentId, status)` — L10074
+- `saveSquadPairs(tournamentId, squadId, numGroups, slotsP)` — L10091
+- `generateDraftSchedule(tournamentId)` — L10112
+- `renderSquadRosterEditPanel(t, allowMove)` — L10133
+- `renameSquadPrompt(tournamentId, squadId)` — L10199
+- `moveSquadPlayer(tournamentId)` — L10216
+- `toggleSquadSubNewPlayerFields(useNew)` — L10230
+- `substituteSquadPlayer(tournamentId)` — L10247
+- `draftSquadName(t, squadId)` — L10299
+- `toggleDraftGroupOpen(name, detailsEl)` — L10321
+- `toggleDraftSquadSection(key, detailsEl)` — L10334
+- `renderDraftScheduleView(t)` — L10338
+- `renderProjectedKnockout(t)` — L10435
+- `renderRegenerateScheduleGroupPanel(t)` — L10457
+- `regenerateDraftSchedule(tournamentId)` — L10481
+- `renderSquadStandingsTable(standings, projection)` — L10508
+- `computeLeaderboardRows(stats, t)` — L10547
+- `tallyPair(side)` — L10584
+- `squadSideField(tie, sid)` — L10646
+- `decidingPairKey(tie, sid)` — L10647
+- `podiumRank(row)` — L10705
+- `renderPlayerTournamentStatsTable(stats, t)` — L10721
+- `rowHtml(row)` — L10729
+- `renderTieSection(title, ties, t, stageKind)` — L10774
+- `renderTieCard(tie, t, stageKind)` — L10781
+- `renderTieMatchRow(tie, m, idx, t, stageKind, iLeadA, iLead)` — L10813
+- `draftTieMatchAdminControlsHtml(tournamentId, tieId, idx, stageKind, sid)` — L10999
+- `cancelDraftTieMatch(tournamentId, tieId, matchIndex, stageKi)` — L11007
+- `forfeitDraftTieMatch(tournamentId, tieId, matchIndex, stageKi)` — L11018
+- `draftPlayerPickerHtml(tournamentId, tieId, matchIndex, members)` — L11029
+- `opts(selected)` — L11035
+- `pickTiePlayer(tournamentId, tieId, matchIndex, playerI)` — L11055
+- `pickTiePlayerPair(tournamentId, tieId, matchIndex, squadId)` — L11067
+- `submitDraftTieScore(tournamentId, tieId, matchIndex, stageKi)` — L11083
+- `submitDraftTieScoreDirect(tournamentId, tieId, matchIndex, stageKi)` — L11100
+- `collectAllEntities(t)` — L11266
+- `getAllTeamEntities(t)` — L11282
+- `renderTeamCompositionBars(t, containerId)` — L11300
+- `populateSubstitutionSection(t)` — L11335
+- `updateSubOldPlayerOptions()` — L11346
+- `formatGames(games)` — L11435
+- `applyTournamentViewMode()` — L11442
+- `matchTotals(match)` — L11458
+- `truncateBracketName(name, maxChars = 22)` — L11466
+- `renderBracketView(t)` — L11471
+- `renderDraftBracketGroupsPanel(t)` — L11599
+- `renderDraftBracketView(t)` — L11635
+- `renderTournament(t)` — L11766
+- `generateTournamentRecap(t)` — L11941
+- `downloadTournamentImage()` — L11973
+- `loadImg(src)` — L12000
+- `sideVisuals(side)` — L12010
+- `drawCard(x, y, w, match, isFinal)` — L12017
+- `drawAvatars(ctx, x, y, side, isWinner)` — L12063
+- `paintTeam(ctx, x, y, w, h, side, fallback)` — L12082
+- `roundRect(ctx, x, y, w, h, r)` — L12110
+- `downloadDraftShareImage()` — L12126
+- `loadImg(src)` — L12133
+- `sideAvatars(squadId)` — L12182
+- `drawSide(side, sx, sy, isWinner)` — L12263
+- `downloadDraftLeaderboardImage()` — L12344
+- `loadImg(src)` — L12353
+- `presetKeyFor(bannerCss)` — L12362
+- `copyTournamentRecap()` — L12472
+- `item_has_third_place(t)` — L12483
+- `submitGroupScore(tournamentId, subgroup, fixtureId)` — L12487
+- `submitGroupScoreDirect(tournamentId, subgroup, fixtureId, score)` — L12493
+- `submitKnockoutScore(tournamentId, roundIndex, matchIndex)` — L12530
+- `submitKnockoutScoreDirect(tournamentId, roundIndex, matchIndex, sc)` — L12536
 
 **Live scoring inside tournaments**  (from L12563)
-- `getTournamentLiveLog(matchKey)` — L12567
-- `tournamentLivePoint(matchKey, side, target)` — L12572
-- `tournamentUndoPoint(matchKey, target)` — L12581
-- `updateTournamentLiveDisplay(matchKey, target)` — L12587
-- `finishGroupLiveGame(matchKey, tournamentId, subgroup, fixtur)` — L12605
-- `finishKnockoutLiveGame(matchKey, tournamentId, roundIndex, matc)` — L12619
-- `finishThirdPlaceLiveGame(matchKey, tournamentId)` — L12628
-- `finishDraftTieLiveGame(matchKey, tournamentId, tieId, matchInde)` — L12646
-- `renderLiveScoreControls(matchKey, target, finishCallExpr, nameA,)` — L12655
-- `activateTab(tabName)` — L12679
-- `jumpToRecordMatch()` — L12780
-- `applyTheme(theme)` — L12786
+- `submitThirdPlaceScore(tournamentId)` — L12563
+- `submitThirdPlaceScoreDirect(tournamentId, score_a, score_b, override)` — L12569
+- `getTournamentLiveLog(matchKey)` — L12600
+- `tournamentLivePoint(matchKey, side, target)` — L12605
+- `tournamentUndoPoint(matchKey, target)` — L12614
+- `updateTournamentLiveDisplay(matchKey, target)` — L12620
+- `finishGroupLiveGame(matchKey, tournamentId, subgroup, fixtur)` — L12638
+- `finishKnockoutLiveGame(matchKey, tournamentId, roundIndex, matc)` — L12652
+- `finishThirdPlaceLiveGame(matchKey, tournamentId)` — L12661
+- `finishDraftTieLiveGame(matchKey, tournamentId, tieId, matchInde)` — L12679
+- `renderLiveScoreControls(matchKey, target, finishCallExpr, nameA,)` — L12688
+- `activateTab(tabName)` — L12712
+- `jumpToRecordMatch()` — L12813
+- `applyTheme(theme)` — L12819
 <!-- AUTOGEN:FRONTEND END -->
 
 ---
