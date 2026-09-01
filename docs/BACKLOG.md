@@ -380,6 +380,53 @@
 
 ## Done
 
+- ✅ 2026-09-01 (v1.81.0) — **Season baseline auto-refresh guardrail, plus group-wide expense
+  payment confirmation.** **(1)** Diagnosed and fixed a live data-integrity bug in the Season
+  leaderboard (owner report, from screenshots: brand-new Season 1 showing wildly wrong climbs after
+  only 5-9 games — one 4-1 player showing a large negative climb, an 0-5 player showing a positive
+  one). Root cause, confirmed via a `dynamodb scan` of the season sentinel rows: `_ensure_season_
+  baseline()` freezes each player's pre-season rating into a `match_id = "__season__" + season_id`
+  row ONCE, forever — but Season 1's row had `frozen_at` three weeks before its own configured
+  `start_date`, meaning the season's start date was retimed AFTER the board was first viewed, and the
+  stale freeze (from the earlier, wrong cutoff) was never invalidated. Deleted the one stale sentinel
+  row (preserving Season 0's correctly-sealed one) to fix the live board immediately, and closed the
+  hole so it can't silently recur: the freeze now also stores `frozen_for_start_date`, and is
+  discarded/recomputed the moment it no longer matches the season's current `start_date`. **(2)**
+  Fixed the group-wide (slot-less, "(whole group)") expense share having no payment-confirmation
+  mechanism at all — a known gap called out but deferred back on 2026-08-02 ("group-wide has no
+  per-member payment tracking (always 'collecting')"), and freshly re-reported by the owner via
+  screenshot: a ₹500 shared expense's per-member share always showed as "You owe" in My Dues, with no
+  way to ever mark it paid, unlike per-slot membership dues. Rather than bolting on a parallel
+  confirmation system, `membership` records can now carry `slot = GROUP_SLOT` purely as payment-
+  confirmation carriers — one per distinct real-slot Yes member per month, lazily auto-created
+  (`_ensure_group_wide_membership_records`, called from `list_records` on first view of the
+  "(whole group)" membership tab, idempotent) so no manual admin setup step is needed. Every place
+  that walks real slot enrollments (`_settlement_rows`'s bucket-building loop, `my_settlement`'s
+  per-slot loop, `insights`' `by_member_month` builder) now explicitly skips these carrier records, so
+  they can't be miscounted as real slot enrollments and corrupt the existing slot-weighted group-wide
+  math (`expense_shares`/`walkin_shares`, from the 2026-08-24 rework) — the carrier's only job is to
+  hold `payment_confirmed_amount`, compared against `expense_shares[member]` (their own slot-weighted
+  amount, not the bucket's flat per-portion `cost_per_head`) in `update_record`'s `confirm_payment`
+  branch, `list_records`' per-member effective calc, `_settlement_rows`' settled-status pass (using
+  `distinct_member_count`, not the portion-counting `player_count`, as that bucket's denominator), and
+  `my_settlement`'s group-wide line (which now looks up a real confirmation instead of a hardcoded
+  `you_paid: False`). No new backend routes or frontend confirm/undo UI needed — the existing Members
+  card (`fin-confirm`/`fin-unconfirm`, `PUT memberships/{id}` with `confirm_payment`) and My Dues
+  screen work unmodified once fed correct data; the only UI change is a "— whole group expenses —"
+  option added to the membership slot dropdown (`populateFinanceSlots`), using the literal
+  `"(whole group)"` value since membership's `slot` field is required (unlike expenses/walk-ins, whose
+  existing group-wide option uses an empty string). **(3)** The "Copy table as image" PNG export
+  (Insights tab) showed only each member's total `paid` figure with no breakdown, unlike the on-screen
+  HTML table's `paid_breakdown` tooltip — so a member's group-wide share was invisible in the exported
+  image (owner: "the image should have the calculation as well"). `copyInsightsTableAsImage()` now
+  gives any row with a nonzero group-wide share a taller row and draws a small "incl ₹X group"
+  annotation under the Paid figure, sourced from the same `paid_breakdown` data the HTML view already
+  uses. Explicitly deferred per owner instruction, NOT touched this round: the `imageSrc()` bug
+  mishandling `data:` URIs (the real cause of the console's ~500 repeated 404s for the 9 starter-pack
+  cosmetic badges — corrected the owner's own theory that it was missing achievement banners, but they
+  asked to leave it for later) and the favicon 404. Verified: `ast.parse` on both edited backend
+  files, `node --check` on `app.js`.
+
 - ✅ 2026-08-30 (v1.80.0) — **Shared quick-tap/voice match queue, plus two guest/roster-add UI
   fixes.** **(1)** The match queue (quick-tap/voice matches waiting for "Send all") was purely a
   per-browser `localStorage` array — invisible to anyone else recording the same session, which is

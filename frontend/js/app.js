@@ -6910,10 +6910,17 @@ let userPool = null;
         const prev = sel.value;
         let opts = slots.map(s => `<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`).join('');
         // Expenses and walk-ins can be group-wide (no slot): the cost/fee is
-        // then split across ALL distinct Yes members that month. Membership
-        // always needs a real slot.
+        // then split across ALL distinct Yes members that month.
         if (id === 'fexp_slot' || id === 'fwalk_slot') {
           opts += `<option value="">\u2014 whole group (no slot) \u2014</option>`;
+        }
+        // Membership always needs a NON-EMPTY slot (backend rejects blank),
+        // so its group-wide option uses the literal "(whole group)" value
+        // instead of "" - this creates/confirms the payment-confirmation
+        // carrier record for a member's share of a group-wide expense
+        // (Owner-reported 2026-09-01: no way to ever mark that share paid).
+        if (id === 'fmem_slot') {
+          opts += `<option value="(whole group)">\u2014 whole group expenses \u2014</option>`;
         }
         sel.innerHTML = opts;
         // Restore the last slot you used (QoL), else keep the current value.
@@ -7807,8 +7814,18 @@ let userPool = null;
       ];
       if (!sameMonth) cols.unshift({ label: 'Month', align: 'left', get: r => `${r.month} ${r.year}` });
 
-      const W = 900, pad = 28, rowH = 40, headerH = 46, titleH = 64;
-      const H = titleH + headerH + rows.length * rowH + pad;
+      // A row whose Paid figure includes a group-wide (slot-less) share gets
+      // extra height for a small "incl ₹X group" annotation underneath -
+      // otherwise the exported image silently drops the calculation the
+      // on-screen table already shows via paid_breakdown (Owner-requested
+      // 2026-09-01: "the image should have the calculation as well").
+      const groupShareOf = r => {
+        const b = (r.paid_breakdown || []).find(x => x.slot === '(whole group)' && x.your_share);
+        return b ? b.your_share : null;
+      };
+      const W = 900, pad = 28, rowH = 40, groupRowH = 54, headerH = 46, titleH = 64;
+      const rowHeights = rows.map(r => groupShareOf(r) != null ? groupRowH : rowH);
+      const H = titleH + headerH + rowHeights.reduce((a, b) => a + b, 0) + pad;
       const canvas = document.createElement('canvas');
       canvas.width = W; canvas.height = H;
       const ctx = canvas.getContext('2d');
@@ -7847,9 +7864,14 @@ let userPool = null;
       y += headerH;
 
       rows.forEach((r, ri) => {
-        if (ri % 2 === 1) { ctx.fillStyle = 'rgba(255,255,255,0.03)'; ctx.fillRect(0, y, W, rowH); }
+        const thisRowH = rowHeights[ri];
+        const gwShare = groupShareOf(r);
+        if (ri % 2 === 1) { ctx.fillStyle = 'rgba(255,255,255,0.03)'; ctx.fillRect(0, y, W, thisRowH); }
         ctx.font = "500 14px system-ui";
         ctx.fillStyle = '#e8efe9';
+        // Main value sits centered in a plain row; nudged up to leave room
+        // for the group-wide annotation line when this row has one.
+        const mainY = y + (gwShare != null ? thisRowH / 2 - 8 : thisRowH / 2);
         cols.forEach((c, i) => {
           ctx.textAlign = c.align;
           const x = c.align === 'left' ? colX[i] : colX[i] + colW[i] - 12;
@@ -7858,9 +7880,20 @@ let userPool = null;
           // the next column - this is a summary image, not the full table.
           const maxChars = c.label === 'Member' ? 22 : (c.label === 'Slots' ? 16 : 14);
           if (text.length > maxChars) text = text.slice(0, maxChars - 1) + '…';
-          ctx.fillText(text, x, y + rowH / 2);
+          ctx.font = "500 14px system-ui";
+          ctx.fillStyle = '#e8efe9';
+          ctx.fillText(text, x, mainY);
         });
-        y += rowH;
+        if (gwShare != null) {
+          const paidIdx = cols.findIndex(c => c.label === 'Paid');
+          if (paidIdx !== -1) {
+            ctx.textAlign = 'right';
+            ctx.font = "500 11px system-ui";
+            ctx.fillStyle = '#8fa89a';
+            ctx.fillText(`incl ₹${gwShare} group`, colX[paidIdx] + colW[paidIdx] - 12, y + thisRowH / 2 + 12);
+          }
+        }
+        y += thisRowH;
       });
 
       canvas.toBlob(async (blob) => {
