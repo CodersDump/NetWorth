@@ -380,6 +380,32 @@
 
 ## Done
 
+- ✅ 2026-09-04 (v1.82.0) — **Fixed private/cloaked players staying visible in Stats after a
+  login/logout/privacy-flip, root-caused to a client-side staleness gap, not a server scrub hole.**
+  Owner report (via a third party): private players sometimes still listed under the Season
+  leaderboard banner in Stats, and — the bigger one — visible in Stats even after logging out, with
+  a stale view that "takes time to refresh" on a login/logout transition. Audited every server-side
+  privacy code path first (`_load_private_ids`/`_scrub_private`/`_rerank_visible` in
+  `matches/index.py`: hall of fame, diversity, progress badges, attendance, partnerships/radar, both
+  live and sealed season leaderboards) — all correctly re-derive `private_ids` fresh on every request
+  and apply it before any top-N slicing, so the backend was not the leak. The actual bug: `app.js`'s
+  `ensureFresh()`/`_tabRev`/`matchesRev` cache-freshness system only refetches a tab (Stats included)
+  when `matchesRev` changes, and that counter was bumped only on match add/edit/delete/reorder/
+  recompute — never on a login, a logout, or a `privacy_private` flip. So a Stats tab already
+  rendered under one auth context (most sharply: `statsFetch()`'s SuperAdmin branch, which correctly
+  and intentionally calls the unscrubbed `/profile-secure/matches` route for admin "see-all") just
+  sat on screen unchanged through a `doLogout()` or a fresh `setAuthSession()` login, until some
+  unrelated match got logged elsewhere and finally forced a real refetch — exactly the reported "still
+  visible after logging out" and "takes time to refresh" behavior. Fixed with one new helper,
+  `invalidateDataTabs()` (bumps `matchesRev` + immediately calls `loadActiveTabData()` so a tab left
+  open right through the transition re-renders in the same tick, not just next visit), wired into
+  `doLogout()`, `setAuthSession()` (covers both a live login and a silent session restore on boot),
+  and both privacy-flip paths (`toggleMyPrivacy()`, `adminSetPrivacy()`) so a flip's effect on an
+  already-open Stats tab in that same session is immediate too. Note: this cannot push a refresh into
+  some OTHER browser tab/session that already had Stats open before someone else's privacy changed —
+  no websocket/polling channel exists for that, and building one is a materially bigger change, out of
+  scope here. Verified: `node --check app.js`.
+
 - ✅ 2026-09-01 (v1.81.0) — **Season baseline auto-refresh guardrail, plus group-wide expense
   payment confirmation.** **(1)** Diagnosed and fixed a live data-integrity bug in the Season
   leaderboard (owner report, from screenshots: brand-new Season 1 showing wildly wrong climbs after
