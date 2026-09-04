@@ -379,6 +379,31 @@ let userPool = null;
     const _tabRev = {};                 // freshness key -> matchesRev when last loaded
     const _tabOnce = {};                // one-shot key -> loaded flag
     function bumpMatchesRev() { matchesRev++; }
+    /** Force every ensureFresh/ensureOnce-gated tab to refetch next time it's
+     *  viewed, AND re-render the tab on screen right now if one is active.
+     *
+     *  ensureFresh() only refetches a tab when matchesRev changes - which
+     *  used to mean "a match was added/edited/deleted/reordered/recomputed"
+     *  ONLY. But a login, a logout, or a privacy_private flip also change
+     *  what the Stats tab is allowed to show (statsFetch() routes SuperAdmin
+     *  to the unscrubbed /profile-secure/matches endpoint, everyone else to
+     *  the publicly-scrubbed /matches one - see statsFetch's own comment;
+     *  _load_private_ids() server-side also excludes whoever is currently
+     *  cloaked/on probation) - none of those bumped matchesRev before, so a
+     *  Stats tab already rendered under the OLD context (e.g. an admin's
+     *  unscrubbed season leaderboard, or a player who has since gone
+     *  private) just sat there unchanged until some UNRELATED match got
+     *  logged somewhere and finally forced a real refetch. (Owner-reported
+     *  2026-09-04: private/cloaked players still visible in the Stats
+     *  season banner - worst case, still visible after logging out entirely
+     *  - "it takes time to refresh... i don't want that to be allowed.")
+     *
+     *  Bumping the rev here makes every gated tab refetch on its next visit;
+     *  calling loadActiveTabData() immediately after means a tab left open
+     *  right through the transition (the exact "still logged in a second
+     *  ago" case) is re-rendered in the same tick, not merely marked dirty
+     *  for later. */
+    function invalidateDataTabs() { bumpMatchesRev(); loadActiveTabData(); }
     function isTabActive(tab) {
       const p = document.getElementById('tab-' + tab);
       return !!(p && p.classList.contains('active'));
@@ -567,6 +592,12 @@ let userPool = null;
         await loadPlayers();
         updateAuthUI();
         renderPrivacyControl();
+        // A privacy flip changes who statsFetch()/the server's private_ids
+        // scrub should be hiding, but wasn't a "match changed" event -
+        // without this, a Stats tab already open in this same session would
+        // keep showing the pre-flip board until an unrelated match got
+        // logged (see invalidateDataTabs' own comment for the fuller story).
+        invalidateDataTabs();
         if (statusEl) statusEl.textContent = goingPrivate ? 'You are now private.' : 'You are now public.';
       } catch (e) { if (statusEl) statusEl.textContent = 'Failed: ' + e.message; }
     }
@@ -629,6 +660,10 @@ let userPool = null;
         await loadPlayers();
         populateAdminPrivacySelect();
         updateAuthUI();
+        // Same reasoning as toggleMyPrivacy(): force this admin's own
+        // already-open Stats tab to reflect the flip immediately rather
+        // than waiting for an unrelated match event.
+        invalidateDataTabs();
         if (statusEl) statusEl.textContent = 'Done - set to ' + (makePrivate ? 'private' : 'public') + '. They may need to log out/in to see it.';
       } catch (e) { if (statusEl) statusEl.textContent = 'Failed: ' + e.message; }
     }
@@ -8500,6 +8535,13 @@ let userPool = null;
       const idToken = session.getIdToken();
       authSession = { idToken: idToken.getJwtToken(), claims: idToken.payload, cognitoUser: user };
       updateAuthUI();
+      // A newly-authenticated identity can see MORE than whatever was on
+      // screen a moment ago as a guest/different account (SuperAdmin's
+      // statsFetch() branch in particular is fully unscrubbed) - or LESS,
+      // if the account that just signed in is itself cloaked. Either way a
+      // tab rendered under the previous context needs refetching now, the
+      // same as on logout (see invalidateDataTabs' own comment).
+      invalidateDataTabs();
       closeAuthModal();
       // First login on an account with no linked player yet - prompt to
       // create one, right here rather than tying it to signup
@@ -8948,6 +8990,12 @@ let userPool = null;
       renderProfileCardBanner(null);
 
       updateAuthUI();
+      // Same reasoning as the Player Card fix just above: a Stats/Profile/
+      // Tournaments view already rendered under the account that just left
+      // has to be actively refreshed, not merely left in place hoping
+      // nothing sensitive is showing (Owner-reported 2026-09-04: private
+      // players still visible in Stats after logging out).
+      invalidateDataTabs();
     }
 
     /**
