@@ -1557,13 +1557,21 @@ def update_match(match_id, event):
             return _response(400, {'error': f'this match needs {size} player(s) per team'})
         if set(team_a) & set(team_b):
             return _response(400, {'error': 'a player cannot be on both teams'})
-        # every player must exist
+        # every player must exist - fetched once each and reused below to
+        # refresh team_a_names/team_b_names, so a corrected roster shows the
+        # right names immediately instead of keeping whichever player was
+        # snapshotted onto this match before the edit.
+        _players_by_id = {}
         for pid in list(team_a) + list(team_b):
-            if not players_table.get_item(Key={'player_id': pid}).get('Item'):
+            p = players_table.get_item(Key={'player_id': pid}).get('Item')
+            if not p:
                 return _response(404, {'error': f'player not found: {pid}'})
-        set_parts += ['team_a = :ta', 'team_b = :tb']
+            _players_by_id[pid] = p
+        set_parts += ['team_a = :ta', 'team_b = :tb', 'team_a_names = :tan', 'team_b_names = :tbn']
         vals[':ta'] = team_a
         vals[':tb'] = team_b
+        vals[':tan'] = [_players_by_id[pid].get('name') for pid in team_a]
+        vals[':tbn'] = [_players_by_id[pid].get('name') for pid in team_b]
 
     matches_table.update_item(
         Key={'match_id': match_id},
@@ -1917,6 +1925,32 @@ def list_matches(event):
     items = _scan_all(matches_table)
     # Reserved config rows (events) live in this table but aren't matches.
     items = [i for i in items if i.get('match_id') not in (_EVENTS_ROW_ID, _QUESTS_ROW_ID, _ACHIEVEMENTS_ROW_ID)]
+
+    # team_a_names/team_b_names are a snapshot taken when a match is recorded
+    # (or has its roster corrected via update_match) - a player rename
+    # (PUT /players/{id}) never touches already-recorded matches, so without
+    # this every branch below (game log, recent form, hall of fame,
+    # partnerships, ...) would keep showing whichever name was current back
+    # when the snapshot was last written - Owner-reported 2026-09-07: renamed
+    # a player and both older AND a just-corrected match kept showing the old
+    # name. Re-resolved live here, once, against the CURRENT players table so
+    # every match always displays each player's current name, no matter when
+    # it was recorded. A player_id that no longer resolves (deleted player)
+    # falls back to whatever name was already snapshotted, so history doesn't
+    # go blank.
+    _name_cache = {}
+    def _live_name(pid, fallback):
+        if pid not in _name_cache:
+            p = players_table.get_item(Key={'player_id': pid}).get('Item')
+            _name_cache[pid] = p.get('name') if p else fallback
+        return _name_cache[pid]
+    def _live_names(ids, old_names):
+        old_names = old_names or []
+        return [_live_name(pid, old_names[idx] if idx < len(old_names) else pid)
+                for idx, pid in enumerate(ids or [])]
+    for i in items:
+        i['team_a_names'] = _live_names(i.get('team_a'), i.get('team_a_names'))
+        i['team_b_names'] = _live_names(i.get('team_b'), i.get('team_b_names'))
     # Privacy: omit private players from comparative outputs for everyone but a
     # SuperAdmin (only ever identified via an authed route). No-op when off.
     private_ids = set() if _is_super_admin(_caller_claims(event)) else _load_private_ids()
