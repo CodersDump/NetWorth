@@ -2697,7 +2697,16 @@ let userPool = null;
       const grid = document.getElementById('tap-avatar-grid');
       if (!grid) return;
       const groupId = document.getElementById('match_group_select').value;
-      const memberPool = nwTapRosterPool();
+      // Alphabetical by real name (never nickname) so the grid reads the
+      // same way every time regardless of the order players were added to
+      // the group/session - Owner-requested 2026-09-07. One-off guests
+      // (nwTapGuestIds, added via the picker below) are deliberately left
+      // out of this sort and just appended in the order they were added,
+      // same as before - they're meant to stand apart at the end, not blend
+      // into the alphabetical roster above them.
+      const memberPool = nwTapRosterPool()
+        .slice()
+        .sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
       const memberIds = new Set(memberPool.map(p => p.player_id));
       const guestPlayers = nwTapGuestIds.map(id => allPlayers.find(p => p.player_id === id)).filter(Boolean);
       const pool = [...memberPool, ...guestPlayers.filter(p => !memberIds.has(p.player_id))];
