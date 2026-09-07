@@ -379,6 +379,31 @@ let userPool = null;
     const _tabRev = {};                 // freshness key -> matchesRev when last loaded
     const _tabOnce = {};                // one-shot key -> loaded flag
     function bumpMatchesRev() { matchesRev++; }
+    /** Force every ensureFresh/ensureOnce-gated tab to refetch next time it's
+     *  viewed, AND re-render the tab on screen right now if one is active.
+     *
+     *  ensureFresh() only refetches a tab when matchesRev changes - which
+     *  used to mean "a match was added/edited/deleted/reordered/recomputed"
+     *  ONLY. But a login, a logout, or a privacy_private flip also change
+     *  what the Stats tab is allowed to show (statsFetch() routes SuperAdmin
+     *  to the unscrubbed /profile-secure/matches endpoint, everyone else to
+     *  the publicly-scrubbed /matches one - see statsFetch's own comment;
+     *  _load_private_ids() server-side also excludes whoever is currently
+     *  cloaked/on probation) - none of those bumped matchesRev before, so a
+     *  Stats tab already rendered under the OLD context (e.g. an admin's
+     *  unscrubbed season leaderboard, or a player who has since gone
+     *  private) just sat there unchanged until some UNRELATED match got
+     *  logged somewhere and finally forced a real refetch. (Owner-reported
+     *  2026-09-04: private/cloaked players still visible in the Stats
+     *  season banner - worst case, still visible after logging out entirely
+     *  - "it takes time to refresh... i don't want that to be allowed.")
+     *
+     *  Bumping the rev here makes every gated tab refetch on its next visit;
+     *  calling loadActiveTabData() immediately after means a tab left open
+     *  right through the transition (the exact "still logged in a second
+     *  ago" case) is re-rendered in the same tick, not merely marked dirty
+     *  for later. */
+    function invalidateDataTabs() { bumpMatchesRev(); loadActiveTabData(); }
     function isTabActive(tab) {
       const p = document.getElementById('tab-' + tab);
       return !!(p && p.classList.contains('active'));
@@ -567,6 +592,12 @@ let userPool = null;
         await loadPlayers();
         updateAuthUI();
         renderPrivacyControl();
+        // A privacy flip changes who statsFetch()/the server's private_ids
+        // scrub should be hiding, but wasn't a "match changed" event -
+        // without this, a Stats tab already open in this same session would
+        // keep showing the pre-flip board until an unrelated match got
+        // logged (see invalidateDataTabs' own comment for the fuller story).
+        invalidateDataTabs();
         if (statusEl) statusEl.textContent = goingPrivate ? 'You are now private.' : 'You are now public.';
       } catch (e) { if (statusEl) statusEl.textContent = 'Failed: ' + e.message; }
     }
@@ -629,6 +660,10 @@ let userPool = null;
         await loadPlayers();
         populateAdminPrivacySelect();
         updateAuthUI();
+        // Same reasoning as toggleMyPrivacy(): force this admin's own
+        // already-open Stats tab to reflect the flip immediately rather
+        // than waiting for an unrelated match event.
+        invalidateDataTabs();
         if (statusEl) statusEl.textContent = 'Done - set to ' + (makePrivate ? 'private' : 'public') + '. They may need to log out/in to see it.';
       } catch (e) { if (statusEl) statusEl.textContent = 'Failed: ' + e.message; }
     }
@@ -8500,6 +8535,13 @@ let userPool = null;
       const idToken = session.getIdToken();
       authSession = { idToken: idToken.getJwtToken(), claims: idToken.payload, cognitoUser: user };
       updateAuthUI();
+      // A newly-authenticated identity can see MORE than whatever was on
+      // screen a moment ago as a guest/different account (SuperAdmin's
+      // statsFetch() branch in particular is fully unscrubbed) - or LESS,
+      // if the account that just signed in is itself cloaked. Either way a
+      // tab rendered under the previous context needs refetching now, the
+      // same as on logout (see invalidateDataTabs' own comment).
+      invalidateDataTabs();
       closeAuthModal();
       // First login on an account with no linked player yet - prompt to
       // create one, right here rather than tying it to signup
@@ -8840,12 +8882,40 @@ let userPool = null;
 
     function doSignup() {
       const email = document.getElementById('auth-signup-email').value.trim();
+      const emailConfirm = document.getElementById('auth-signup-email-confirm').value.trim();
       const password = document.getElementById('auth-signup-password').value;
       const statusEl = document.getElementById('auth-signup-status');
       if (!userPool) { statusEl.textContent = 'Sign up is not configured yet.'; return; }
+      // Owner found this the hard way (2026-08-24): typo'd their own email at
+      // signup and only found out later when the confirmation code never
+      // arrived - Cognito never rejects an unreachable-but-valid-looking
+      // address, so a typo silently strands you at "check your email"
+      // forever. A retype field catches it before signUp() ever fires -
+      // pasting into it is blocked in the HTML (onpaste="return false") so
+      // pasting the same typo into both fields can't rubber-stamp past this.
+      if (!email || !emailConfirm) { statusEl.textContent = 'Enter your email in both fields.'; return; }
+      if (email.toLowerCase() !== emailConfirm.toLowerCase()) {
+        statusEl.textContent = "Those two emails don't match - check for a typo and try again.";
+        return;
+      }
       const attrs = [new AmazonCognitoIdentity.CognitoUserAttribute({ Name: 'email', Value: email })];
       userPool.signUp(email, password, attrs, null, (err) => {
-        if (err) { statusEl.textContent = err.message; return; }
+        if (err) {
+          // UsernameExistsException's own message ("An account with the
+          // given email already exists") reads like a dead end - it doesn't
+          // say what to actually DO about it, which is exactly what sent the
+          // owner down the "forgot password isn't sending a code" rabbit
+          // hole (2026-08-24) before realizing the real issue was a typo'd
+          // signup, not a broken reset flow.
+          if (err.code === 'UsernameExistsException') {
+            statusEl.innerHTML = 'An account with this email already exists. ' +
+              '<a href="#" onclick="showAuthView(\'login\'); return false;">Log in instead</a>, or ' +
+              '<a href="#" onclick="showAuthView(\'forgot\'); return false;">reset your password</a> if you forgot it.';
+            return;
+          }
+          statusEl.textContent = err.message;
+          return;
+        }
         document.getElementById('auth-confirm-code').dataset.email = email;
         // Stash the password briefly so confirmation can log them straight
         // in and into the profile chooser, rather than stranding them at a
@@ -8948,6 +9018,12 @@ let userPool = null;
       renderProfileCardBanner(null);
 
       updateAuthUI();
+      // Same reasoning as the Player Card fix just above: a Stats/Profile/
+      // Tournaments view already rendered under the account that just left
+      // has to be actively refreshed, not merely left in place hoping
+      // nothing sensitive is showing (Owner-reported 2026-09-04: private
+      // players still visible in Stats after logging out).
+      invalidateDataTabs();
     }
 
     /**
