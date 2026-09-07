@@ -161,7 +161,7 @@ def list_players():
     players = [
         {
             'player_id': i['player_id'],
-            'name': i['name'],
+            'name': i.get('name', ''),
             'nickname': i.get('nickname'),
             'skill_level': i.get('skill_level'),
             'rating': i.get('rating', 1000),
