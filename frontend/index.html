@@ -62,7 +62,8 @@
       </div>
 
       <div id="auth-signup-view" style="display:none;">
-        <label>Email <input type="email" id="auth-signup-email"></label>
+        <label>Email <input type="email" id="auth-signup-email" autocomplete="email"></label>
+        <label>Confirm email <input type="email" id="auth-signup-email-confirm" autocomplete="email" onpaste="return false;"></label>
         <label>Password <input type="password" id="auth-signup-password" placeholder="min 8 chars, 1 number"></label>
         <button type="button" id="auth-signup-submit-btn">Sign up</button>
         <p style="font-size:13px; margin-top:10px;"><a href="#" onclick="showAuthView('login'); return false;">Back to log in</a></p>

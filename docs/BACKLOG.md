@@ -11,13 +11,9 @@
 
 ## Now / high priority
 
-- `[bug] S` **Signup form: no email-typo safeguard, unfriendly "already registered" error.** Owner
-  found this while chasing the "forgot password not sending the code" report (2026-08-24) - he'd typo'd
-  his own email at signup and only found out when no mail arrived. Proposed fix (not yet built, owner
-  redirected to the password-reuse issue before confirming scope - see v1.69.0 in Done): a confirm-email
-  retype field on the signup form (blocks submit client-side on mismatch), plus a friendlier message
-  when `userPool.signUp` returns "this email is already registered" instead of showing Cognito's raw
-  error text as-is.
+- `[bug] S` **Signup form: no email-typo safeguard, unfriendly "already registered" error — DONE
+  (v1.83.0, see Done).** Owner found this while chasing the "forgot password not sending the code"
+  report (2026-08-24) - he'd typo'd his own email at signup and only found out when no mail arrived.
 
 - `[feat] L` **Manual-mode tournaments (leaders + pool draft/auction) — Phases A-D all done, feature
   complete. Configurable best-of-3 + real visual bracket added 2026-08-22 (v1.58.0, see Done); a
@@ -224,27 +220,28 @@
   `networth-deploy-policy.json`; parameterize. **DONE 2026-08-20** (see Done — replaced with the
   same `*` wildcard already used by every other ARN in both files). (KNOWN_ISSUES #3)
 
-- `[feat] L` **Privacy / "cloak" mode (reciprocity visibility filter) — admin-gated, ships dark.**
-  A player can go *private*: they drop out of everyone's comparative views (rankings, Hall of Fame, H2H
-  distribution, lookup/opponent dropdowns) AND lose the Stats tab themselves (reciprocity) — but keep
-  their own Player Card, and stay fully selectable when recording matches. Public players see everyone
-  except privates (ranks compress 1..N). **Also global:** strip the Elo from every dropdown *label*
-  (the pairing-bias signal the club reacted to). Enforced server-side (a raw `/matches` call must not
-  see through it). 7-day cooldown between switches (admin-configurable); SuperAdmin sees all + can
-  force-flip anyone ignoring cooldown. Decisions locked 2026-08 (cloak not zen; rank compression yes;
-  existing HoF records kept, future ones exclude privates; private names stay in factual match history).
-  **No template/route changes needed** — reuses `/update-my-card`, `PUT /players/{id}`, `/app-settings`,
-  and `/profile-secure` (all already Cognito-authed). Staged: **P1a** foundation (done) → **P1b** the
-  comparative filter (fold B2's `.scan()` pagination in here) → **P2** frontend (hide Stats, self-lock
-  the card lookup, toggle UI + cooldown messaging, admin controls, Elo-label strip). Build **before**
-  Seasons so the season leaderboard inherits the filter.
+- `[feat] L` **Privacy / "cloak" mode (reciprocity visibility filter) — DONE (verified 2026-09-06).**
+  This entry sat under "Now" as if P1b/P2 were still open, but both shipped and this doc was never
+  updated. Re-verified end-to-end this session while root-causing the v1.82.0 staleness bug: **P1b
+  (comparative filter)** is `_load_private_ids`/`_scrub_private`/`_rerank_visible` in `matches/index.py`,
+  applied across hall of fame, diversity, progress badges, attendance, partnerships/radar, and both live
+  and sealed season leaderboards — all re-derive `private_ids` fresh per request, before any top-N
+  slicing, and the open `/matches` route has no Cognito authorizer at all so there's no way for a raw
+  call to see through it (everyone gets the same scrub). **P2 (frontend)**: `iAmPrivate()` gates
+  `hideStats` (a cloaked player loses their own Stats tab, confirmed at the `updateAuthUI` call site);
+  `renderPrivacyControl`/`toggleMyPrivacy` give the cooldown-aware self-toggle UI; `adminSetPrivacy`/
+  `populateAdminPrivacySelect` give the SuperAdmin force-flip; and `formatPlayerLabel` (used by every
+  player dropdown/picker in the app) only ever renders name/nickname, never a rating — the Elo-label
+  strip was never a separate feature to add, it's just what that shared formatter has always done.
+  Nothing left to build here.
 - `[perf] M` **Build B2 — backend fan-out reduction (follow-on to Build B).** Build B killed the
   first-paint burst frontend-side (lazy-load + freshness), so throttling should be gone. Remaining
   server-side polish: (a) a single **bundle endpoint** that scans matches once and returns the Stats +
-  Profile views together (extend `profile_bundle_for`) so opening those tabs is 1 call, not 6–7;
-  (b) cache CORS **preflights** via `Access-Control-Max-Age` to drop the OPTIONS round-trip per call;
-  (c) **paginate `table.scan()`** (KNOWN_ISSUES #15) while in these handlers. Backend deploy; do after
-  confirming Build B cleared the 500s.
+  Profile views together (extend `profile_bundle_for`) so opening those tabs is 1 call, not 6–7 - still
+  not built; (b) cache CORS **preflights** via `Access-Control-Max-Age` — **DONE (v1.83.0, see Done)**,
+  added to all 58 OPTIONS methods in `infrastructure/template.yaml`; (c) **paginate `table.scan()`**
+  (KNOWN_ISSUES #15) — **already DONE**, see that item above, fully resolved 2026-08-20 across every
+  lambda. Only (a) remains open.
 - `[ops] S` **Request a Lambda concurrency-limit increase.** Account is at the new-account default of 10
   concurrent executions (normal 1000); Service Quotas → Lambda → "Concurrent executions". Instant
   headroom for the throttling above while Build B lands. (KNOWN_ISSUES #16.)
@@ -266,10 +263,14 @@
   (auth, matches, tournaments, finance, store, profile…). Big win for local-model context limits.
   Watch the inline-`onclick` coupling (KNOWN_ISSUES #11) — needs a wiring pass on `index.html`.
 - `[bug] S` Validate live-scoring `point_log` on write so bogus momentum can't be stored
-  (replace the reactive `clear_bogus_momentum.py` script). (KNOWN_ISSUES #7)
+  (replace the reactive `clear_bogus_momentum.py` script). **DONE (v1.83.0, see Done)** — turned out
+  `matches/index.py`'s `record_match()` already had this on the single-match write path; the real gap
+  was `tournaments/index.py`'s 4 tie/bracket scoring routes, now closed. (KNOWN_ISSUES #7)
 - `[ops] S` Add a CI guard that fails the build if any `s3 sync --delete` appears in a workflow.
   **DONE 2026-08-20** (see Done). (KNOWN_ISSUES #9)
-- `[ops] S` Stop tracking `__pycache__/*.pyc` in git. (KNOWN_ISSUES #14)
+- `[ops] S` Stop tracking `__pycache__/*.pyc` in git. **DONE (v1.83.0, see Done)** — `.gitignore`
+  already covered the pattern; the gap was just already-tracked files predating that rule.
+  (KNOWN_ISSUES #14)
 - `[feat] M` **Decide: backend-enforced "one player, one group" exclusivity?** Owner floated this while
   reviewing Quick-tap (2026-08-29) — a player should really belong to only one real group, with
   ad-hoc appearances elsewhere handled as guests, not membership. v1.76.1 already ships the
@@ -379,6 +380,68 @@
 ---
 
 ## Done
+
+- ✅ 2026-09-06 (v1.83.0) — **Three independent fixes: signup email-typo safeguard, CORS preflight
+  caching, and tournament point_log validation; plus two stale-doc corrections and a git-hygiene
+  cleanup.** Picked up from the backlog for an unattended overnight round. **(1) Signup form
+  (frontend-only, KNOWN_ISSUES/Now item):** added a "Confirm email" retype field to the signup form
+  (`index.html`) that blocks submit client-side on a mismatch (`doSignup()` in `app.js`), and replaced
+  Cognito's raw `UsernameExistsException` text with a friendlier message plus inline "Log in instead" /
+  "reset your password" links. **(2) CORS preflight caching (infra-only):** added
+  `Access-Control-Max-Age: '86400'` to every one of the 58 MOCK-integration OPTIONS methods in
+  `infrastructure/template.yaml` (both the `IntegrationResponses` literal and the `MethodResponses`
+  boolean declaration), so a browser caches each preflight for a day instead of re-sending it before
+  every call. **(3) Tournament `point_log` validation (KNOWN_ISSUES #7, backend):** `matches/index.py`'s
+  `record_match()` already validated a live-scored `point_log` structurally and against `score_a`/
+  `score_b` before storing it — that path was already safe. `tournaments/index.py` had no equivalent:
+  its 4 point_log-accepting routes (`record_group_score`, `record_knockout_score`, and — via the shared
+  `_score_tie_match()` — `record_group_tie_score` and `record_knockout_tie_score`) stored whatever the
+  client sent, unvalidated, before it reached the existing `suspected_batch_entry` momentum guard.
+  Confirmed real and reachable (`app.js` sends `point_log` to all 4 shapes, not just the single-match
+  route). Resolved a best-of-N ambiguity first: every one of these routes submits exactly **one game per
+  call** (`_submit_game` appends one `{score_a, score_b}` per invocation; a tie's `total_a`/`total_b` is
+  only summed afterwards, purely for Elo) — so a call's `point_log`, when present, always corresponds to
+  that same call's own `score_a`/`score_b`, never the tie's multi-game total, making the same
+  count-consistency check `record_match()` uses safe to reuse here. Added one shared `_validate_point_log()`
+  helper (structural check + tally-vs-score check, raising `ValueError` the way `_submit_game` already
+  does so every call site's existing `except ValueError → 400` handling covers it for free) and wired it
+  into `_score_tie_match()` (covering both tie-scoring routes in one place) plus the two remaining
+  routes directly. **(4) Two stale backlog corrections (doc-only, no code change):** the "Privacy / cloak
+  mode" and part of the "Build B2" entries under Now/high-priority said work was still open that had
+  actually shipped already — corrected in place (see those entries) rather than re-doing finished work,
+  matching this doc's own precedent for the 2026-08-19 "Finance approval for group owners" correction.
+  **(5) Git hygiene:** confirmed `__pycache__/`/`*.pyc` were already in `.gitignore` — the only gap was
+  files tracked before that rule existed; folded a one-time `git rm -r --cached` for those paths into
+  this delivery's deploy commands rather than a separate step. **(6) Season leaderboard: real
+  season-scoped Elo ladder, not a re-skinned lifetime delta (owner report, 2026-09-07, via
+  screenshots).** Owner noticed the lifetime-#1 player (global rating 1333) was stuck mid-pack on the
+  Season 1 board with a *negative* climb despite clearly being a strong player, while players ranked
+  ~8th-10th globally were topping the season board. Root cause: `compute_season_leaderboard` computed
+  `season_score = baseline + (current_lifetime_rating - start_lifetime)` — the "climb" was never
+  anything but the LIFETIME Elo engine's own movement, re-exported onto a compressed baseline. Since
+  the lifetime engine's `expected_a` for a much-higher-rated player stays close to 1 against mid-pack
+  opponents, that player's wins pay almost nothing and losses cost heavily — the same dynamic that
+  makes lifetime Elo hard to climb once you're near the top, completely undefeated by the season
+  "reset" (the reset only ever touched the DISPLAYED baseline number, never the underlying gap driving
+  each match's delta). Owner's framing: like a battle-royale ranked reset (Apex etc.) — a Predator-tier
+  player drops to a compressed rank each season, then climbs from there against ladder-mates AT that
+  rank, never by re-fighting the gap against players several tiers down. Fix: `compute_season_leaderboard`
+  now runs its own **independent, season-scoped Elo replay** — every player seeded once at their frozen
+  baseline, then every in-season match replayed chronologically with the exact same expected-score/
+  K-factor formula as the lifetime engine (`recompute_all_ratings`), but comparing opponents' SEASON
+  ratings against each other, never their lifetime rating. Doubles pairing-familiarity (K-factor
+  adaptivity) still uses LIFETIME pairing count, not a season-reset one — two established partners
+  aren't "new" to each other just because a season started; only the *rating* resets. `min_games=5`
+  still gates who's displayed, exactly as before — a sub-threshold player's season rating still fully
+  participates in the replay (affects every opponent they face), they just don't get their own row.
+  Sanity-checked with a synthetic scenario (lifetime-#1 player going 14-6 against baseline-level peers
+  across a season): old formula gave a **-71 climb** despite the winning record; new formula gives
+  **+21**, matching how a real ranked-ladder reset should behave. Output shape (`player_id`, `games`,
+  `wins`, `losses`, `season_start`, `season_score`, `delta`, `rank`) is unchanged, so no frontend or
+  badge-logic (`_season_badges_for`) changes were needed. Lifetime rating itself is completely
+  untouched — this only changes how the season board's own number is derived. Verified: `python3 -m ast.parse`
+  on `tournaments/index.py`, `node --check app.js`, and a PyYAML CFN-tag-tolerant re-parse of
+  `template.yaml` (240 resources, 58 confirmed carrying `Access-Control-Max-Age`).
 
 - ✅ 2026-09-04 (v1.82.0) — **Fixed private/cloaked players staying visible in Stats after a
   login/logout/privacy-flip, root-caused to a client-side staleness gap, not a server scrub hole.**

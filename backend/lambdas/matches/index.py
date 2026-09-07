@@ -375,42 +375,117 @@ def _ensure_season_baseline(season, k, items):
     return row
 
 def compute_season_leaderboard(season, items, k, min_games=5):
-    """Derived climb board: everyone starts the season at a soft-reset baseline
-    (frozen), then moves by their lifetime rating change across the window. No
-    Elo replay - reads each match's stored ratings_after."""
+    """Independent, season-scoped Elo ladder: everyone is seeded once at a
+    soft-reset baseline (frozen, see _ensure_season_baseline), then every
+    in-season match is replayed chronologically using the exact same
+    expected-score/K-factor formula as the lifetime engine (see
+    recompute_all_ratings) - but rating gaps are computed entirely against
+    opponents' SEASON ratings, never their lifetime rating.
+
+    Replaces the earlier "score = baseline + lifetime rating delta"
+    approach, which just re-exported the lifetime Elo's own movement onto
+    the season board: a lifetime-top player's expected score stays high
+    against weaker opponents even after a season "reset", so their in-
+    season wins still paid little and a loss still cost a lot - the reset
+    only touched the DISPLAYED number, not the underlying dynamic, so
+    climbing the season board was exactly as hard as climbing the lifetime
+    one. Owner's framing (2026-09-07): like a battle-royale ranked reset
+    (Apex etc.) - a lifetime-top player drops to a compressed rank, then
+    climbs from there against ladder-mates AT that rank, not by re-fighting
+    the gap against players several tiers down. So the season board needs
+    its own self-consistent rating universe, not lifetime Elo wearing a
+    different baseline.
+
+    Lifetime rating (`ratings_after`) is a read-only input here, for two
+    things only: the one-time baseline freeze, and doubles pairing
+    familiarity - K-factor adaptivity below uses the pairing's LIFETIME
+    match count, not a season-reset one, since two players who've been
+    partners for 40 matches are still a known quantity to each other the
+    day a new season starts, even though their season *rating* resets.
+    `min_games` still gates who's DISPLAYED, exactly as before - a player
+    under the threshold still plays a full part in this replay (their
+    season rating affects every opponent they face), they just don't get
+    their own row."""
     row = _ensure_season_baseline(season, k, items)
     baseline = row.get('baseline') or {}
-    start_lifetime = row.get('start_lifetime') or {}
     sd, ed = season['start_date'], season['end_date']
-    per = {}
-    for m in items:
-        d = m.get('date') or ''
-        if not d:
-            continue
-        ra = m.get('ratings_after') or {}
-        w = m.get('winner')
-        for pid in (m.get('team_a') or []):
-            per.setdefault(pid, []).append((d, ra.get(pid), w == 'A'))
-        for pid in (m.get('team_b') or []):
-            per.setdefault(pid, []).append((d, ra.get(pid), w == 'B'))
-    leaders = []
-    for pid, rows in per.items():
-        rows.sort(key=lambda r: r[0])
-        in_window = [r for r in rows if sd <= r[0][:10] < ed]
-        if len(in_window) < min_games:
-            continue
-        if pid in start_lifetime:
-            start_r = int(start_lifetime[pid])
+
+    valid = [m for m in items
+             if m.get('team_a') and m.get('team_b')
+             and m.get('score_a') is not None and m.get('score_b') is not None
+             and m.get('date')]
+    valid.sort(key=lambda m: m['date'])
+
+    season_ratings = {}   # pid -> season-local rating, lazily seeded from baseline
+    pairing_counts = {}   # frozenset({p1,p2}) -> lifetime doubles matches together so far
+    games, wins = {}, {}
+
+    for m in valid:
+        d = m['date'][:10]
+        team_a, team_b = m['team_a'], m['team_b']
+
+        # Pairing familiarity accrues across ALL history (in-season or not),
+        # same as the lifetime engine - only the RATING replay below is
+        # gated to the season window.
+        if m.get('match_type') == 'doubles':
+            k_a = compute_adaptive_k(pairing_counts.get(frozenset(team_a), 0)) if len(team_a) == 2 else K_FACTOR
+            k_b = compute_adaptive_k(pairing_counts.get(frozenset(team_b), 0)) if len(team_b) == 2 else K_FACTOR
+            if len(team_a) == 2:
+                key_a = frozenset(team_a)
+                pairing_counts[key_a] = pairing_counts.get(key_a, 0) + 1
+            if len(team_b) == 2:
+                key_b = frozenset(team_b)
+                pairing_counts[key_b] = pairing_counts.get(key_b, 0) + 1
         else:
-            pre = [r[1] for r in rows if r[0][:10] < sd and r[1] is not None]
-            start_r = int(pre[-1]) if pre else 1000
-        upto = [r[1] for r in rows if r[0][:10] < ed and r[1] is not None]
-        end_r = int(upto[-1]) if upto else start_r
-        base = int(baseline.get(pid, round(1000 + (start_r - 1000) * k)))
-        score = base + (end_r - start_r)
-        wins = sum(1 for r in in_window if r[2])
-        leaders.append({'player_id': pid, 'games': len(in_window), 'wins': wins,
-                        'losses': len(in_window) - wins, 'season_start': base,
+            k_a = k_b = K_FACTOR
+
+        if not (sd <= d < ed):
+            continue
+
+        for pid in team_a + team_b:
+            if pid not in season_ratings:
+                season_ratings[pid] = float(baseline.get(pid, 1000))
+
+        score_a, score_b = float(m['score_a']), float(m['score_b'])
+        actual_a = 1.0 if score_a > score_b else (0.0 if score_a < score_b else 0.5)
+        actual_b = 1.0 - actual_a
+        rating_a_avg = sum(season_ratings[pid] for pid in team_a) / len(team_a)
+        rating_b_avg = sum(season_ratings[pid] for pid in team_b) / len(team_b)
+        expected_a = 1 / (1 + 10 ** ((rating_b_avg - rating_a_avg) / 400))
+        expected_b = 1 - expected_a
+        delta_a = k_a * (actual_a - expected_a)
+        delta_b = k_b * (actual_b - expected_b)
+
+        momentum = m.get('momentum')
+        winner = m.get('winner')
+        if momentum:
+            bonus = compute_comeback_bonus(momentum)
+            if winner == 'A':
+                delta_a += bonus
+            elif winner == 'B':
+                delta_b += bonus
+
+        for pid in team_a:
+            season_ratings[pid] += delta_a
+            games[pid] = games.get(pid, 0) + 1
+        for pid in team_b:
+            season_ratings[pid] += delta_b
+            games[pid] = games.get(pid, 0) + 1
+        if winner == 'A':
+            for pid in team_a:
+                wins[pid] = wins.get(pid, 0) + 1
+        elif winner == 'B':
+            for pid in team_b:
+                wins[pid] = wins.get(pid, 0) + 1
+
+    leaders = []
+    for pid, played in games.items():
+        if played < min_games:
+            continue
+        base = int(baseline.get(pid, 1000))
+        score = int(round(season_ratings[pid]))
+        leaders.append({'player_id': pid, 'games': played, 'wins': wins.get(pid, 0),
+                        'losses': played - wins.get(pid, 0), 'season_start': base,
                         'season_score': score, 'delta': score - base})
     leaders.sort(key=lambda x: (-x['season_score'], -x['games']))
     for i, l in enumerate(leaders):

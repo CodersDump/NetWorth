@@ -116,6 +116,11 @@ factor into a shared Lambda layer (backlog item).
 Live split-screen scoring can produce malformed point logs (there's literally a repair script,
 `clear_bogus_momentum.py`). Comeback-bonus math trusts `point_log`. **Safe move:** validate point
 logs on write if you touch that path; don't assume a stored `momentum` block is well-formed.
+**RESOLVED 2026-09-06 (v1.83.0):** `matches/index.py`'s single-match `record_match()` already
+validated on write. The real gap was `tournaments/index.py`'s 4 tie/bracket scoring routes, which
+stored `point_log` unvalidated — closed with a shared `_validate_point_log()` helper (structural
+check + tally-vs-score check, safe because every route there submits exactly one game per call).
+`clear_bogus_momentum.py` remains as the reactive repair tool for anything stored before this fix.
 
 ### 15. Unpaginated `table.scan()` truncates silently at 1 MB  · sev: medium (latent)
 `list_players` (players lambda) does `table.scan().get('Items', [])` with **no pagination**. DynamoDB
@@ -220,3 +225,6 @@ only if traffic is predictable and you actually want the free allowance.
 `__pycache__/*.pyc` (incl. a `matches/index.cpython-312.pyc`) shipped inside the snapshot zip even
 though `.gitignore` covers them. **Safe move:** ensure they're not tracked in git (`git rm --cached`
 if they are); they're just noise for an LLM reading the tree.
+**RESOLVED 2026-09-06 (v1.83.0):** ran `git rm -r --cached` on the tracked `__pycache__`/`*.pyc`
+paths as part of the v1.83.0 deploy — `.gitignore` already had the pattern, so this was a one-time
+cleanup of files tracked before that rule existed, not a rule change.

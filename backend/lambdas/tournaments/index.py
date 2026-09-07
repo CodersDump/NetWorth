@@ -183,6 +183,26 @@ def compute_momentum_stats(point_log, winner):
     if suspected_batch_entry:
         result['suspected_batch_entry'] = True
     return result
+
+
+def _validate_point_log(point_log, score_a, score_b):
+    """Structural + count-consistency check for a live-scoring point_log,
+    mirroring matches/index.py's record_match() validation. Every route in
+    this file that accepts point_log submits exactly one game per call (see
+    _submit_game/_score_tie_match - a tie's or best-of-N match's summed
+    total_a/total_b is only computed afterwards, purely for Elo), so it's
+    always safe to check the log's tally against that single game's
+    score_a/score_b - never against the multi-game summed total. Raises
+    ValueError on a bad log; callers already catch ValueError from
+    _submit_game/_score_tie_match and turn it into a 400."""
+    if point_log is None:
+        return
+    if not isinstance(point_log, list) or any(p not in ('A', 'B') for p in point_log):
+        raise ValueError('point_log must be a list of "A"/"B" entries')
+    log_a = sum(1 for p in point_log if p == 'A')
+    log_b = sum(1 for p in point_log if p == 'B')
+    if log_a != int(score_a) or log_b != int(score_b):
+        raise ValueError('point_log does not match score_a/score_b totals')
 CONFIRMATION_CODE = os.environ['CONFIRMATION_CODE']  # supplied at deploy time via GitHub Secrets -> CFN parameter, never stored in the repo
 
 
@@ -1550,6 +1570,8 @@ def _score_tie_match(item, tie, match_index, score_a, score_b, override, point_l
         raise ValueError('this match is already decided')
     if not match.get('player_a') or not match.get('player_b'):
         raise ValueError('both squads must nominate a player for this match before it can be scored')
+
+    _validate_point_log(point_log, score_a, score_b)
 
     # best_of is stage-specific (owner request, 2026-08-22: group stage is
     # usually single-game even when the knockout is best-of-3) - a group
@@ -3274,6 +3296,10 @@ def record_group_score(tournament_id, event):
         return _response(400, {'error': 'subgroup, fixture_id, score_a, score_b are required'})
 
     score_a, score_b = int(score_a), int(score_b)
+    try:
+        _validate_point_log(point_log, score_a, score_b)
+    except ValueError as e:
+        return _response(400, {'error': str(e)})
 
     item = tournaments_table.get_item(Key={'tournament_id': tournament_id}).get('Item')
     if not item:
@@ -3407,6 +3433,10 @@ def record_knockout_score(tournament_id, event):
         return _response(400, {'error': 'round_index and match_index are required (or set third_place: true)'})
 
     score_a, score_b = int(score_a), int(score_b)
+    try:
+        _validate_point_log(point_log, score_a, score_b)
+    except ValueError as e:
+        return _response(400, {'error': str(e)})
 
     item = tournaments_table.get_item(Key={'tournament_id': tournament_id}).get('Item')
     if not item:

@@ -280,7 +280,7 @@ _NetWorth - groups Lambda_
 | `set_finance_role` | group_id, player_id, event | 972 | Set a member's per-group FINANCE role (none/view/write/delete) in this |
 | `_response` | status_code, body_dict | 1012 | — |
 
-#### `matches` — 3045 LOC
+#### `matches` — 3120 LOC
 _NetWorth - matches Lambda (singles + doubles)_
 
 **Module constants:** `QUEUE_TABLE`, `QUEUE_ITEM_TTL_SECONDS`, `K_FACTOR`, `XP_PLAYED`, `XP_WIN_BONUS`, `XP_TOURNAMENT_WIN`, `XP_MARGIN_PER_POINTS`, `XP_MARGIN_CAP`, `XP_LEVEL_COEFF`, `COINS_PER_LEVEL`, `_EVENTS_ROW_ID`, `_QUESTS_ROW_ID`, `_ACHIEVEMENTS_ROW_ID`, `_APP_SETTINGS_ID`, `_PRIVATE_ID_KEYS`, `QUEST_TYPES`, `ACHIEVEMENT_METRICS`, `_SEASON_ROW_PREFIX`, `COMEBACK_BONUS_THRESHOLD`, `COMEBACK_BONUS_PER_POINT`, `COMEBACK_BONUS_CAP`
@@ -301,69 +301,69 @@ _NetWorth - matches Lambda (singles + doubles)_
 | `_season_config` |  | 302 | Season definitions + soft-reset k live in the shared app-settings row |
 | `_resolve_season` | resolved, which | 321 | — |
 | `_ensure_season_baseline` | season, k, items | 335 | Freeze, once, each player's lifetime rating as of the season start |
-| `compute_season_leaderboard` | season, items, k, min_games | 377 | Derived climb board: everyone starts the season at a soft-reset baseline |
-| `_season_board_leaders` | season, items, k | 421 | Leaders for a season: sealed (frozen) if it has ended, else live. |
-| `_season_badges_for` | player_id, leaders | 439 | A player's standing + earned badges on one season board. |
-| `compute_player_season_summary` | player_id, items | 462 | Per-season standing + badges for one player, across started seasons. |
-| `_quest_period` | quest | 483 | (bounds, claim_prefix, label) for a quest by scope. Season-scoped quests |
-| `list_quests` | event | 498 | Returns this week's quests with the caller's progress and claim state. |
-| `save_quest` | event | 541 | — |
-| `delete_quest` | event | 571 | — |
-| `claim_quest` | event | 584 | Player claims a completed quest's reward. Verified server-side against |
-| `_load_achievements` |  | 660 | — |
-| `list_achievements` | event | 665 | Every achievement, with the caller's live progress/claim state. |
-| `save_achievement` | event | 713 | — |
-| `delete_achievement` | event | 747 | — |
-| `claim_achievement` | event | 760 | Player claims a completed achievement's reward. Progress is |
-| `unclaim_achievement` | event | 815 | SuperAdmin-only corrective action (added 2026-08-29): reverses one |
-| `_load_events` |  | 864 | — |
-| `event_multiplier_for_date` | date_str, events | 868 | The XP multiplier active on a given match date (default 1.0). Pass a |
-| `display_name` | player_item, fallback | 889 | Single source of truth for name formatting: 'Nickname (Real Name)' |
-| `compute_comeback_bonus` | momentum | 906 | Extra rating-point bonus for the winning side, on top of the |
-| `_is_valid_completed_game` | score_a, score_b, target | 920 | BWF-style badminton scoring: first to `target` points wins, but must lead |
-| `_caller_claims` | event | 937 | Claims API Gateway's Cognito Authorizer attaches to the request. |
-| `_is_super_admin` | claims | 943 | — |
-| `_caller_may_edit_match` | claims, match | 948 | Who may directly edit/delete a match (PUT/DELETE /matches/{id}): |
-| `_can_view_profile` | claims, target_player_id | 980 | SuperAdmin sees everyone. Anyone can view their own profile. A |
-| `_requires_linked_member` | claims | 1000 | Signing up is not the same as being a member. Cognito self-signup is |
-| `record_match_enforced` | event | 1023 | — |
-| `_queue_item_out` | item | 1033 | Shapes one queue row for the API response - the frontend's shared- |
-| `create_queue_item` | event | 1055 | Adds one not-yet-submitted match to its group's SHARED queue - |
-| `list_queue` | event | 1108 | Every member of the group sees the SAME pending queue - polled by |
-| `delete_queue_item` | queue_id, event | 1139 | Removes one queued item - either because it was just sent |
-| `profile_view_enforced` | event | 1165 | Entry point for the isolated /profile-secure/{proxy+} catch-all. |
-| `handler` | event, context | 1192 | — |
-| `list_events` | event | 1275 | Public read - the frontend shows an active-event banner to everyone. |
-| `save_event` | event | 1283 | SuperAdmin creates or updates an event (upsert by event_id). |
-| `delete_event` | event | 1313 | — |
-| `recompute_now` | event | 1326 | SuperAdmin-only: replay every match to rebuild ratings, XP, levels |
-| `reorder_matches` | event | 1336 | Reorders a set of matches by reassigning their timestamps. |
-| `record_match` | event | 1404 | — |
-| `update_match` | match_id, event | 1445 | Fix a mis-entered score on an already-recorded standalone match. |
-| `delete_match` | match_id, event | 1505 | Permanently delete a mis-recorded match - e.g. the wrong player was |
-| `recompute_all_ratings` |  | 1525 | Elo is path-dependent - each match's rating change depends on the |
-| `compute_momentum_stats` | point_log, winner | 1649 | Longest scoring streak per team, and how big a deficit the winner overcame. |
-| `compute_adaptive_k` | pairing_count | 1696 | Higher K for a fresh/novel doubles pairing (each match together is |
-| `get_pairing_count` | team_ids, exclude_match_id | 1712 | How many prior doubles matches has this exact 2-player team played |
-| `_play_and_log` | match_type, team_a_ids, team_b_ids, score_a,  | 1732 | — |
-| `list_matches` | event | 1829 | — |
-| `compute_partnerships` | player_id, items | 1989 | For a given player, tally win/loss record with each doubles partner |
-| `get_group_member_ids` | group_id | 2031 | The set of player_ids belonging to a group, used to filter WHO shows |
-| `compute_attendance` | items, group_id_filter | 2042 | Per-player attendance/consistency: total matches, distinct calendar |
-| `compute_hall_of_fame` | items, group_id_filter, hidden_ids | 2110 | Highlight stats computed from full chronological match history: |
-| `compute_achievements` | player_id, matches, tournaments | 2439 | Milestone/tiered achievement progress for one player: total matches |
-| `compute_top_opponents` | player_id, matches, top_n | 2580 | This player's win/loss record against every opponent they've ever |
-| `compute_overall_record` | player_id, matches | 2622 | This player's total win/loss record, split by singles and doubles. |
-| `compute_head_to_head` | player_id, opponent_id, matches | 2651 | One player's win/loss record specifically as an OPPONENT of another |
-| `compute_with_partner` | player_id, partner_id, matches | 2683 | One player's win/loss record when partnered WITH another player on |
-| `compute_recent_form` | player_id, matches, limit | 2734 | A player's last N matches, in chronological order (oldest to |
-| `compute_diversity` | items, group_id_filter | 2791 | For every player: how concentrated their doubles partnerships are. |
-| `compute_progress_history_summary` | scope_label, period_name | 2836 | Reads the permanent, locked-in weekly/monthly/yearly winner history |
-| `compute_progress_badges` | items, group_id_filter | 2913 | For each of the last week/month/year: who improved their rating the |
-| `compute_partner_distribution` | player_id, items, top_n | 2989 | For the radar/spider chart: one player's doubles partners, sorted by |
-| `_response` | status_code, body_dict | 3036 | — |
+| `compute_season_leaderboard` | season, items, k, min_games | 377 | Independent, season-scoped Elo ladder: everyone is seeded once at a |
+| `_season_board_leaders` | season, items, k | 496 | Leaders for a season: sealed (frozen) if it has ended, else live. |
+| `_season_badges_for` | player_id, leaders | 514 | A player's standing + earned badges on one season board. |
+| `compute_player_season_summary` | player_id, items | 537 | Per-season standing + badges for one player, across started seasons. |
+| `_quest_period` | quest | 558 | (bounds, claim_prefix, label) for a quest by scope. Season-scoped quests |
+| `list_quests` | event | 573 | Returns this week's quests with the caller's progress and claim state. |
+| `save_quest` | event | 616 | — |
+| `delete_quest` | event | 646 | — |
+| `claim_quest` | event | 659 | Player claims a completed quest's reward. Verified server-side against |
+| `_load_achievements` |  | 735 | — |
+| `list_achievements` | event | 740 | Every achievement, with the caller's live progress/claim state. |
+| `save_achievement` | event | 788 | — |
+| `delete_achievement` | event | 822 | — |
+| `claim_achievement` | event | 835 | Player claims a completed achievement's reward. Progress is |
+| `unclaim_achievement` | event | 890 | SuperAdmin-only corrective action (added 2026-08-29): reverses one |
+| `_load_events` |  | 939 | — |
+| `event_multiplier_for_date` | date_str, events | 943 | The XP multiplier active on a given match date (default 1.0). Pass a |
+| `display_name` | player_item, fallback | 964 | Single source of truth for name formatting: 'Nickname (Real Name)' |
+| `compute_comeback_bonus` | momentum | 981 | Extra rating-point bonus for the winning side, on top of the |
+| `_is_valid_completed_game` | score_a, score_b, target | 995 | BWF-style badminton scoring: first to `target` points wins, but must lead |
+| `_caller_claims` | event | 1012 | Claims API Gateway's Cognito Authorizer attaches to the request. |
+| `_is_super_admin` | claims | 1018 | — |
+| `_caller_may_edit_match` | claims, match | 1023 | Who may directly edit/delete a match (PUT/DELETE /matches/{id}): |
+| `_can_view_profile` | claims, target_player_id | 1055 | SuperAdmin sees everyone. Anyone can view their own profile. A |
+| `_requires_linked_member` | claims | 1075 | Signing up is not the same as being a member. Cognito self-signup is |
+| `record_match_enforced` | event | 1098 | — |
+| `_queue_item_out` | item | 1108 | Shapes one queue row for the API response - the frontend's shared- |
+| `create_queue_item` | event | 1130 | Adds one not-yet-submitted match to its group's SHARED queue - |
+| `list_queue` | event | 1183 | Every member of the group sees the SAME pending queue - polled by |
+| `delete_queue_item` | queue_id, event | 1214 | Removes one queued item - either because it was just sent |
+| `profile_view_enforced` | event | 1240 | Entry point for the isolated /profile-secure/{proxy+} catch-all. |
+| `handler` | event, context | 1267 | — |
+| `list_events` | event | 1350 | Public read - the frontend shows an active-event banner to everyone. |
+| `save_event` | event | 1358 | SuperAdmin creates or updates an event (upsert by event_id). |
+| `delete_event` | event | 1388 | — |
+| `recompute_now` | event | 1401 | SuperAdmin-only: replay every match to rebuild ratings, XP, levels |
+| `reorder_matches` | event | 1411 | Reorders a set of matches by reassigning their timestamps. |
+| `record_match` | event | 1479 | — |
+| `update_match` | match_id, event | 1520 | Fix a mis-entered score on an already-recorded standalone match. |
+| `delete_match` | match_id, event | 1580 | Permanently delete a mis-recorded match - e.g. the wrong player was |
+| `recompute_all_ratings` |  | 1600 | Elo is path-dependent - each match's rating change depends on the |
+| `compute_momentum_stats` | point_log, winner | 1724 | Longest scoring streak per team, and how big a deficit the winner overcame. |
+| `compute_adaptive_k` | pairing_count | 1771 | Higher K for a fresh/novel doubles pairing (each match together is |
+| `get_pairing_count` | team_ids, exclude_match_id | 1787 | How many prior doubles matches has this exact 2-player team played |
+| `_play_and_log` | match_type, team_a_ids, team_b_ids, score_a,  | 1807 | — |
+| `list_matches` | event | 1904 | — |
+| `compute_partnerships` | player_id, items | 2064 | For a given player, tally win/loss record with each doubles partner |
+| `get_group_member_ids` | group_id | 2106 | The set of player_ids belonging to a group, used to filter WHO shows |
+| `compute_attendance` | items, group_id_filter | 2117 | Per-player attendance/consistency: total matches, distinct calendar |
+| `compute_hall_of_fame` | items, group_id_filter, hidden_ids | 2185 | Highlight stats computed from full chronological match history: |
+| `compute_achievements` | player_id, matches, tournaments | 2514 | Milestone/tiered achievement progress for one player: total matches |
+| `compute_top_opponents` | player_id, matches, top_n | 2655 | This player's win/loss record against every opponent they've ever |
+| `compute_overall_record` | player_id, matches | 2697 | This player's total win/loss record, split by singles and doubles. |
+| `compute_head_to_head` | player_id, opponent_id, matches | 2726 | One player's win/loss record specifically as an OPPONENT of another |
+| `compute_with_partner` | player_id, partner_id, matches | 2758 | One player's win/loss record when partnered WITH another player on |
+| `compute_recent_form` | player_id, matches, limit | 2809 | A player's last N matches, in chronological order (oldest to |
+| `compute_diversity` | items, group_id_filter | 2866 | For every player: how concentrated their doubles partnerships are. |
+| `compute_progress_history_summary` | scope_label, period_name | 2911 | Reads the permanent, locked-in weekly/monthly/yearly winner history |
+| `compute_progress_badges` | items, group_id_filter | 2988 | For each of the last week/month/year: who improved their rating the |
+| `compute_partner_distribution` | player_id, items, top_n | 3064 | For the radar/spider chart: one player's doubles partners, sorted by |
+| `_response` | status_code, body_dict | 3111 | — |
 
-#### `tournaments` — 3735 LOC
+#### `tournaments` — 3765 LOC
 _NetWorth - tournaments Lambda (singles or doubles)_
 
 **Module constants:** `K_FACTOR`, `COMEBACK_BONUS_THRESHOLD`, `COMEBACK_BONUS_PER_POINT`, `COMEBACK_BONUS_CAP`, `XP_PLAYED`, `XP_WIN_BONUS`, `XP_MARGIN_PER_POINTS`, `XP_MARGIN_CAP`, `XP_LEVEL_COEFF`, `COINS_PER_LEVEL`, `_EVENTS_ROW_ID`, `CONFIRMATION_CODE`, `MANUAL_DRAFT_ACCEPTED_TARGETS`
@@ -377,96 +377,97 @@ _NetWorth - tournaments Lambda (singles or doubles)_
 | `event_multiplier_for_date` | date_str, events | 110 | The XP multiplier active on a given match date (default 1.0). |
 | `compute_comeback_bonus` | momentum | 129 | Extra rating-point bonus for the winning side, on top of the |
 | `compute_momentum_stats` | point_log, winner | 141 | Longest scoring streak per team, and how big a deficit the winner overcame. |
-| `_is_valid_completed_game` | score_a, score_b, target | 189 | Same BWF-style rule as the standalone matches Lambda: win by 2 at |
-| `_is_valid_manual_draft_game_score` | score_a, score_b | 218 | — |
-| `_caller_claims` | event | 222 | Same pattern as matches lambda - see that file's comment for |
-| `_is_super_admin` | claims | 231 | Ported from groups/index.py - identical logic, kept in sync by hand |
-| `_authorize_tournament_organizer` | item, claims | 238 | Shared check for every manual-draft organizer-only write (set |
-| `_authorize_pool_auction_viewer` | item, claims | 259 | Who may see pool assignments / auction budgets & bids for a |
-| `create_tournament_enforced` | event | 280 | — |
-| `handler` | event, context | 286 | — |
-| `seeded_order` | players | 334 | Sort by current rating, descending. New players just use their |
-| `pair_for_balance` | ordered_players | 344 | Given a skill-ordered list, pair strongest with weakest (snake |
-| `create_tournament` | event | 359 | — |
-| `build_round_robin` | entities | 501 | — |
-| `build_knockout_round` | entities | 518 | — |
-| `_bye_match` | entity | 553 | — |
-| `handle_draft_route` | event | 580 | — |
-| `_draft_get_tournament` | tournament_id | 651 | Shared load+validate for every route below: must exist and must be |
-| `_draft_everyone` | item | 662 | Every player currently accounted for in this tournament's pool |
-| `create_manual_draft_tournament` | event, claims | 671 | Creates the shell for a manual-mode tournament: leaders, pools, the |
-| `set_leaders` | tournament_id, event, claims | 792 | — |
-| `add_draft_player` | tournament_id, event, claims | 818 | Lets the organizer drop a player into the unassigned tray while |
-| `remove_draft_player` | tournament_id, event, claims | 848 | The inverse of add_draft_player: drops someone out of this |
-| `set_pool_assignment` | tournament_id, event, claims | 886 | Full replace of one pool's member list - the simplest, idempotent |
-| `lock_pools` | tournament_id, event, claims | 946 | — |
-| `_draft_decided_ids` | draft | 1007 | Every player_id that's no longer available to auction: already won |
-| `_authorize_leader` | item, claims | 1018 | Caller must be one of THIS tournament's registered leaders (matched |
-| `start_auction` | tournament_id, event, claims | 1029 | — |
-| `open_lot` | tournament_id, event, claims | 1081 | — |
-| `submit_bid` | tournament_id, event, claims | 1118 | — |
-| `_maybe_freeze_squads` | item, draft | 1175 | Shared by close_lot and organizer_assign: once every leader's every |
-| `close_lot` | tournament_id, event, claims | 1206 | — |
-| `organizer_assign` | tournament_id, event, claims | 1238 | Lets the organizer record a winning bid and award a player entirely |
-| `skip_lot` | tournament_id, event, claims | 1298 | — |
-| `get_draft_state` | tournament_id, event, claims | 1320 | The polling endpoint - a small payload (no bid_history/full item) |
-| `get_draft_sensitive_detail` | tournament_id, event, claims | 1346 | The privileged counterpart to the public GET /tournaments/{id}, |
-| `build_tie` | squad_a_id, squad_b_id, matches_per_tie | 1384 | — |
-| `build_tie_round_robin` | squad_ids, matches_per_tie | 1407 | — |
-| `_bye_tie` | squad_id | 1415 | Mirrors _bye_match: auto-decided the instant it's created, no |
-| `build_knockout_tie_round` | squad_ids, matches_per_tie | 1425 | Generalizes build_knockout_round: same power-of-2/byes-needed |
-| `_update_tie_progress` | tie | 1450 | Recomputes wins_a/wins_b/point_diff_a/point_diff_b from the tie's |
-| `_score_tie_match` | item, tie, match_index, score_a, score_b, ove | 1532 | Submits one individual match's score within a tie. Raises ValueError |
-| `_cancel_tie_match` | tie, match_index | 1584 | Marks one match as administratively cancelled - can't be played |
-| `_forfeit_tie_match` | tie, match_index, forfeited_by | 1607 | Marks one match as forfeited by one side (owner report, 2026-08-23: |
-| `_find_tie` | item, tie_id | 1635 | A tie_id is a UUID unique across the whole tournament, so it can be |
-| `_tie_side_leader_id` | item, side_id | 1652 | Resolves a tie's squad_a/squad_b value to the leader id who's |
-| `_authorize_tie_scorer` | item, tie, claims | 1663 | Organizer, or one of THIS tie's own two squad leaders - matches the |
-| `compute_squad_standings` | item, squad_ids | 1678 | Squad-level standings: sorted by (ties_won desc, aggregate point |
-| `compute_projected_knockout` | item | 1719 | Read-time-only preview of the knockout matchup, computed from the |
-| `compute_group_stage_projection` | item | 1771 | Real-separate-groups sibling of compute_projected_knockout (owner |
-| `compute_squad_standings_by_parent` | item | 1825 | Cross-squad group mode sibling of compute_squad_standings: rolls |
-| `compute_player_tournament_scores` | item | 1862 | A tournament-scoped, non-Elo per-player score/leaderboard - a |
-| `rename_squad` | tournament_id, event, claims | 1942 | Squads get an auto-generated name ("Team <leader>") the instant the |
-| `set_squad_pairs` | tournament_id, event, claims | 1976 | Cross-squad group mode only (owner request, 2026-08-21): before the |
-| `move_squad_player` | tournament_id, event, claims | 2037 | Organizer-only roster rebalancing between two squads, before the |
-| `_rebuild_entity_after_substitution` | entity, old_player_id, new_player_id, new_pla | 2083 | Swaps old_player_id for new_player_id inside a squad-pair/rep/ |
-| `substitute_squad_player` | tournament_id, event, claims | 2108 | Organizer-only real substitution for a manual-draft squad: swaps a |
-| `_build_group_stage` | item | 2228 | Shared schedule-building logic, used both by generate_schedule (the |
-| `_fill_cross_squad_match_players` | item, ties | 2283 | Cross-squad group mode (owner request, 2026-08-21): a tie's two |
-| `_build_cross_squad_group_stage` | item | 2312 | Cross-squad group mode (owner request, 2026-08-21): instead of |
-| `generate_schedule` | tournament_id, event, claims | 2390 | — |
-| `regenerate_schedule` | tournament_id, event, claims | 2425 | Organizer repair action: re-run schedule generation for a tournament |
-| `pick_tie_player` | tournament_id, event, claims | 2486 | A leader nominates which of their own squad's members plays a given |
-| `_generate_knockout_from_group_stage` | item | 2588 | — |
-| `_inject_group_tiebreakers_if_needed` | item | 2607 | Real-separate-groups sibling of the legacy groups_then_knockout |
-| `_advance_squads_to_knockout_from_groups` | item | 2651 | Real-separate-groups sibling of the legacy groups_then_knockout |
-| `record_group_tie_score` | tournament_id, event, claims | 2703 | — |
-| `_after_group_tie_resolved` | item | 2738 | Shared by every route that can make a group tie `decided` (score, |
-| `cancel_group_tie_match` | tournament_id, event, claims | 2752 | Organizer-only: administratively cancels one group match that can |
-| `forfeit_group_tie_match` | tournament_id, event, claims | 2788 | Organizer-only sibling of cancel_group_tie_match: one side didn't |
-| `_advance_knockout_ties_if_round_complete` | item | 2823 | Mirrors record_knockout_score's round-advancement + third-place- |
-| `record_knockout_tie_score` | tournament_id, event, claims | 2869 | — |
-| `cancel_knockout_tie_match` | tournament_id, event, claims | 2908 | Organizer-only knockout/third-place sibling of cancel_group_tie_match |
-| `forfeit_knockout_tie_match` | tournament_id, event, claims | 2944 | Organizer-only knockout/third-place sibling of forfeit_group_tie_match |
-| `list_tournaments` | event | 2983 | — |
-| `_redact_pool_auction_detail` | item | 3007 | GET /tournaments/{id} is unauthenticated - literally anyone browsing |
-| `_hide_pool_auction_from_non_organizer` | item, claims | 3030 | pick_tie_player/record_group_tie_score/record_knockout_tie_score are |
-| `get_tournament` | tournament_id | 3044 | — |
-| `recompute_all_ratings` |  | 3085 | Elo is path-dependent - each match's rating change depends on the |
-| `delete_tournament` | tournament_id, event | 3163 | Deletes this tournament AND every match record tagged with its |
-| `compute_standings` | fixtures, entities | 3197 | — |
-| `compute_all_standings` | item | 3229 | — |
-| `_submit_game` | fixture, score_a, score_b, best_of, target, o | 3235 | Append one game's score to a fixture/match. Returns True if the match is now decided. |
-| `record_group_score` | tournament_id, event | 3264 | — |
-| `inject_tiebreakers_if_needed` | item | 3318 | Checks each subgroup for a genuine tie (same wins AND point_diff) at |
-| `advance_to_knockout` | item | 3369 | — |
-| `record_knockout_score` | tournament_id, event | 3394 | — |
-| `compute_adaptive_k` | pairing_count | 3505 | Higher K for a fresh/novel doubles pairing (each match together is |
-| `get_pairing_count` | team_ids | 3519 | How many prior doubles matches has this exact 2-player team played |
-| `update_elo_and_log` | match_type, entity_a, entity_b, score_a, scor | 3537 | — |
-| `substitute_player` | tournament_id, event | 3633 | Swap a player out of a team for all of that team's FUTURE (unplayed) |
-| `_response` | status_code, body_dict | 3726 | — |
+| `_validate_point_log` | point_log, score_a, score_b | 188 | Structural + count-consistency check for a live-scoring point_log, |
+| `_is_valid_completed_game` | score_a, score_b, target | 209 | Same BWF-style rule as the standalone matches Lambda: win by 2 at |
+| `_is_valid_manual_draft_game_score` | score_a, score_b | 238 | — |
+| `_caller_claims` | event | 242 | Same pattern as matches lambda - see that file's comment for |
+| `_is_super_admin` | claims | 251 | Ported from groups/index.py - identical logic, kept in sync by hand |
+| `_authorize_tournament_organizer` | item, claims | 258 | Shared check for every manual-draft organizer-only write (set |
+| `_authorize_pool_auction_viewer` | item, claims | 279 | Who may see pool assignments / auction budgets & bids for a |
+| `create_tournament_enforced` | event | 300 | — |
+| `handler` | event, context | 306 | — |
+| `seeded_order` | players | 354 | Sort by current rating, descending. New players just use their |
+| `pair_for_balance` | ordered_players | 364 | Given a skill-ordered list, pair strongest with weakest (snake |
+| `create_tournament` | event | 379 | — |
+| `build_round_robin` | entities | 521 | — |
+| `build_knockout_round` | entities | 538 | — |
+| `_bye_match` | entity | 573 | — |
+| `handle_draft_route` | event | 600 | — |
+| `_draft_get_tournament` | tournament_id | 671 | Shared load+validate for every route below: must exist and must be |
+| `_draft_everyone` | item | 682 | Every player currently accounted for in this tournament's pool |
+| `create_manual_draft_tournament` | event, claims | 691 | Creates the shell for a manual-mode tournament: leaders, pools, the |
+| `set_leaders` | tournament_id, event, claims | 812 | — |
+| `add_draft_player` | tournament_id, event, claims | 838 | Lets the organizer drop a player into the unassigned tray while |
+| `remove_draft_player` | tournament_id, event, claims | 868 | The inverse of add_draft_player: drops someone out of this |
+| `set_pool_assignment` | tournament_id, event, claims | 906 | Full replace of one pool's member list - the simplest, idempotent |
+| `lock_pools` | tournament_id, event, claims | 966 | — |
+| `_draft_decided_ids` | draft | 1027 | Every player_id that's no longer available to auction: already won |
+| `_authorize_leader` | item, claims | 1038 | Caller must be one of THIS tournament's registered leaders (matched |
+| `start_auction` | tournament_id, event, claims | 1049 | — |
+| `open_lot` | tournament_id, event, claims | 1101 | — |
+| `submit_bid` | tournament_id, event, claims | 1138 | — |
+| `_maybe_freeze_squads` | item, draft | 1195 | Shared by close_lot and organizer_assign: once every leader's every |
+| `close_lot` | tournament_id, event, claims | 1226 | — |
+| `organizer_assign` | tournament_id, event, claims | 1258 | Lets the organizer record a winning bid and award a player entirely |
+| `skip_lot` | tournament_id, event, claims | 1318 | — |
+| `get_draft_state` | tournament_id, event, claims | 1340 | The polling endpoint - a small payload (no bid_history/full item) |
+| `get_draft_sensitive_detail` | tournament_id, event, claims | 1366 | The privileged counterpart to the public GET /tournaments/{id}, |
+| `build_tie` | squad_a_id, squad_b_id, matches_per_tie | 1404 | — |
+| `build_tie_round_robin` | squad_ids, matches_per_tie | 1427 | — |
+| `_bye_tie` | squad_id | 1435 | Mirrors _bye_match: auto-decided the instant it's created, no |
+| `build_knockout_tie_round` | squad_ids, matches_per_tie | 1445 | Generalizes build_knockout_round: same power-of-2/byes-needed |
+| `_update_tie_progress` | tie | 1470 | Recomputes wins_a/wins_b/point_diff_a/point_diff_b from the tie's |
+| `_score_tie_match` | item, tie, match_index, score_a, score_b, ove | 1552 | Submits one individual match's score within a tie. Raises ValueError |
+| `_cancel_tie_match` | tie, match_index | 1606 | Marks one match as administratively cancelled - can't be played |
+| `_forfeit_tie_match` | tie, match_index, forfeited_by | 1629 | Marks one match as forfeited by one side (owner report, 2026-08-23: |
+| `_find_tie` | item, tie_id | 1657 | A tie_id is a UUID unique across the whole tournament, so it can be |
+| `_tie_side_leader_id` | item, side_id | 1674 | Resolves a tie's squad_a/squad_b value to the leader id who's |
+| `_authorize_tie_scorer` | item, tie, claims | 1685 | Organizer, or one of THIS tie's own two squad leaders - matches the |
+| `compute_squad_standings` | item, squad_ids | 1700 | Squad-level standings: sorted by (ties_won desc, aggregate point |
+| `compute_projected_knockout` | item | 1741 | Read-time-only preview of the knockout matchup, computed from the |
+| `compute_group_stage_projection` | item | 1793 | Real-separate-groups sibling of compute_projected_knockout (owner |
+| `compute_squad_standings_by_parent` | item | 1847 | Cross-squad group mode sibling of compute_squad_standings: rolls |
+| `compute_player_tournament_scores` | item | 1884 | A tournament-scoped, non-Elo per-player score/leaderboard - a |
+| `rename_squad` | tournament_id, event, claims | 1964 | Squads get an auto-generated name ("Team <leader>") the instant the |
+| `set_squad_pairs` | tournament_id, event, claims | 1998 | Cross-squad group mode only (owner request, 2026-08-21): before the |
+| `move_squad_player` | tournament_id, event, claims | 2059 | Organizer-only roster rebalancing between two squads, before the |
+| `_rebuild_entity_after_substitution` | entity, old_player_id, new_player_id, new_pla | 2105 | Swaps old_player_id for new_player_id inside a squad-pair/rep/ |
+| `substitute_squad_player` | tournament_id, event, claims | 2130 | Organizer-only real substitution for a manual-draft squad: swaps a |
+| `_build_group_stage` | item | 2250 | Shared schedule-building logic, used both by generate_schedule (the |
+| `_fill_cross_squad_match_players` | item, ties | 2305 | Cross-squad group mode (owner request, 2026-08-21): a tie's two |
+| `_build_cross_squad_group_stage` | item | 2334 | Cross-squad group mode (owner request, 2026-08-21): instead of |
+| `generate_schedule` | tournament_id, event, claims | 2412 | — |
+| `regenerate_schedule` | tournament_id, event, claims | 2447 | Organizer repair action: re-run schedule generation for a tournament |
+| `pick_tie_player` | tournament_id, event, claims | 2508 | A leader nominates which of their own squad's members plays a given |
+| `_generate_knockout_from_group_stage` | item | 2610 | — |
+| `_inject_group_tiebreakers_if_needed` | item | 2629 | Real-separate-groups sibling of the legacy groups_then_knockout |
+| `_advance_squads_to_knockout_from_groups` | item | 2673 | Real-separate-groups sibling of the legacy groups_then_knockout |
+| `record_group_tie_score` | tournament_id, event, claims | 2725 | — |
+| `_after_group_tie_resolved` | item | 2760 | Shared by every route that can make a group tie `decided` (score, |
+| `cancel_group_tie_match` | tournament_id, event, claims | 2774 | Organizer-only: administratively cancels one group match that can |
+| `forfeit_group_tie_match` | tournament_id, event, claims | 2810 | Organizer-only sibling of cancel_group_tie_match: one side didn't |
+| `_advance_knockout_ties_if_round_complete` | item | 2845 | Mirrors record_knockout_score's round-advancement + third-place- |
+| `record_knockout_tie_score` | tournament_id, event, claims | 2891 | — |
+| `cancel_knockout_tie_match` | tournament_id, event, claims | 2930 | Organizer-only knockout/third-place sibling of cancel_group_tie_match |
+| `forfeit_knockout_tie_match` | tournament_id, event, claims | 2966 | Organizer-only knockout/third-place sibling of forfeit_group_tie_match |
+| `list_tournaments` | event | 3005 | — |
+| `_redact_pool_auction_detail` | item | 3029 | GET /tournaments/{id} is unauthenticated - literally anyone browsing |
+| `_hide_pool_auction_from_non_organizer` | item, claims | 3052 | pick_tie_player/record_group_tie_score/record_knockout_tie_score are |
+| `get_tournament` | tournament_id | 3066 | — |
+| `recompute_all_ratings` |  | 3107 | Elo is path-dependent - each match's rating change depends on the |
+| `delete_tournament` | tournament_id, event | 3185 | Deletes this tournament AND every match record tagged with its |
+| `compute_standings` | fixtures, entities | 3219 | — |
+| `compute_all_standings` | item | 3251 | — |
+| `_submit_game` | fixture, score_a, score_b, best_of, target, o | 3257 | Append one game's score to a fixture/match. Returns True if the match is now decided. |
+| `record_group_score` | tournament_id, event | 3286 | — |
+| `inject_tiebreakers_if_needed` | item | 3344 | Checks each subgroup for a genuine tie (same wins AND point_diff) at |
+| `advance_to_knockout` | item | 3395 | — |
+| `record_knockout_score` | tournament_id, event | 3420 | — |
+| `compute_adaptive_k` | pairing_count | 3535 | Higher K for a fresh/novel doubles pairing (each match together is |
+| `get_pairing_count` | team_ids | 3549 | How many prior doubles matches has this exact 2-player team played |
+| `update_elo_and_log` | match_type, entity_a, entity_b, score_a, scor | 3567 | — |
+| `substitute_player` | tournament_id, event | 3663 | Swap a player out of a team for all of that team's FUTURE (unplayed) |
+| `_response` | status_code, body_dict | 3756 | — |
 
 #### `finance` — 1778 LOC
 _NetWorth - finance Lambda_
@@ -537,7 +538,7 @@ _NetWorth - progress_scheduler Lambda_
 ## 6. Frontend function reference
 
 <!-- AUTOGEN:FRONTEND START (regenerated by tools/generate_codebase_map.py — do not hand-edit below) -->
-### Frontend (`frontend/js/app.js` — 12891 LOC, flat global script, ~507 functions)
+### Frontend (`frontend/js/app.js` — 12919 LOC, flat global script, ~507 functions)
 
 _Loaded by `index.html` after an inline `<script>` defines the globals `API_BASE_URL`, `COGNITO_USER_POOL_ID`, `COGNITO_CLIENT_ID`, `UPI_ID`, `FINANCE_VIEW_KEY` placeholders. Functions live in global scope (not an IIFE); most are wired to `onclick=` in the HTML._
 
@@ -948,156 +949,158 @@ _Loaded by `index.html` after an inline `<script>` defines the globals `API_BASE
 - `doLogin()` — L8819
 - `doNewPassword()` — L8872
 - `doSignup()` — L8883
-- `doConfirmSignup()` — L8900
-- `doResendConfirmCode()` — L8931
-- `doForgotPassword()` — L8942
-- `doConfirmForgotPassword()` — L8957
-- `doLogout()` — L8969
+- `doConfirmSignup()` — L8928
+- `doResendConfirmCode()` — L8959
+- `doForgotPassword()` — L8970
+- `doConfirmForgotPassword()` — L8985
+
+**Init & session restore**  (from L8997)
+- `doLogout()` — L8997
 
 **Tournaments**  (from L9016)
-- `restoreSession()` — L9019
-- `restoreTabFromHash()` — L9063
-- `addManualTeamRow()` — L9138
-- `collectManualTeams()` — L9174
-- `loadTournamentGroupOptions()` — L9187
-- `loadTournamentParticipantsChecklist()` — L9196
-- `updateParticipantsCount()` — L9226
-- `collectTournamentParticipants()` — L9238
-- `loadTournamentsList()` — L9242
-- `submitTournamentCreation(payload)` — L9249
-- `submitManualDraftCreation(group_id, name)` — L9275
-- `draftPlayerName(pid)` — L9323
-- `draftEveryone(t)` — L9328
-- `renderManualDraftTournament(t)` — L9334
-- `fetchTournamentDetail(tournamentId)` — L9433
-- `fetchAndRenderTournamentDetail(tournamentId)` — L9449
-- `stopSchedulePolling()` — L9480
-- `startSchedulePolling(tournamentId)` — L9485
-- `isSchedulePollingActiveFor(tournamentId)` — L9495
-- `schedulePollTick(tournamentId)` — L9497
-- `renderDraftLeaderPicker(t)` — L9528
-- `saveDraftLeaders(tournamentId)` — L9548
-- `renderDraftPoolBoard(t)` — L9558
-- `chip(pid)` — L9563
-- `draftChipTapped(pid, ev)` — L9610
-- `draftPoolColumnTapped(tournamentId, poolName)` — L9617
-- `draftChipDragStart(ev, pid)` — L9624
-- `draftPoolDragOver(ev)` — L9629
-- `draftPoolDrop(ev, tournamentId, poolName)` — L9634
-- `moveDraftPlayerToPool(tournamentId, poolName, playerId)` — L9643
-- `putDraftPool(tournamentId, poolName, playerIds)` — L9663
-- `addNewDraftPlayer(tournamentId, groupId)` — L9673
-- `removeDraftPlayer(tournamentId, playerId)` — L9699
-- `lockDraftPools(tournamentId)` — L9712
-- `stopDraftPolling()` — L9742
-- `startDraftPolling(tournamentId)` — L9747
-- `isDraftPollingActiveFor(tournamentId)` — L9760
-- `pollDraftStateTick(tournamentId)` — L9762
-- `draftDecidedIds(draft)` — L9773
-- `renderDraftStartAuctionPanel(t)` — L9782
-- `startDraftAuction(tournamentId)` — L9791
-- `renderDraftAuctionRoom(t)` — L9801
-- `draftAssignEligibleLeaders(t, pool)` — L9816
-- `draftAssignLeaderOptionsHtml(t, pool)` — L9826
-- `updateDraftAssignLeaderOptions()` — L9832
-- `renderDraftOrganizerAssignPanel(t)` — L9841
-- `organizerAssignPlayer(tournamentId)` — L9866
-- `renderDraftLiveStatusHtml(tournamentId, draftLike)` — L9887
-- `updateDraftLiveStatus(tournamentId, draftLike)` — L9922
-- `renderDraftQueuePicker(t)` — L9935
-- `openDraftLot(tournamentId, playerId)` — L9962
-- `closeDraftLot(tournamentId)` — L9970
-- `skipDraftLot(tournamentId)` — L9980
-- `renderDraftBidBox()` — L9990
-- `draftBidBump(delta)` — L10003
-- `submitDraftBid(tournamentId)` — L10010
-- `renderDraftSquadsReview(t)` — L10039
-- `renderSetSquadPairsPanel(t)` — L10059
-- `generateCrossSquadGroups(tournamentId, status)` — L10122
-- `saveSquadPairs(tournamentId, squadId, numGroups, slotsP)` — L10139
-- `generateDraftSchedule(tournamentId)` — L10160
-- `renderSquadRosterEditPanel(t, allowMove)` — L10181
-- `renameSquadPrompt(tournamentId, squadId)` — L10247
-- `moveSquadPlayer(tournamentId)` — L10264
-- `toggleSquadSubNewPlayerFields(useNew)` — L10278
-- `substituteSquadPlayer(tournamentId)` — L10295
-- `draftSquadName(t, squadId)` — L10347
-- `toggleDraftGroupOpen(name, detailsEl)` — L10369
-- `toggleDraftSquadSection(key, detailsEl)` — L10382
-- `renderDraftScheduleView(t)` — L10386
-- `renderProjectedKnockout(t)` — L10483
-- `renderRegenerateScheduleGroupPanel(t)` — L10505
-- `regenerateDraftSchedule(tournamentId)` — L10529
-- `renderSquadStandingsTable(standings, projection)` — L10556
-- `computeLeaderboardRows(stats, t)` — L10595
-- `tallyPair(side)` — L10632
-- `squadSideField(tie, sid)` — L10694
-- `decidingPairKey(tie, sid)` — L10695
-- `podiumRank(row)` — L10753
-- `renderPlayerTournamentStatsTable(stats, t)` — L10769
-- `rowHtml(row)` — L10777
-- `renderTieSection(title, ties, t, stageKind)` — L10822
-- `renderTieCard(tie, t, stageKind)` — L10829
-- `renderTieMatchRow(tie, m, idx, t, stageKind, iLeadA, iLead)` — L10861
-- `draftTieMatchAdminControlsHtml(tournamentId, tieId, idx, stageKind, sid)` — L11047
-- `cancelDraftTieMatch(tournamentId, tieId, matchIndex, stageKi)` — L11055
-- `forfeitDraftTieMatch(tournamentId, tieId, matchIndex, stageKi)` — L11066
-- `draftPlayerPickerHtml(tournamentId, tieId, matchIndex, members)` — L11077
-- `opts(selected)` — L11083
-- `pickTiePlayer(tournamentId, tieId, matchIndex, playerI)` — L11103
-- `pickTiePlayerPair(tournamentId, tieId, matchIndex, squadId)` — L11115
-- `submitDraftTieScore(tournamentId, tieId, matchIndex, stageKi)` — L11131
-- `submitDraftTieScoreDirect(tournamentId, tieId, matchIndex, stageKi)` — L11148
-- `collectAllEntities(t)` — L11314
-- `getAllTeamEntities(t)` — L11330
-- `renderTeamCompositionBars(t, containerId)` — L11348
-- `populateSubstitutionSection(t)` — L11383
-- `updateSubOldPlayerOptions()` — L11394
-- `formatGames(games)` — L11483
-- `applyTournamentViewMode()` — L11490
-- `matchTotals(match)` — L11506
-- `truncateBracketName(name, maxChars = 22)` — L11514
-- `renderBracketView(t)` — L11519
-- `renderDraftBracketGroupsPanel(t)` — L11647
-- `renderDraftBracketView(t)` — L11683
-- `renderTournament(t)` — L11814
-- `generateTournamentRecap(t)` — L11989
-- `downloadTournamentImage()` — L12021
-- `loadImg(src)` — L12048
-- `sideVisuals(side)` — L12058
-- `drawCard(x, y, w, match, isFinal)` — L12065
-- `drawAvatars(ctx, x, y, side, isWinner)` — L12111
-- `paintTeam(ctx, x, y, w, h, side, fallback)` — L12130
-- `roundRect(ctx, x, y, w, h, r)` — L12158
-- `downloadDraftShareImage()` — L12174
-- `loadImg(src)` — L12181
-- `sideAvatars(squadId)` — L12230
-- `drawSide(side, sx, sy, isWinner)` — L12311
-- `downloadDraftLeaderboardImage()` — L12392
-- `loadImg(src)` — L12401
-- `presetKeyFor(bannerCss)` — L12410
-- `copyTournamentRecap()` — L12520
-- `item_has_third_place(t)` — L12531
-- `submitGroupScore(tournamentId, subgroup, fixtureId)` — L12535
-- `submitGroupScoreDirect(tournamentId, subgroup, fixtureId, score)` — L12541
+- `restoreSession()` — L9047
+- `restoreTabFromHash()` — L9091
+- `addManualTeamRow()` — L9166
+- `collectManualTeams()` — L9202
+- `loadTournamentGroupOptions()` — L9215
+- `loadTournamentParticipantsChecklist()` — L9224
+- `updateParticipantsCount()` — L9254
+- `collectTournamentParticipants()` — L9266
+- `loadTournamentsList()` — L9270
+- `submitTournamentCreation(payload)` — L9277
+- `submitManualDraftCreation(group_id, name)` — L9303
+- `draftPlayerName(pid)` — L9351
+- `draftEveryone(t)` — L9356
+- `renderManualDraftTournament(t)` — L9362
+- `fetchTournamentDetail(tournamentId)` — L9461
+- `fetchAndRenderTournamentDetail(tournamentId)` — L9477
+- `stopSchedulePolling()` — L9508
+- `startSchedulePolling(tournamentId)` — L9513
+- `isSchedulePollingActiveFor(tournamentId)` — L9523
+- `schedulePollTick(tournamentId)` — L9525
+- `renderDraftLeaderPicker(t)` — L9556
+- `saveDraftLeaders(tournamentId)` — L9576
+- `renderDraftPoolBoard(t)` — L9586
+- `chip(pid)` — L9591
+- `draftChipTapped(pid, ev)` — L9638
+- `draftPoolColumnTapped(tournamentId, poolName)` — L9645
+- `draftChipDragStart(ev, pid)` — L9652
+- `draftPoolDragOver(ev)` — L9657
+- `draftPoolDrop(ev, tournamentId, poolName)` — L9662
+- `moveDraftPlayerToPool(tournamentId, poolName, playerId)` — L9671
+- `putDraftPool(tournamentId, poolName, playerIds)` — L9691
+- `addNewDraftPlayer(tournamentId, groupId)` — L9701
+- `removeDraftPlayer(tournamentId, playerId)` — L9727
+- `lockDraftPools(tournamentId)` — L9740
+- `stopDraftPolling()` — L9770
+- `startDraftPolling(tournamentId)` — L9775
+- `isDraftPollingActiveFor(tournamentId)` — L9788
+- `pollDraftStateTick(tournamentId)` — L9790
+- `draftDecidedIds(draft)` — L9801
+- `renderDraftStartAuctionPanel(t)` — L9810
+- `startDraftAuction(tournamentId)` — L9819
+- `renderDraftAuctionRoom(t)` — L9829
+- `draftAssignEligibleLeaders(t, pool)` — L9844
+- `draftAssignLeaderOptionsHtml(t, pool)` — L9854
+- `updateDraftAssignLeaderOptions()` — L9860
+- `renderDraftOrganizerAssignPanel(t)` — L9869
+- `organizerAssignPlayer(tournamentId)` — L9894
+- `renderDraftLiveStatusHtml(tournamentId, draftLike)` — L9915
+- `updateDraftLiveStatus(tournamentId, draftLike)` — L9950
+- `renderDraftQueuePicker(t)` — L9963
+- `openDraftLot(tournamentId, playerId)` — L9990
+- `closeDraftLot(tournamentId)` — L9998
+- `skipDraftLot(tournamentId)` — L10008
+- `renderDraftBidBox()` — L10018
+- `draftBidBump(delta)` — L10031
+- `submitDraftBid(tournamentId)` — L10038
+- `renderDraftSquadsReview(t)` — L10067
+- `renderSetSquadPairsPanel(t)` — L10087
+- `generateCrossSquadGroups(tournamentId, status)` — L10150
+- `saveSquadPairs(tournamentId, squadId, numGroups, slotsP)` — L10167
+- `generateDraftSchedule(tournamentId)` — L10188
+- `renderSquadRosterEditPanel(t, allowMove)` — L10209
+- `renameSquadPrompt(tournamentId, squadId)` — L10275
+- `moveSquadPlayer(tournamentId)` — L10292
+- `toggleSquadSubNewPlayerFields(useNew)` — L10306
+- `substituteSquadPlayer(tournamentId)` — L10323
+- `draftSquadName(t, squadId)` — L10375
+- `toggleDraftGroupOpen(name, detailsEl)` — L10397
+- `toggleDraftSquadSection(key, detailsEl)` — L10410
+- `renderDraftScheduleView(t)` — L10414
+- `renderProjectedKnockout(t)` — L10511
+- `renderRegenerateScheduleGroupPanel(t)` — L10533
+- `regenerateDraftSchedule(tournamentId)` — L10557
+- `renderSquadStandingsTable(standings, projection)` — L10584
+- `computeLeaderboardRows(stats, t)` — L10623
+- `tallyPair(side)` — L10660
+- `squadSideField(tie, sid)` — L10722
+- `decidingPairKey(tie, sid)` — L10723
+- `podiumRank(row)` — L10781
+- `renderPlayerTournamentStatsTable(stats, t)` — L10797
+- `rowHtml(row)` — L10805
+- `renderTieSection(title, ties, t, stageKind)` — L10850
+- `renderTieCard(tie, t, stageKind)` — L10857
+- `renderTieMatchRow(tie, m, idx, t, stageKind, iLeadA, iLead)` — L10889
+- `draftTieMatchAdminControlsHtml(tournamentId, tieId, idx, stageKind, sid)` — L11075
+- `cancelDraftTieMatch(tournamentId, tieId, matchIndex, stageKi)` — L11083
+- `forfeitDraftTieMatch(tournamentId, tieId, matchIndex, stageKi)` — L11094
+- `draftPlayerPickerHtml(tournamentId, tieId, matchIndex, members)` — L11105
+- `opts(selected)` — L11111
+- `pickTiePlayer(tournamentId, tieId, matchIndex, playerI)` — L11131
+- `pickTiePlayerPair(tournamentId, tieId, matchIndex, squadId)` — L11143
+- `submitDraftTieScore(tournamentId, tieId, matchIndex, stageKi)` — L11159
+- `submitDraftTieScoreDirect(tournamentId, tieId, matchIndex, stageKi)` — L11176
+- `collectAllEntities(t)` — L11342
+- `getAllTeamEntities(t)` — L11358
+- `renderTeamCompositionBars(t, containerId)` — L11376
+- `populateSubstitutionSection(t)` — L11411
+- `updateSubOldPlayerOptions()` — L11422
+- `formatGames(games)` — L11511
+- `applyTournamentViewMode()` — L11518
+- `matchTotals(match)` — L11534
+- `truncateBracketName(name, maxChars = 22)` — L11542
+- `renderBracketView(t)` — L11547
+- `renderDraftBracketGroupsPanel(t)` — L11675
+- `renderDraftBracketView(t)` — L11711
+- `renderTournament(t)` — L11842
+- `generateTournamentRecap(t)` — L12017
+- `downloadTournamentImage()` — L12049
+- `loadImg(src)` — L12076
+- `sideVisuals(side)` — L12086
+- `drawCard(x, y, w, match, isFinal)` — L12093
+- `drawAvatars(ctx, x, y, side, isWinner)` — L12139
+- `paintTeam(ctx, x, y, w, h, side, fallback)` — L12158
+- `roundRect(ctx, x, y, w, h, r)` — L12186
+- `downloadDraftShareImage()` — L12202
+- `loadImg(src)` — L12209
+- `sideAvatars(squadId)` — L12258
+- `drawSide(side, sx, sy, isWinner)` — L12339
+- `downloadDraftLeaderboardImage()` — L12420
+- `loadImg(src)` — L12429
+- `presetKeyFor(bannerCss)` — L12438
+- `copyTournamentRecap()` — L12548
+- `item_has_third_place(t)` — L12559
 
 **Live scoring inside tournaments**  (from L12563)
-- `submitKnockoutScore(tournamentId, roundIndex, matchIndex)` — L12578
-- `submitKnockoutScoreDirect(tournamentId, roundIndex, matchIndex, sc)` — L12584
-- `submitThirdPlaceScore(tournamentId)` — L12611
-- `submitThirdPlaceScoreDirect(tournamentId, score_a, score_b, override)` — L12617
-- `getTournamentLiveLog(matchKey)` — L12648
-- `tournamentLivePoint(matchKey, side, target)` — L12653
-- `tournamentUndoPoint(matchKey, target)` — L12662
-- `updateTournamentLiveDisplay(matchKey, target)` — L12668
-- `finishGroupLiveGame(matchKey, tournamentId, subgroup, fixtur)` — L12686
-- `finishKnockoutLiveGame(matchKey, tournamentId, roundIndex, matc)` — L12700
-- `finishThirdPlaceLiveGame(matchKey, tournamentId)` — L12709
-- `finishDraftTieLiveGame(matchKey, tournamentId, tieId, matchInde)` — L12727
-- `renderLiveScoreControls(matchKey, target, finishCallExpr, nameA,)` — L12736
-- `activateTab(tabName)` — L12760
-- `jumpToRecordMatch()` — L12861
-- `applyTheme(theme)` — L12867
+- `submitGroupScore(tournamentId, subgroup, fixtureId)` — L12563
+- `submitGroupScoreDirect(tournamentId, subgroup, fixtureId, score)` — L12569
+- `submitKnockoutScore(tournamentId, roundIndex, matchIndex)` — L12606
+- `submitKnockoutScoreDirect(tournamentId, roundIndex, matchIndex, sc)` — L12612
+- `submitThirdPlaceScore(tournamentId)` — L12639
+- `submitThirdPlaceScoreDirect(tournamentId, score_a, score_b, override)` — L12645
+- `getTournamentLiveLog(matchKey)` — L12676
+- `tournamentLivePoint(matchKey, side, target)` — L12681
+- `tournamentUndoPoint(matchKey, target)` — L12690
+- `updateTournamentLiveDisplay(matchKey, target)` — L12696
+- `finishGroupLiveGame(matchKey, tournamentId, subgroup, fixtur)` — L12714
+- `finishKnockoutLiveGame(matchKey, tournamentId, roundIndex, matc)` — L12728
+- `finishThirdPlaceLiveGame(matchKey, tournamentId)` — L12737
+- `finishDraftTieLiveGame(matchKey, tournamentId, tieId, matchInde)` — L12755
+- `renderLiveScoreControls(matchKey, target, finishCallExpr, nameA,)` — L12764
+- `activateTab(tabName)` — L12788
+- `jumpToRecordMatch()` — L12889
+- `applyTheme(theme)` — L12895
 <!-- AUTOGEN:FRONTEND END -->
 
 ---

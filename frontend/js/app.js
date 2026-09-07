@@ -8882,12 +8882,40 @@ let userPool = null;
 
     function doSignup() {
       const email = document.getElementById('auth-signup-email').value.trim();
+      const emailConfirm = document.getElementById('auth-signup-email-confirm').value.trim();
       const password = document.getElementById('auth-signup-password').value;
       const statusEl = document.getElementById('auth-signup-status');
       if (!userPool) { statusEl.textContent = 'Sign up is not configured yet.'; return; }
+      // Owner found this the hard way (2026-08-24): typo'd their own email at
+      // signup and only found out later when the confirmation code never
+      // arrived - Cognito never rejects an unreachable-but-valid-looking
+      // address, so a typo silently strands you at "check your email"
+      // forever. A retype field catches it before signUp() ever fires -
+      // pasting into it is blocked in the HTML (onpaste="return false") so
+      // pasting the same typo into both fields can't rubber-stamp past this.
+      if (!email || !emailConfirm) { statusEl.textContent = 'Enter your email in both fields.'; return; }
+      if (email.toLowerCase() !== emailConfirm.toLowerCase()) {
+        statusEl.textContent = "Those two emails don't match - check for a typo and try again.";
+        return;
+      }
       const attrs = [new AmazonCognitoIdentity.CognitoUserAttribute({ Name: 'email', Value: email })];
       userPool.signUp(email, password, attrs, null, (err) => {
-        if (err) { statusEl.textContent = err.message; return; }
+        if (err) {
+          // UsernameExistsException's own message ("An account with the
+          // given email already exists") reads like a dead end - it doesn't
+          // say what to actually DO about it, which is exactly what sent the
+          // owner down the "forgot password isn't sending a code" rabbit
+          // hole (2026-08-24) before realizing the real issue was a typo'd
+          // signup, not a broken reset flow.
+          if (err.code === 'UsernameExistsException') {
+            statusEl.innerHTML = 'An account with this email already exists. ' +
+              '<a href="#" onclick="showAuthView(\'login\'); return false;">Log in instead</a>, or ' +
+              '<a href="#" onclick="showAuthView(\'forgot\'); return false;">reset your password</a> if you forgot it.';
+            return;
+          }
+          statusEl.textContent = err.message;
+          return;
+        }
         document.getElementById('auth-confirm-code').dataset.email = email;
         // Stash the password briefly so confirmation can log them straight
         // in and into the profile chooser, rather than stranding them at a
