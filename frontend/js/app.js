@@ -6989,7 +6989,7 @@ let userPool = null;
     function restoreFinanceMonth() {
       const m = _rememberedFinance('month');
       if (!m) return;
-      ['fexp_month', 'fmem_month', 'fwalk_month'].forEach(id => {
+      ['fexp_month', 'fmem_month', 'fwalk_month', 'fledger_month'].forEach(id => {
         const sel = document.getElementById(id);
         if (sel && [...(sel.options || [])].some(o => o.value === m)) sel.value = m;
       });
@@ -7523,6 +7523,81 @@ let userPool = null;
       if (hint) hint.style.display = 'none';
       loadFinanceSummary();
       loadFinanceMembers();
+    }
+
+    // ---- Confirmation ledger (2026-09-08): one row per member per month,
+    // slot dues + group-wide share combined, running balance carried
+    // forward. Separate from the roster cards above (those stay purely
+    // Yes/No/NA editing) - this is purely for recording payment.
+    const LEDGER_KIND_LABEL = {
+      slot_due: 'slot due', slot_relief: 'slot relief',
+      group_due: 'group-wide due', group_relief: 'group-wide relief',
+    };
+
+    async function loadFinanceLedger() {
+      const el = document.getElementById('finance-ledger-result');
+      el.textContent = 'Loading...';
+      const qs = finQS({
+        month: document.getElementById('fledger_month').value,
+        year: document.getElementById('fledger_year').value,
+      });
+      const res = await fetch(`${financeBaseUrl()}/ledger?${qs}`, { headers: getAuthHeaders() });
+      const data = await res.json();
+      if (!res.ok) { el.textContent = `Error: ${data.error}`; return; }
+      if (!data.members.length) { el.textContent = 'No members enrolled anywhere this month yet - use the roster above first.'; return; }
+      const TAG_LABEL = { new: 'New', leaving: 'Leaving', continuing: '' };
+      el.innerHTML = data.members.map(m => {
+        const tag = TAG_LABEL[m.tag] ? ` <span style="font-size:11px;opacity:0.7;">(${TAG_LABEL[m.tag]})</span>` : '';
+        const rows = m.breakdown.filter(b => b.amount !== 0).map(b => {
+          const sign = (b.kind === 'slot_relief' || b.kind === 'group_relief') ? '−' : '+';
+          const label = LEDGER_KIND_LABEL[b.kind] + (b.slot ? ` (${b.slot})` : '');
+          return `<div style="font-size:12px;opacity:0.75;display:flex;justify-content:space-between;max-width:320px;"><span>${label}</span><span>${sign}₹${Math.abs(b.amount)}</span></div>`;
+        }).join('');
+        const balNote = m.balance_before !== 0
+          ? `<div style="font-size:12px;opacity:0.75;display:flex;justify-content:space-between;max-width:320px;"><span>Balance carried in</span><span>${m.balance_before > 0 ? '+' : ''}₹${m.balance_before}</span></div>` : '';
+        const dueLine = m.net_due > 0
+          ? `Owes <strong>₹${m.net_due}</strong>` : (m.net_due < 0
+          ? `Owed back <strong>₹${Math.abs(m.net_due)}</strong>` : `<strong>Settled — ₹0 due</strong>`);
+        const staleNote = m.stale
+          ? `<div style="font-size:11px;opacity:0.7;color:#d9a441;margin-top:2px;">Recorded when ₹${m.due_at_confirmation} was due - recalculated since (an expense or roster likely changed).</div>` : '';
+        const paidNote = m.amount_paid != null
+          ? `<div style="font-size:12px;margin-top:4px;">Recorded paid: <strong>₹${m.amount_paid}</strong>${m.note ? ` <span style="opacity:0.7;">(${escapeHtml(m.note)})</span>` : ''}</div>${staleNote}`
+          : '';
+        const runningBal = m.balance_after !== 0
+          ? `<div style="font-size:12px;margin-top:2px;opacity:0.85;">Balance after: ${m.balance_after > 0 ? `+₹${m.balance_after} owed back to them` : `−₹${Math.abs(m.balance_after)} they still owe`}</div>` : '';
+        return `<div class="fin-mem-card">
+          <div class="fin-mem-card-top">
+            <span class="fin-mem-card-name">${escapeHtml(m.display_name || '(unnamed)')}${tag}</span>
+            <span>${dueLine}</span>
+          </div>
+          ${rows}${balNote}
+          ${paidNote}
+          ${runningBal}
+          <div class="fin-mem-card-actions" style="margin-top:8px;align-items:center;gap:8px;">
+            <input type="number" step="0.01" class="fin-ledger-paid-input" data-pid="${m.player_id || ''}" data-name="${escapeHtml(m.display_name || '')}" data-due="${m.net_due}" placeholder="Amount paid" style="max-width:140px;">
+            <button type="button" class="fin-ledger-save" data-pid="${m.player_id || ''}" data-name="${escapeHtml(m.display_name || '')}">Record payment</button>
+          </div>
+        </div>`;
+      }).join('');
+      el.querySelectorAll('.fin-ledger-save').forEach(btn => btn.addEventListener('click', async () => {
+        const card = btn.closest('.fin-mem-card');
+        const input = card.querySelector('.fin-ledger-paid-input');
+        const amount = parseFloat(input.value);
+        if (isNaN(amount)) { nwAlert('Enter an amount paid (0 is fine if nothing was collected).'); return; }
+        const due = parseFloat(input.dataset.due);
+        const body = {
+          month: document.getElementById('fledger_month').value,
+          year: document.getElementById('fledger_year').value,
+          amount_paid: amount,
+          due_at_confirmation: due,
+        };
+        if (btn.dataset.pid) body.player_id = btn.dataset.pid;
+        else body.display_name = btn.dataset.name;
+        const { ok, data: d } = await finPost('ledger-entry', 'POST', body);
+        if (!ok) { nwAlert('Error: ' + d.error); return; }
+        loadFinanceLedger();
+      }));
+      applyFinanceRoleVisibility();
     }
 
     let lastMemberships = [];
@@ -8183,6 +8258,10 @@ let userPool = null;
       loadFinanceMembers();
     });
     document.getElementById('finance-recalc-btn').addEventListener('click', recalcMembers);
+    document.getElementById('finance-load-ledger-btn').addEventListener('click', () => {
+      _rememberFinance('month', document.getElementById('fledger_month').value);
+      loadFinanceLedger();
+    });
     document.getElementById('finance-add-member-btn').addEventListener('click', addFinanceMember);
     document.getElementById('finance-copy-prev-month-btn').addEventListener('click', copyPreviousMonthMembers);
     document.getElementById('finance-bulk-add-btn').addEventListener('click', bulkAddFromRoster);

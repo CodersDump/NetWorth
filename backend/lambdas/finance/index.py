@@ -38,9 +38,21 @@ DATA MODEL (single table, FINANCE_TABLE, hash key record_id)
                                entries. Same idea covers 2 slots paid for in
                                one entry on the same day.)
     record_id='settings':     {walkins_public: bool}
+    record_type='ledger_entry': {month, year, player_id?, display_name,
+                                 amount_paid, due_at_confirmation?, note?}
+                                 (2026-09-08: one row per member per month -
+                                 what they actually paid, however that
+                                 compares to what the ledger computed as
+                                 due. See _ledger_rows/save_ledger_entry.)
 
 Routes (via API Gateway {proxy+} on /finance):
     GET    /finance/summary                 -> settlement per (month,year,slot)
+    GET    /finance/ledger?month=&year=     -> cross-slot per-member running
+                                               balance ("Confirmation"
+                                               section - see _ledger_rows)
+    POST   /finance/ledger-entry            -> record/update what a member
+                                               actually paid for one month
+                                               (upserts by member+month)
     GET    /finance/expenses                -> list
     POST   /finance/expenses                -> create (or bulk with "items")
     PUT    /finance/expenses/{id}           -> update
@@ -420,6 +432,10 @@ def handler(event, context):
 
         if parts == ['summary'] and method == 'GET':
             return summary(target_group, scope_slots)
+        if parts == ['ledger'] and method == 'GET':
+            return ledger(target_group, params)
+        if parts == ['ledger-entry'] and method == 'POST':
+            return save_ledger_entry(body, target_group)
         if parts == ['insights'] and method == 'GET':
             insights._params = params
             return insights(target_group)
@@ -501,7 +517,12 @@ def _resolve_name(pid_cache, player_id):
         return None
     if player_id not in pid_cache:
         p = players_table.get_item(Key={'player_id': player_id}).get('Item')
-        pid_cache[player_id] = p['name'] if p else None
+        # A real player record missing its own 'name' attribute is a data
+        # gap, not something this lookup should crash over (Owner-reported
+        # 2026-09-07: the same bare-['name'] bug that broke Rankings/Season
+        # board in players/groups lambdas - this was the same bug sitting
+        # here in finance, surfacing as Insights' "Error: 'name'").
+        pid_cache[player_id] = p.get('name') if p else None
     return pid_cache[player_id]
 
 
@@ -1286,6 +1307,213 @@ def summary(group_id=None, scope_slots=None):
     if scope_slots is not None:
         resp['scoped_to'] = sorted(scope_slots)
     return _response(200, resp)
+
+
+# ---- ledger: cross-slot per-member running balance ("Confirmation"
+# section, Owner-requested 2026-09-08) ----
+#
+# Monthly memberships (Section A, unchanged) stays purely a per-SLOT
+# roster editor: add/remove a member from a slot, set Yes/No/NA. Its old
+# per-slot confirm_payment/payment_confirmed_amount mechanism (see
+# update_record) is untouched too, and Summary's collection_status badges
+# keep reading from it exactly as before - nothing here removes that.
+#
+# This ledger is a separate, additive view: one row per MEMBER per month
+# (not per slot - someone in two slots appears once), combining their
+# slot dues + group-wide share into a single figure, and carrying a
+# running balance forward indefinitely instead of the older relief
+# mechanism's one-month-only look-back. A partial payment recorded here
+# settles what it can of the month's due and banks the rest (short or
+# over) as that member's balance, which then automatically offsets
+# whatever they owe or are owed next - across slot and group-wide alike,
+# since it's one pooled number per member, not two siloed ones.
+def _ledger_rows(group_id):
+    """Returns {(ident, month, year): row} for every member-month where the
+    member held a real-slot Yes membership and/or the group-wide
+    confirmation-carrier record, replayed in chronological order per
+    member. Every due/relief figure is derived live from _settlement_rows
+    on each call (never trusted from a stored snapshot) - so an expense
+    edited after a payment was recorded doesn't need anyone to
+    "reconfirm" anything by hand; the shift just shows up in that month's
+    numbers and flows into the running balance next time this is read.
+    The only fact ever stored per member-month is what they actually
+    paid (a ledger_entry's amount_paid - see save_ledger_entry);
+    due_at_confirmation is kept alongside it purely as an audit note
+    ("this is what was owed when this was recorded"), not as something
+    the math depends on."""
+    settlement = _settlement_rows(group_id)
+    memberships = _scan_type('membership', group_id)
+    ledger_entries = _scan_type('ledger_entry', group_id)
+    cache = {}
+
+    by_member_month = {}
+    for m in memberships:
+        if m.get('status') != 'Yes' or m.get('month') not in MONTHS:
+            continue
+        month_, year_ = str(m.get('month')), int(_num(m.get('year')))
+        ident = m.get('player_id') or f"name:{m.get('display_name')}"
+        entry = by_member_month.setdefault((ident, month_, year_), {
+            'player_id': m.get('player_id'),
+            'display_name': _resolve_name(cache, m.get('player_id')) or m.get('display_name'),
+            'slot_recs': [], 'group_wide_rec': None,
+        })
+        if m.get('slot') == GROUP_SLOT:
+            entry['group_wide_rec'] = m
+        else:
+            entry['slot_recs'].append(m)
+
+    paid_by_key = {}
+    for le in ledger_entries:
+        ident = le.get('player_id') or f"name:{le.get('display_name')}"
+        paid_by_key[(ident, str(le.get('month')), int(_num(le.get('year'))))] = le
+
+    def month_idx(month_):
+        return MONTHS.index(month_) if month_ in MONTHS else 0
+
+    ordered_keys = sorted(by_member_month.keys(), key=lambda k: (k[0], k[2], month_idx(k[1])))
+    global_latest = max(((y, month_idx(m)) for (_, m, y) in ordered_keys), default=None)
+
+    running_balance = {}
+    rows = {}
+    for key in ordered_keys:
+        ident, month_, year_ = key
+        entry = by_member_month[key]
+        balance_before = running_balance.get(ident, 0.0)
+
+        breakdown, gross_due, credit_generated = [], 0.0, 0.0
+        for srec in entry['slot_recs']:
+            slot = str(srec.get('slot'))
+            srow = settlement.get((month_, year_, slot)) or {}
+            cph, rph = srow.get('cost_per_head'), srow.get('residual_per_head')
+            if cph is not None:
+                gross_due += cph
+                breakdown.append({'kind': 'slot_due', 'slot': slot, 'amount': round(cph, 2)})
+            if rph is not None and not srec.get('forfeit_residual'):
+                credit_generated += rph
+                breakdown.append({'kind': 'slot_relief', 'slot': slot, 'amount': round(rph, 2)})
+
+        if entry['group_wide_rec'] is not None:
+            gw = settlement.get((month_, year_, GROUP_SLOT)) or {}
+            gw_share = gw.get('expense_shares', {}).get(ident, 0.0) or 0.0
+            gw_credit = (gw.get('expense_residual_shares', {}).get(ident, 0.0) or 0.0) \
+                + (gw.get('walkin_shares', {}).get(ident, 0) or 0.0)
+            if gw_share:
+                gross_due += gw_share
+                breakdown.append({'kind': 'group_due', 'amount': round(gw_share, 2)})
+            if gw_credit:
+                credit_generated += gw_credit
+                breakdown.append({'kind': 'group_relief', 'amount': round(gw_credit, 2)})
+
+        fact = paid_by_key.get(key)
+        amount_paid = _num(fact.get('amount_paid')) if fact else None
+        due_at_confirmation = (_num(fact.get('due_at_confirmation'))
+                                if fact and fact.get('due_at_confirmation') is not None else None)
+
+        # net_due is what's owed RIGHT NOW (positive) or owed back (negative),
+        # after applying the balance carried in from before, but before
+        # whatever gets paid this time. balance_after folds that payment in;
+        # with no payment recorded yet it's simply -net_due (a running debt),
+        # so a later payment (or next month's relief) has something to settle.
+        net_due = round(gross_due - credit_generated - balance_before, 2)
+        balance_after = round(balance_before + credit_generated - gross_due
+                               + (amount_paid if amount_paid is not None else 0.0), 2)
+        running_balance[ident] = balance_after
+
+        rows[key] = {
+            'player_id': entry['player_id'], 'display_name': entry['display_name'],
+            'month': month_, 'year': year_,
+            'breakdown': breakdown,
+            'gross_due': round(gross_due, 2),
+            'credit_generated': round(credit_generated, 2),
+            'balance_before': round(balance_before, 2),
+            'net_due': net_due,
+            'amount_paid': amount_paid,
+            'due_at_confirmation': due_at_confirmation,
+            'note': fact.get('note') if fact else None,
+            'balance_after': round(balance_after, 2),
+            'ledger_record_id': fact.get('record_id') if fact else None,
+            # Flags when the amount actually recorded no longer matches what's
+            # computed now (an expense changed after the fact) - informational
+            # only, the running balance above already absorbed the shift.
+            'stale': bool(due_at_confirmation is not None and abs(due_at_confirmation - net_due) >= 0.01),
+            'tag': 'continuing',
+        }
+
+    # new/leaving tags - see _ledger_rows' docstring: 'new' on an ident's
+    # first-ever row; 'leaving' on their last-ever row, but ONLY when the
+    # overall data has a later month than that (i.e. sessions kept
+    # happening afterwards and they weren't in any of them) - a member
+    # whose last row IS the most recent month anyone has data for is left
+    # 'continuing', since there's no way to know yet whether they're about
+    # to stop.
+    by_ident_keys = {}
+    for key in ordered_keys:
+        by_ident_keys.setdefault(key[0], []).append(key)
+    for ident, keys in by_ident_keys.items():
+        rows[keys[0]]['tag'] = 'new'
+        last_key = keys[-1]
+        last_y_idx = (last_key[2], month_idx(last_key[1]))
+        if global_latest is not None and last_y_idx < global_latest:
+            rows[last_key]['tag'] = 'leaving'
+
+    return rows
+
+
+def ledger(group_id, params):
+    month = params.get('month')
+    year = params.get('year')
+    if not month or month not in MONTHS or not year:
+        return _response(400, {'error': 'a valid month and year are required'})
+    year = int(_num(year))
+    rows = _ledger_rows(group_id)
+    members = [r for (ident, m, y), r in rows.items() if m == month and y == year]
+    members.sort(key=lambda r: r['display_name'] or '')
+    return _response(200, {'month': month, 'year': year, 'members': members})
+
+
+def save_ledger_entry(body, group_id):
+    """Upserts the one fact this whole ledger stores: what a member
+    actually paid for one month. Identity + period pick the row - if one
+    already exists for this (member, month, year) it's overwritten (an
+    owner correcting/updating a figure), never duplicated."""
+    player_id = body.get('player_id') or None
+    display_name = (body.get('display_name') or '').strip()
+    month = body.get('month')
+    year = body.get('year')
+    if not month or month not in MONTHS or not year:
+        return _response(400, {'error': 'a valid month and year are required'})
+    if not player_id and not display_name:
+        return _response(400, {'error': 'player_id or display_name is required'})
+    if body.get('amount_paid') in (None, ''):
+        return _response(400, {'error': 'amount_paid is required'})
+    year = int(_num(year))
+    ident = player_id or f"name:{display_name}"
+
+    existing = None
+    for le in _scan_type('ledger_entry', group_id):
+        le_ident = le.get('player_id') or f"name:{le.get('display_name')}"
+        if le_ident == ident and str(le.get('month')) == str(month) and int(_num(le.get('year'))) == year:
+            existing = le
+            break
+
+    item = dict(existing) if existing else {'record_id': str(uuid.uuid4()), 'record_type': 'ledger_entry'}
+    item['month'] = str(month)
+    item['year'] = str(year)
+    if player_id:
+        item['player_id'] = player_id
+    if display_name:
+        item['display_name'] = display_name
+    item['amount_paid'] = Decimal(str(_num(body.get('amount_paid'))))
+    if body.get('due_at_confirmation') is not None:
+        item['due_at_confirmation'] = Decimal(str(_num(body.get('due_at_confirmation'))))
+    if body.get('note'):
+        item['note'] = body['note']
+    elif 'note' in body:
+        item.pop('note', None)
+    if group_id:
+        item['group_id'] = group_id
+    finance_table.put_item(Item=item)
+    return _response(200, {'record_id': item['record_id'], 'amount_paid': str(item['amount_paid'])})
 
 
 # ---- insights: per-member monthly economics + ghosts + conversion ----

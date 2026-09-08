@@ -381,6 +381,36 @@
 
 ## Done
 
+- ✅ 2026-09-08 (v1.83.3) — **Finance: fixed the same bare-`['name']` crash in Insights (`_resolve_name`
+  in `finance/index.py`, same bug class as the v1.83.1 Rankings/groups hotfix), and added a new
+  "Confirmation" ledger to the Monthly memberships card.** Owner-reported: the group-wide shuttle-box
+  share (the `(whole group)` line) needed its own separate confirm click that was easy to forget, and
+  the old per-slot `confirm_payment` was all-or-nothing — no way to record a partial payment, and any
+  later expense edit made a confirmation go stale with no memory of what had already been paid.
+  **New `record_type='ledger_entry'`** stores the one fact that matters: what a member actually paid
+  for a given month. **New `_ledger_rows()`/`GET /finance/ledger`** replays every member's history
+  chronologically, combining ALL of a member's slots plus their group-wide share into ONE row per
+  member per month (someone in two slots appears once, not twice) and carrying a running balance
+  forward indefinitely — a shortfall or overpayment in one month automatically nets against whatever
+  they owe or are owed next, pooled across slot and group-wide rather than tracked separately. Every
+  due/relief figure is derived live from the existing `_settlement_rows` on each read, never trusted
+  from a stored snapshot, so an expense edited after a payment was recorded doesn't require anyone to
+  manually "reconfirm" — the shift just flows into the running balance, flagged informationally via a
+  `stale` marker rather than forcing a redo. Also tags each row `new`/`continuing`/`leaving`,
+  auto-computed from membership history (first-ever month / gap after their last month with later
+  months on record for others), purely informational. The existing per-slot roster cards (Section A)
+  and the old `confirm_payment`/Summary `collection_status` mechanism are untouched — this is a
+  separate, additive view (`POST /finance/ledger-entry` to record a payment) living in the same
+  Monthly memberships card, purely for payment, not roster editing.
+- ✅ 2026-09-07 (v1.83.2) — **Two independent fixes.** (1) Match/player-name display was a write-time
+  snapshot (`team_a_names`/`team_b_names` on each match) that never refreshed after a player rename
+  or after `update_match`'s player-swap corrected a wrongly-added participant — `list_matches` now
+  resolves every name live against the current players table on each read, and `update_match` also
+  refreshes the snapshot when it changes a match's rosters, so a renamed player's history (old and
+  freshly-corrected alike) shows their current name everywhere. (2) The Quick Tap session avatar grid
+  (`nwTapRefreshAvatarGrid`) rendered players in whatever order the session/group data happened to come
+  back in — now alphabetized by real name (never nickname); one-off match guests still append at the
+  end in add-order, unchanged.
 - ✅ 2026-09-06 (v1.83.0) — **Three independent fixes: signup email-typo safeguard, CORS preflight
   caching, and tournament point_log validation; plus two stale-doc corrections and a git-hygiene
   cleanup.** Picked up from the backlog for an unattended overnight round. **(1) Signup form
