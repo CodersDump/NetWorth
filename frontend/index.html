@@ -932,6 +932,18 @@
           <button id="finance-recalc-btn" type="button" class="secondary" style="display:none; margin-left:8px;">Recalculate amounts</button>
           <span id="finance-recalc-hint" style="display:none; margin-left:8px; font-size:12px; color:var(--court,#2fa968);">Statuses saved \u2014 click Recalculate to update the amounts.</span>
           <div id="finance-members-result" style="margin-top:12px;"></div>
+
+          <hr style="margin:20px 0 16px; border:none; border-top:1px solid var(--border,rgba(255,255,255,0.12));">
+          <h3 style="margin:0 0 4px;">Confirmation</h3>
+          <p class="card-sub">Each member once for the month, however many slots they're in - their slot dues plus any group-wide share, combined into one figure, with a running balance carried forward from month to month. This is purely for recording payment; use the roster above to add/remove members or change Yes/No/NA.</p>
+          <div class="row">
+            <div><label>Month
+              <select id="fledger_month"><option>January</option><option>February</option><option>March</option><option>April</option><option>May</option><option>June</option><option selected>July</option><option>August</option><option>September</option><option>October</option><option>November</option><option>December</option></select>
+            </label></div>
+            <div><label>Year <input type="number" id="fledger_year" value="2026"></label></div>
+          </div>
+          <button id="finance-load-ledger-btn" type="button" class="secondary">Load confirmations</button>
+          <div id="finance-ledger-result" style="margin-top:12px;"></div>
         </div>
 
         <div class="card">
