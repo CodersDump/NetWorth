@@ -381,6 +381,30 @@
 
 ## Done
 
+- ✅ 2026-09-08 (v1.83.4) — **Repoint Summary's settled/collecting badge (and My dues' you_paid/you_owe)
+  at the new Confirmation ledger, plus the three post-staging-test fixes queued up for v1.83.3.**
+  Once the old per-slot Confirm/Reconfirm control was removed from the roster cards (v1.83.3, below),
+  nothing wrote `payment_confirmed_amount` anymore, so `_settlement_rows`' settled-status pass (driving
+  Summary's badge) and `my_settlement`'s `you_paid`/`you_owe` (driving the My dues card) were both
+  silently reading a field frozen in time. Both now source from the ledger's per-member running
+  balance instead (`_settlement_rows` and `_ledger_rows` share the computation via a new
+  `_compute_ledger_rows(group_id, settlement, memberships)` helper, factored out so the settled-status
+  pass — which runs *inside* `_settlement_rows` — doesn't have to call back into `_ledger_rows` and
+  recurse). Since the ledger pools a member's dues across every slot and any group-wide share into ONE
+  per-month balance, "settled" is the same across every bucket/line that member appears in that month:
+  caught up (`balance_after >= 0`, i.e. this month's due — net of relief and whatever balance carried
+  in — has been fully paid) counts as settled; still owing counts as collecting, even mid-partial-payment.
+  The old `confirm_payment`/`payment_confirmed_amount` mechanism is left in place in the backend
+  (nothing calls it from the UI anymore) rather than deleted outright. Verified against a synthetic
+  2-member scenario (`/tmp/test_settled_badge.py`): before any payment → collecting/0 confirmed; one
+  member pays in full → still collecting/1 confirmed; the other pays partially → still collecting/1
+  confirmed (partial payment does *not* flip the badge); the other pays the rest → settled/2 confirmed;
+  `my_settlement` agrees (`you_paid: true`, `you_owe: 0`) for the fully-paid member. **Also folds in the
+  three fixes queued against v1.83.3 that hadn't been applied yet** (that delivery's *first* revision —
+  with the relief-timing bug below — had already been merged to `main` before these were ready, so
+  they're shipping here instead of as a second v1.83.3 revision): the relief-timing fix, the roster-card
+  Confirm/Reconfirm/undo button removal, and collapsible Members/Confirmation sections — see the
+  v1.83.3 entry below for what those actually do.
 - ✅ 2026-09-08 (v1.83.3) — **Finance: fixed the same bare-`['name']` crash in Insights (`_resolve_name`
   in `finance/index.py`, same bug class as the v1.83.1 Rankings/groups hotfix), and added a new
   "Confirmation" ledger to the Monthly memberships card.** Owner-reported: the group-wide shuttle-box
@@ -398,10 +422,13 @@
   manually "reconfirm" — the shift just flows into the running balance, flagged informationally via a
   `stale` marker rather than forcing a redo. Also tags each row `new`/`continuing`/`leaving`,
   auto-computed from membership history (first-ever month / gap after their last month with later
-  months on record for others), purely informational. The existing per-slot roster cards (Section A)
-  and the old `confirm_payment`/Summary `collection_status` mechanism are untouched — this is a
-  separate, additive view (`POST /finance/ledger-entry` to record a payment) living in the same
-  Monthly memberships card, purely for payment, not roster editing.
+  months on record for others), purely informational. **⚠️ This is the revision that reached `main`:**
+  the relief/credit side here reads the CURRENT month's own residual instead of the PREVIOUS month's
+  finalised one — a residual only becomes known once a month's actual costs are entered, so it can only
+  ever apply going forward (exactly what `_member_relief`/Insights already do). Caught on staging before
+  wider use (Owner cross-checked against Insights' own numbers) — fixed in v1.83.4 above, which also
+  removes the roster cards' now-redundant Confirm/Reconfirm/undo control and makes the Members/
+  Confirmation lists collapsible.
 - ✅ 2026-09-07 (v1.83.2) — **Two independent fixes.** (1) Match/player-name display was a write-time
   snapshot (`team_a_names`/`team_b_names` on each match) that never refreshed after a player rename
   or after `update_match`'s player-swap corrected a wrongly-added participant — `list_matches` now
