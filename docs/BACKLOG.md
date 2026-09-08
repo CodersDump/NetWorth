@@ -405,6 +405,17 @@
   they're shipping here instead of as a second v1.83.3 revision): the relief-timing fix, the roster-card
   Confirm/Reconfirm/undo button removal, and collapsible Members/Confirmation sections — see the
   v1.83.3 entry below for what those actually do.
+- ✅ 2026-09-08 (v1.83.5) — **Confirmation section: fixed a stuck "Owes ₹X" headline, plus a one-click
+  "Paid in full" button.** Caught by Owner while backfilling July/August through the Confirmation
+  section to prime the new running balance (post-v1.83.4): the card's headline ("Owes ₹X" / "Owed
+  back ₹X" / "Settled") was driven by `net_due`, which is fixed for the month regardless of what gets
+  paid — so it kept showing "Owes ₹X" even immediately after recording a payment that covered it in
+  full. The headline now reads `balance_after` instead (the actual standing once the recorded payment
+  is applied), with `net_due` demoted to a small "Due this month:" context line above the breakdown.
+  Also added a one-click **"Paid in full (₹X)"** button next to the amount-paid input (Owner-requested:
+  didn't want to type/calculate the exact figure by hand) — fills in and immediately records `net_due`
+  (only shown when something's actually owed); the existing manual input + Record payment still works
+  as before for a partial or off-figure amount. Frontend-only (`frontend/js/app.js`) — no backend change.
 - ✅ 2026-09-08 (v1.83.3) — **Finance: fixed the same bare-`['name']` crash in Insights (`_resolve_name`
   in `finance/index.py`, same bug class as the v1.83.1 Rankings/groups hotfix), and added a new
   "Confirmation" ledger to the Monthly memberships card.** Owner-reported: the group-wide shuttle-box
