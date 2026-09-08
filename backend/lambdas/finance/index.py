@@ -903,6 +903,15 @@ def my_settlement(claims, group_id):
 
     rows = _settlement_rows(group_id)
     memberships = _scan_type('membership', group_id)
+    # Paid/owed status below is sourced from the Confirmation ledger's
+    # running balance (see _settlement_rows' own settled-status pass,
+    # updated 2026-09-08 for the same reason) rather than the old
+    # payment_confirmed_amount snapshot, which nothing writes anymore now
+    # that the per-slot Confirm/Reconfirm button is gone. The ledger pools
+    # a member's dues across every slot + any group-wide share into ONE
+    # per-month balance, so "you_paid" is the same across every line for
+    # that member/month, not attributed per slot.
+    ledger_rows = _compute_ledger_rows(group_id, rows, memberships)
     lines = []
     owe_total = 0.0
     owed_back_total = 0.0
@@ -919,22 +928,11 @@ def my_settlement(claims, group_id):
             continue
         cph = b.get('cost_per_head')
         rph = b.get('residual_per_head')
-        confirmed_amt = m.get('payment_confirmed_amount')
-        # What confirm_payment actually stores is the EFFECTIVE amount
-        # (cost_per_head minus that month's relief from the prior month's
-        # residual - see update_record's confirm_payment branch), not the
-        # raw per-head figure. Comparing against raw cph here made every
-        # member who'd ever received relief (i.e. almost everyone, since
-        # relief/residual carries over most months) show as unpaid even
-        # right after confirming, because confirmed_amt (effective) would
-        # never equal cph (pre-relief) whenever relief != 0. Match
-        # _settlement_rows' own "settled" check: compare against the same
-        # effective figure. (Owner-reported 2026-08-20: dues showed
-        # pending despite already-confirmed payment.)
         ident = pid
         relief = _member_relief(rows, memberships, ident, b['month'], b['year'], slot=b['slot'])
         effective = round(max(cph - relief, 0), 2) if cph is not None else None
-        paid = confirmed_amt is not None and effective is not None and abs(_num(confirmed_amt) - effective) < 0.01
+        lrow = ledger_rows.get((ident, b['month'], b['year']))
+        paid = lrow is not None and lrow['balance_after'] >= -0.01
         owe = 0.0 if (paid or effective is None) else effective
         # A member who forfeited this period's refund gets nothing back; their
         # share was redistributed to the others (reflected in rph for them).
@@ -1003,17 +1001,11 @@ def my_settlement(claims, group_id):
         # group-wide refund.
         gw_back = (gw.get('expense_residual_shares', {}).get(pid, 0.0) or 0.0) \
             + (gw.get('walkin_shares', {}).get(pid, 0) or 0.0)
-        # A slot=GROUP_SLOT membership record for this member/month is a
-        # payment-confirmation carrier only (see
-        # _ensure_group_wide_membership_records) - it exists purely so the
-        # group-wide share can be marked paid the same way a per-slot one
-        # is, via the existing confirm_payment mechanism (Owner-reported
-        # 2026-09-01: this line could never be marked paid before).
-        gw_conf = next((mm for mm in memberships
-                        if mm.get('player_id') == pid and mm.get('slot') == GROUP_SLOT
-                        and str(mm.get('month')) == mth and int(_num(mm.get('year'))) == yr), None)
-        confirmed_amt = gw_conf.get('payment_confirmed_amount') if gw_conf else None
-        paid = confirmed_amt is not None and abs(_num(confirmed_amt) - gw_cost) < 0.01
+        # This member's group-wide share is paid/unpaid together with
+        # their per-slot dues for the same month - see the ledger note at
+        # the top of this function.
+        lrow = ledger_rows.get((pid, mth, yr))
+        paid = lrow is not None and lrow['balance_after'] >= -0.01
         owe = 0.0 if paid else gw_cost
         owe_total += owe
         owed_back_total += gw_back
@@ -1255,32 +1247,30 @@ def _settlement_rows(group_id=None):
         b['expense_residual_shares'] = residual_shares
 
     # Settled status (second pass - needs every period's residual finalised
-    # first, because a member's EFFECTIVE amount = cost_per_head - their relief,
-    # and relief comes from the previous month's residual). A Yes member counts
-    # as confirmed only while their stored confirmed amount still equals their
-    # current effective amount.
+    # first, since a member's due nets against relief from the previous
+    # month). Sourced from the Confirmation ledger's running balance
+    # (_compute_ledger_rows) rather than the old per-slot "confirm payment"
+    # snapshot (payment_confirmed_amount) - nothing writes that field
+    # anymore now that the per-slot Confirm/Reconfirm button was removed
+    # in favour of the ledger's own Confirmation section (2026-09-08). The
+    # ledger pools a member's dues across every slot (and any group-wide
+    # share) into ONE per-month running balance, so settled status is the
+    # same across every bucket a member appears in that month: caught up
+    # (balance_after >= 0 - this month's due, net of relief and whatever
+    # they already carried in, has been paid off) counts as settled;
+    # still owing counts as collecting, even if partially paid.
+    ledger_rows = _compute_ledger_rows(group_id, periods, memberships)
     matched = {k: 0 for k in periods}
     for m in memberships:
-        if m.get('status') != 'Yes' or m.get('payment_confirmed_amount') is None:
+        if m.get('status') != 'Yes':
             continue
         key = (str(m.get('month')), int(_num(m.get('year'))), str(m.get('slot')))
         b = periods.get(key)
         if not b or b.get('cost_per_head') is None:
             continue
         ident = m.get('player_id') or f"name:{m.get('display_name')}"
-        if key[2] == GROUP_SLOT:
-            # This confirmation carries a member's GROUP-WIDE share, not a
-            # per-slot one: b['cost_per_head'] here is a flat PER-PORTION
-            # figure (see the big comment above), so compare against this
-            # member's own slot-weighted expense_shares instead, with no
-            # relief netting (my_settlement's group-wide line doesn't net
-            # against relief either - group-wide dues aren't carried
-            # month-to-month the way slot dues are).
-            effective = round(b.get('expense_shares', {}).get(ident, 0.0), 2)
-        else:
-            relief = _member_relief(periods, memberships, ident, b['month'], b['year'], slot=b['slot'])
-            effective = round(max(b['cost_per_head'] - relief, 0), 2)
-        if abs(_num(m.get('payment_confirmed_amount')) - effective) < 0.01:
+        lrow = ledger_rows.get((ident, key[0], key[1]))
+        if lrow is not None and lrow['balance_after'] >= -0.01:
             matched[key] += 1
     for key, b in periods.items():
         # The group-wide bucket's player_count is total slot-PORTIONS
@@ -1312,11 +1302,18 @@ def summary(group_id=None, scope_slots=None):
 # ---- ledger: cross-slot per-member running balance ("Confirmation"
 # section, Owner-requested 2026-09-08) ----
 #
-# Monthly memberships (Section A, unchanged) stays purely a per-SLOT
-# roster editor: add/remove a member from a slot, set Yes/No/NA. Its old
-# per-slot confirm_payment/payment_confirmed_amount mechanism (see
-# update_record) is untouched too, and Summary's collection_status badges
-# keep reading from it exactly as before - nothing here removes that.
+# Monthly memberships (Section A) stays purely a per-SLOT roster editor:
+# add/remove a member from a slot, set Yes/No/NA - its old per-slot
+# Confirm/Reconfirm button is gone from the UI (Owner-requested
+# 2026-09-08, once this ledger took over payment tracking), though the
+# update_record confirm_payment branch and payment_confirmed_amount field
+# are left in place in the backend rather than deleted outright. Nothing
+# calls that branch anymore, so nothing keeps payment_confirmed_amount
+# current - Summary's collection_status badges (and my_settlement's
+# you_paid/you_owe) were switched over to read this ledger's running
+# balance instead (see _settlement_rows' settled-status pass and
+# my_settlement, both updated 2026-09-08), since a value nothing writes
+# can't drive a live status.
 #
 # This ledger is a separate, additive view: one row per MEMBER per month
 # (not per slot - someone in two slots appears once), combining their
@@ -1343,6 +1340,15 @@ def _ledger_rows(group_id):
     the math depends on."""
     settlement = _settlement_rows(group_id)
     memberships = _scan_type('membership', group_id)
+    return _compute_ledger_rows(group_id, settlement, memberships)
+
+
+def _compute_ledger_rows(group_id, settlement, memberships):
+    """The actual ledger computation, factored out of _ledger_rows so
+    _settlement_rows' own settled-status pass can reuse it against a
+    settlement/memberships snapshot it already has in hand, instead of
+    calling _ledger_rows (which would call back into _settlement_rows and
+    recurse). See _ledger_rows' docstring for the semantics."""
     ledger_entries = _scan_type('ledger_entry', group_id)
     cache = {}
 
@@ -1381,25 +1387,51 @@ def _ledger_rows(group_id):
         balance_before = running_balance.get(ident, 0.0)
 
         breakdown, gross_due, credit_generated = [], 0.0, 0.0
+
+        # THIS month's due: this month's own slot dues + group-wide share,
+        # from this month's memberships.
         for srec in entry['slot_recs']:
             slot = str(srec.get('slot'))
             srow = settlement.get((month_, year_, slot)) or {}
-            cph, rph = srow.get('cost_per_head'), srow.get('residual_per_head')
+            cph = srow.get('cost_per_head')
             if cph is not None:
                 gross_due += cph
                 breakdown.append({'kind': 'slot_due', 'slot': slot, 'amount': round(cph, 2)})
-            if rph is not None and not srec.get('forfeit_residual'):
-                credit_generated += rph
-                breakdown.append({'kind': 'slot_relief', 'slot': slot, 'amount': round(rph, 2)})
-
         if entry['group_wide_rec'] is not None:
             gw = settlement.get((month_, year_, GROUP_SLOT)) or {}
             gw_share = gw.get('expense_shares', {}).get(ident, 0.0) or 0.0
-            gw_credit = (gw.get('expense_residual_shares', {}).get(ident, 0.0) or 0.0) \
-                + (gw.get('walkin_shares', {}).get(ident, 0) or 0.0)
             if gw_share:
                 gross_due += gw_share
                 breakdown.append({'kind': 'group_due', 'amount': round(gw_share, 2)})
+
+        # THIS month's CREDIT is relief EARNED from LAST month's now-final
+        # numbers, not this month's own (still-live, possibly still-estimate)
+        # ones - a residual only becomes known once a month's actual costs are
+        # entered, so it can only ever be applied going FORWARD, exactly like
+        # _member_relief/Insights already do (Owner-caught 2026-09-08: this
+        # was reading the current month's own residual instead, showing tiny
+        # numbers that didn't match Insights' relief figure for the same
+        # member/month at all). Walked from last month's raw membership
+        # records here, rather than calling _member_relief directly, so each
+        # slot's own contribution can be shown in the breakdown individually.
+        p_month, p_year = _prev_period(month_, year_)
+        for pm in memberships:
+            if not (pm.get('status') == 'Yes' and str(pm.get('month')) == p_month
+                    and int(_num(pm.get('year'))) == p_year
+                    and (pm.get('player_id') or f"name:{pm.get('display_name')}") == ident
+                    and pm.get('slot') != GROUP_SLOT
+                    and not pm.get('forfeit_residual')):
+                continue
+            p_slot = str(pm.get('slot'))
+            prph = (settlement.get((p_month, p_year, p_slot)) or {}).get('residual_per_head')
+            if prph:
+                credit_generated += prph
+                breakdown.append({'kind': 'slot_relief', 'slot': p_slot, 'amount': round(prph, 2)})
+
+        p_gw = settlement.get((p_month, p_year, GROUP_SLOT))
+        if p_gw:
+            gw_credit = (p_gw.get('expense_residual_shares', {}).get(ident, 0) or 0) \
+                + (p_gw.get('walkin_shares', {}).get(ident, 0) or 0)
             if gw_credit:
                 credit_generated += gw_credit
                 breakdown.append({'kind': 'group_relief', 'amount': round(gw_credit, 2)})
