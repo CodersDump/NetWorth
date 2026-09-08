@@ -7539,47 +7539,79 @@ let userPool = null;
         }).join('');
         const balNote = m.balance_before !== 0
           ? `<div style="font-size:12px;opacity:0.75;display:flex;justify-content:space-between;max-width:320px;"><span>Balance carried in</span><span>${m.balance_before > 0 ? '+' : ''}₹${m.balance_before}</span></div>` : '';
-        const dueLine = m.net_due > 0
-          ? `Owes <strong>₹${m.net_due}</strong>` : (m.net_due < 0
-          ? `Owed back <strong>₹${Math.abs(m.net_due)}</strong>` : `<strong>Settled — ₹0 due</strong>`);
+        // "Due this month" is what was owed BEFORE whatever gets recorded on
+        // this card - it's fixed for the month (gross_due minus relief minus
+        // balance carried in) and does NOT move once a payment is saved, so
+        // it's shown as context, not as the headline (Owner-reported
+        // 2026-09-08: paying the full amount still showed "Owes ₹X" - that
+        // was this figure being used as the headline; it never changes
+        // regardless of payment, only balance_after below does).
+        const dueThisMonth = m.net_due > 0
+          ? `Due this month: ₹${m.net_due}` : (m.net_due < 0
+          ? `Due this month: −₹${Math.abs(m.net_due)} (in credit)` : `Due this month: ₹0`);
         const staleNote = m.stale
           ? `<div style="font-size:11px;opacity:0.7;color:#d9a441;margin-top:2px;">Recorded when ₹${m.due_at_confirmation} was due - recalculated since (an expense or roster likely changed).</div>` : '';
         const paidNote = m.amount_paid != null
           ? `<div style="font-size:12px;margin-top:4px;">Recorded paid: <strong>₹${m.amount_paid}</strong>${m.note ? ` <span style="opacity:0.7;">(${escapeHtml(m.note)})</span>` : ''}</div>${staleNote}`
           : '';
-        const runningBal = m.balance_after !== 0
-          ? `<div style="font-size:12px;margin-top:2px;opacity:0.85;">Balance after: ${m.balance_after > 0 ? `+₹${m.balance_after} owed back to them` : `−₹${Math.abs(m.balance_after)} they still owe`}</div>` : '';
-        return `<div class="fin-mem-card">
+        // Headline: the ACTUAL current standing after whatever's already
+        // been recorded this month - this is what answers "do they still
+        // owe anything right now", so it's driven by balance_after (which
+        // folds in amount_paid), not the pre-payment due figure above.
+        const statusLine = m.balance_after < -0.01
+          ? `Owes <strong>₹${Math.abs(m.balance_after)}</strong>`
+          : (m.balance_after > 0.01
+            ? `Owed back <strong>₹${m.balance_after}</strong>`
+            : `<strong>Settled — ₹0 due</strong>`);
+        // Quick-pay: fills in (and immediately records) exactly what's due
+        // this month, so there's nothing to type/calculate by hand - only
+        // shown when something is actually owed (Owner-requested
+        // 2026-09-08: "adds paid full amount so I don't have to type...
+        // exact number").
+        const quickPayAmt = Math.max(m.net_due, 0);
+        const quickPayBtn = quickPayAmt > 0.004
+          ? `<button type="button" class="secondary fin-ledger-quickpay" data-amt="${quickPayAmt}">Paid in full (₹${quickPayAmt})</button>` : '';
+        return `<div class="fin-mem-card" data-pid="${m.player_id || ''}" data-name="${escapeHtml(m.display_name || '')}">
           <div class="fin-mem-card-top">
             <span class="fin-mem-card-name">${escapeHtml(m.display_name || '(unnamed)')}${tag}</span>
-            <span>${dueLine}</span>
+            <span>${statusLine}</span>
           </div>
+          <div style="font-size:12px;opacity:0.75;">${dueThisMonth}</div>
           ${rows}${balNote}
           ${paidNote}
-          ${runningBal}
-          <div class="fin-mem-card-actions" style="margin-top:8px;align-items:center;gap:8px;">
-            <input type="number" step="0.01" class="fin-ledger-paid-input" data-pid="${m.player_id || ''}" data-name="${escapeHtml(m.display_name || '')}" data-due="${m.net_due}" placeholder="Amount paid" style="max-width:140px;">
-            <button type="button" class="fin-ledger-save" data-pid="${m.player_id || ''}" data-name="${escapeHtml(m.display_name || '')}">Record payment</button>
+          <div class="fin-mem-card-actions" style="margin-top:8px;align-items:center;gap:8px;flex-wrap:wrap;">
+            <input type="number" step="0.01" class="fin-ledger-paid-input" data-due="${m.net_due}" placeholder="Amount paid" style="max-width:140px;">
+            <button type="button" class="fin-ledger-save">Record payment</button>
+            ${quickPayBtn}
           </div>
         </div>`;
       }).join('');
-      el.querySelectorAll('.fin-ledger-save').forEach(btn => btn.addEventListener('click', async () => {
-        const card = btn.closest('.fin-mem-card');
-        const input = card.querySelector('.fin-ledger-paid-input');
-        const amount = parseFloat(input.value);
-        if (isNaN(amount)) { nwAlert('Enter an amount paid (0 is fine if nothing was collected).'); return; }
-        const due = parseFloat(input.dataset.due);
+      async function saveLedgerEntry(card, amount) {
+        const due = parseFloat(card.querySelector('.fin-ledger-paid-input').dataset.due);
         const body = {
           month: document.getElementById('fledger_month').value,
           year: document.getElementById('fledger_year').value,
           amount_paid: amount,
           due_at_confirmation: due,
         };
-        if (btn.dataset.pid) body.player_id = btn.dataset.pid;
-        else body.display_name = btn.dataset.name;
+        if (card.dataset.pid) body.player_id = card.dataset.pid;
+        else body.display_name = card.dataset.name;
         const { ok, data: d } = await finPost('ledger-entry', 'POST', body);
         if (!ok) { nwAlert('Error: ' + d.error); return; }
         loadFinanceLedger();
+      }
+      el.querySelectorAll('.fin-ledger-save').forEach(btn => btn.addEventListener('click', () => {
+        const card = btn.closest('.fin-mem-card');
+        const input = card.querySelector('.fin-ledger-paid-input');
+        const amount = parseFloat(input.value);
+        if (isNaN(amount)) { nwAlert('Enter an amount paid (0 is fine if nothing was collected).'); return; }
+        saveLedgerEntry(card, amount);
+      }));
+      el.querySelectorAll('.fin-ledger-quickpay').forEach(btn => btn.addEventListener('click', () => {
+        const card = btn.closest('.fin-mem-card');
+        const amount = parseFloat(btn.dataset.amt);
+        card.querySelector('.fin-ledger-paid-input').value = amount;
+        saveLedgerEntry(card, amount);
       }));
       applyFinanceRoleVisibility();
     }
